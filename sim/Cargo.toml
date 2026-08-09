@@ -1,0 +1,21 @@
+[package]
+name    = "nitroxide-sim"
+version = "0.1.0"
+edition = "2021"
+# Matches PSoXide, whose SDK and engine this links.
+license = "GPL-2.0-or-later"
+repository = "https://github.com/EBonura/nitroxide"
+
+# Standalone workspace so `cargo test` here builds for the host. The game crate
+# next door pins the mipsel-sony-psx target in its own .cargo/config.toml, and
+# that must not leak into the physics tests.
+[workspace]
+
+[lib]
+name = "nitroxide_sim"
+path = "src/lib.rs"
+
+[dependencies]
+# Q0.12 sin/cos and integer sqrt. Pure integer, no_std, builds for host and
+# console alike, so the sim needs nothing of its own.
+psx-math = { path = "../.psoxide/sdk/crates/psx-math" }

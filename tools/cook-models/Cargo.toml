@@ -1,0 +1,26 @@
+[package]
+name    = "cook-models"
+version = "0.1.0"
+edition = "2021"
+# Matches PSoXide, whose SDK and engine this links.
+license = "GPL-2.0-or-later"
+repository = "https://github.com/EBonura/nitroxide"
+
+# Host tool, own workspace so the game's mipsel-sony-psx target config never
+# reaches it.
+[workspace]
+
+[[bin]]
+name = "cook-models"
+path = "src/main.rs"
+
+[dependencies]
+# Read straight, only for the material list: the cooker bakes each material's
+# base colour into the face table but does not say which material a face came
+# from, and the whole paint job here is keyed on the material *names*.
+gltf = "1"
+# PSoXide's own glTF importer, from the pinned submodule. Host-side only: it
+# pulls in a full glTF parser, which is fine here and would never fit on the
+# console. The runtime side reads its output with psx-asset.
+psxed-format = { path = "../../.psoxide/editor/crates/psxed-format" }
+psxed-gltf = { path = "../../.psoxide/editor/crates/psxed-gltf" }

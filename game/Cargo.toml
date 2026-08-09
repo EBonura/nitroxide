@@ -1,0 +1,99 @@
+# `trim-paths` is a nightly cargo feature; these crates are nightly-pinned
+# anyway (bare-metal MIPS needs build-std), so the gate costs nothing.
+cargo-features = ["trim-paths"]
+
+[package]
+name    = "nitroxide"
+version = "0.2.3"
+edition = "2021"
+# Matches PSoXide, whose SDK and engine this links.
+license = "GPL-2.0-or-later"
+repository = "https://github.com/EBonura/nitroxide"
+
+# Standalone workspace, deliberately not at the repo root: keeping the crate
+# (and its device .cargo/config.toml) under game/ stops the PSX target config
+# from leaking onto the host-side sim tests and tools. Same layout as gh-psx.
+[workspace]
+
+[features]
+# Dev shortcut: boot straight into the match for headless capture.
+boot-play = []
+# Dev shortcut: the normal kickoff with both player views enabled, used to
+# profile split-screen renderer changes without requiring a second host pad.
+boot-split-play = []
+# Engine frame/stage markers only: enough for the headless profiler to report
+# the per-visual-frame render total, with none of this crate's own markers in
+# it. This is the build to read a frame budget off, because `profile` adds
+# about 2,800 cycles a marker and there are two dozen of them.
+profile-frame = ["psx-engine/emulator-telemetry"]
+# Emit guest telemetry so the headless profiler can see per-stage cycles.
+# Off by default: the markers cost real cycles, so a shipping disc must not
+# carry them, and a profile of a build with them in it is measuring itself.
+profile = ["profile-frame", "psx-telemetry/emit"]
+# Dev: kick off with the ball rolling at the far net, so a headless run
+# reaches a goal at a predictable tick and the celebration can be looked at.
+boot-goal = []
+# Dev: park the car against a side wall, ball ahead of it, so a headless
+# capture always frames the same shot. Driving there with scheduled pad
+# presses does not repeat: one extra tick of steer and the car is somewhere
+# else entirely, which makes a before/after comparison worthless.
+boot-wall = []
+# Dev: put both players on opposing side walls so the complete curved wall
+# profile is reproducible in each half of a split-screen wireframe capture.
+boot-split-wall = []
+# Dev: the same, jammed into a corner chamfer. This is the darkest view in
+# the game and the one any lighting change has to be judged on.
+boot-corner = []
+# Dev-only model selectors for deterministic visual QA of every garage car.
+boot-hatch = []
+boot-sprinter = []
+# Dev: ball parked airborne in front of the car, the only view that shows a
+# whole shadow. Gravity is left on, so capture early.
+boot-airball = []
+# Dev: deterministic close wheel pose (full steering lock, visible roll, and
+# opposite axle travel) for high-resolution renderer QA.
+boot-wheels = []
+# Dev: aim ball cam at a stationary ball near the roof so the enclosure's top
+# surface is visible in deterministic visual QA.
+boot-roof = []
+# Deterministic presentation presets for high-resolution capture. Night is the
+# shipping default; these two select the other authored looks at boot.
+arena-day = []
+arena-sunset = []
+
+[[bin]]
+name = "nitroxide"
+path = "src/main.rs"
+
+[profile.release]
+# Keep absolute host paths out of the shipped binary. rustc records the
+# source path of every panic/assert site (core::panic::Location) as a
+# string in .rodata, which on the PS1 means the developer's home directory
+# occupies console RAM and ships on the public disc image.
+trim-paths    = "all"
+# no_std has no unwinder; abort keeps the binary small.
+panic         = "abort"
+codegen-units = 1
+lto           = true
+
+[dependencies]
+nitroxide-sim = { path = "../sim" }
+
+psx-asset  = { path = "../.psoxide/sdk/crates/psx-asset" }
+psx-rt     = { path = "../.psoxide/sdk/crates/psx-rt", features = ["boot-trace"] }
+psx-engine = { path = "../.psoxide/engine/crates/psx-engine", features = ["boot-trace"] }
+psx-gpu    = { path = "../.psoxide/sdk/crates/psx-gpu" }
+psx-sfx    = { path = "../.psoxide/sdk/crates/psx-sfx" }
+psx-gte    = { path = "../.psoxide/sdk/crates/psx-gte" }
+psx-font   = { path = "../.psoxide/sdk/crates/psx-font" }
+psx-math   = { path = "../.psoxide/sdk/crates/psx-math" }
+# Startup asset streaming from the disc's shared WORLD.PAK container.
+psx-pack   = { path = "../.psoxide/sdk/crates/psx-pack" }
+# Port 2, for the split-screen game. The engine's `Ctx` only carries port 1.
+psx-pad    = { path = "../.psoxide/sdk/crates/psx-pad" }
+# The CD drive, for WORLD.PAK startup reads and the disc music `music.rs`
+# borrows from the demo disc.
+psx-io     = { path = "../.psoxide/sdk/crates/psx-io" }
+psx-spu    = { path = "../.psoxide/sdk/crates/psx-spu" }
+psx-vram   = { path = "../.psoxide/sdk/crates/psx-vram" }
+psx-telemetry = { path = "../.psoxide/sdk/crates/psx-telemetry" }
