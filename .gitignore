@@ -1,0 +1,32 @@
+target/
+**/target/
+
+# Local agent context (personal project, but keep the tree clean).
+.claude/
+.codex/
+AGENTS.md
+CLAUDE.md
+# Blender bake intermediates; `make assets` regenerates them.
+/build/
+
+# Generated knowledge-graph output.
+/graphify-out/
+
+# Hydrated by psoxide-link from the pin in psoxide-pin/. Never committed:
+# the pin is the source of truth, this is a cache.
+.psoxide/
+psoxide-pin/target/
+
+# Finder junk and local handoff notes.
+.DS_Store
+TEXTURE_STANDARDISATION_HANDOFF.md
+
+# Capture runs are working material, not source: screenshots, profiler logs,
+# EXE snapshots and the notes that go with them. They regenerate from a build
+# and they grew to 51 MB across 159 files before anyone looked. Nothing under
+# here is committed.
+/captures/
+*.ppm
+
+# A stale full checkout from the submodule era; the pin in psoxide-pin/ replaced it.
+/third_party/
