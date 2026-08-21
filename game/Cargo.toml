@@ -95,5 +95,6 @@ psx-pad    = { path = "../.psoxide/sdk/crates/psx-pad" }
 # borrows from the demo disc.
 psx-io     = { path = "../.psoxide/sdk/crates/psx-io" }
 psx-spu    = { path = "../.psoxide/sdk/crates/psx-spu" }
+psx-settings = { path = "../.psoxide/sdk/crates/psx-settings" }
 psx-vram   = { path = "../.psoxide/sdk/crates/psx-vram" }
 psx-telemetry = { path = "../.psoxide/sdk/crates/psx-telemetry" }
