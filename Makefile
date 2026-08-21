@@ -123,7 +123,7 @@ bake:
 # dependencies and the linker script resolve. `make PSOXIDE_FROM=/path/to/tree`
 # overrides it with a working tree, which is how the demo disc puts every
 # program on one SDK.
-PSOXIDE_REV ?= 9c298d83909fe5c74ac44870d45afb8227b30a63
+PSOXIDE_REV ?= 3d274b7406ac74c3d382c8a36ec523a92fc4da27
 PSOXIDE_FROM ?=
 psoxide:
 	@if [ -n "$(PSOXIDE_FROM)" ]; then \
