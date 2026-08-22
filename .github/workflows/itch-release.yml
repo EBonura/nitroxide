@@ -1,0 +1,141 @@
+name: Build and deploy NitroXide to itch.io
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish after building and validating the disc
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: itch-nitroxide-psx
+  cancel-in-progress: false
+
+jobs:
+  disc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out NitroXide
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Resolve the pinned private audio source
+        id: audio
+        shell: bash
+        run: |
+          set -euo pipefail
+          repository="$(awk '$1 == "repository" { print $2 }' release/audio-source.txt)"
+          revision="$(awk '$1 == "revision" { print $2 }' release/audio-source.txt)"
+          [[ "${repository}" == "EBonura/PSoXide-demo-disc" ]] || {
+            echo "unexpected audio repository: ${repository}" >&2
+            exit 1
+          }
+          [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "audio revision must be a full commit SHA" >&2
+            exit 1
+          }
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+
+      - name: Require the read-only audio credential
+        env:
+          AUDIO_DEPLOY_KEY: ${{ secrets.NITROXIDE_AUDIO_DEPLOY_KEY }}
+        run: |
+          [[ -n "${AUDIO_DEPLOY_KEY}" ]] || {
+            echo "NITROXIDE_AUDIO_DEPLOY_KEY is not configured" >&2
+            exit 1
+          }
+
+      - name: Check out only the licensed audio directory
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: EBonura/PSoXide-demo-disc
+          ref: ${{ steps.audio.outputs.revision }}
+          ssh-key: ${{ secrets.NITROXIDE_AUDIO_DEPLOY_KEY }}
+          persist-credentials: false
+          path: .private/demo-disc
+          sparse-checkout: audio
+          sparse-checkout-cone-mode: true
+
+      - name: Verify every licensed audio source byte
+        working-directory: .private/demo-disc
+        run: sha256sum --check "${GITHUB_WORKSPACE}/release/audio-manifest.sha256"
+
+      - name: Install the pinned Rust toolchain
+        run: rustup show
+
+      - name: Run host-side tests
+        run: make test
+
+      - name: Build the five-track disc
+        env:
+          GAMES_DIR: ${{ runner.temp }}/ps1-games
+          CDDA_DIR: ${{ github.workspace }}/.private/demo-disc/audio
+        run: make disc
+
+      - name: Stage and validate the itch package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(awk -F'"' '/^version[[:space:]]*=/{print $2; exit}' game/Cargo.toml)"
+          [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "invalid Cargo version: ${version}" >&2
+            exit 1
+          }
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "tag ${GITHUB_REF_NAME} does not match game version v${version}" >&2
+            exit 1
+          fi
+          grep -Fq "v${version}" release/README.txt || {
+            echo "release/README.txt does not identify v${version}" >&2
+            exit 1
+          }
+
+          source_dir="${RUNNER_TEMP}/ps1-games/NitroXide"
+          cue="${source_dir}/NitroXide.cue"
+          bin="${source_dir}/NitroXide.bin"
+          [[ -f "${cue}" && -f "${bin}" ]] || {
+            echo "NitroXide disc build is incomplete" >&2
+            exit 1
+          }
+          [[ "$(grep -c '^[[:space:]]*TRACK ' "${cue}")" -eq 5 ]] || {
+            echo "NitroXide release must contain one data and four audio tracks" >&2
+            exit 1
+          }
+          grep -Fq 'FILE "NitroXide.bin" BINARY' "${cue}" || {
+            echo "NitroXide.cue does not reference NitroXide.bin" >&2
+            exit 1
+          }
+
+          mkdir -p build/itch
+          cp "${bin}" "${cue}" release/README.txt build/itch/
+          printf '%s\n' "${version}" > build/itch/VERSION.txt
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Retain the verified package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nitroxide-psx-${{ steps.package.outputs.version }}
+          path: build/itch/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      - name: Validate destination and optionally publish
+        uses: EBonura/PSoXide/.github/actions/itch-publish@7f989e2580df66fe824c2853dfe3722ae2c1bb58
+        with:
+          source-dir: build/itch
+          target: bonnie-studios/nitroxide:psx
+          user-version: ${{ steps.package.outputs.version }}
+          publish: ${{ github.ref_type == 'tag' || inputs.publish }}
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}

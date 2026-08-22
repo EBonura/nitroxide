@@ -179,10 +179,11 @@ clean:
 	cd $(GAME) && cargo clean
 	cd $(SIM) && cargo clean
 
-# Push the music pressing to itch.io from this machine: the ~132 MB bin is too
-# big for GitHub, so CI cannot carry it. Needs butler on PATH and a one-time
-# `butler login`. CDDA_DIR must point at the demo-disc audio/ so the itch
-# build ships with its songs; the credit in release/README.txt rides along.
+# Local fallback for the canonical CI publisher in
+# .github/workflows/itch-release.yml. CDDA_DIR must point at the demo-disc
+# audio/ so the itch build ships with its songs; the credit in
+# release/README.txt rides along. CI fetches the same four files through a
+# repository-specific read-only key and verifies release/audio-manifest.sha256.
 V_GAME = $(shell awk -F'"' '/^version/{print $$2; exit}' $(GAME)/Cargo.toml)
 .PHONY: itch
 itch:

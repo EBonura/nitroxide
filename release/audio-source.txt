@@ -1,0 +1,3 @@
+# NitroXide CI may read only audio/ from this exact private revision.
+repository EBonura/PSoXide-demo-disc
+revision 6a619c98c3bed0dd10b5d1d8356214afec92e0aa
