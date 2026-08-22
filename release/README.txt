@@ -1,4 +1,4 @@
-NitroXide (PSX)  -  v0.2.0
+NitroXide (PSX)  -  v0.2.3
 ==========================
 
 A Rocket League-style rocket-car soccer game for the original PlayStation:
