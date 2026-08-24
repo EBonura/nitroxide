@@ -12,13 +12,16 @@
 
 extern crate psx_rt;
 
-use psx_engine::{button, App, Config, Ctx, Deadzone, PadState, Scene, VisualPacing};
+use psx_engine::{
+    button, ActionBinding, ActionMap, App, Config, Ctx, Deadzone, PadState, Scene, VisualPacing,
+};
 use psx_font::{
     fonts::{KENNEY_PIXEL, KENNEY_ROCKET},
     FontAtlas,
 };
 use psx_math::fmt::{u32_dec, U32_DEC_MAX};
 use psx_math::sincos::{cos_q12, sin_q12};
+use psx_settings::Profile;
 use psx_vram::{Clut, TexDepth, Tpage};
 
 use nitroxide_sim::{Input, Sim, Team, WinCondition, BOOST_MAX_PIPS, BOOST_SCALE};
@@ -59,7 +62,28 @@ const INTRO_FADE_OUT: i32 = INTRO_TOTAL - INTRO_FADE_IN - INTRO_HOLD;
 /// test would let noise on one enable the other. scaled_axis rather than a bare
 /// gate, so the wheel eases off centre instead of jumping straight to a quarter
 /// lock the moment the stick clears the zone.
-const STICK_DEADZONE: Deadzone = Deadzone::new(24);
+const SETTINGS_FILE: &str = "BESLES-00000NITRO01";
+const SETTINGS_TITLE: &str = "NitroXide Settings";
+const ACT_LEFT: usize = 0;
+const ACT_RIGHT: usize = 1;
+const ACT_UP: usize = 2;
+const ACT_DOWN: usize = 3;
+const ACT_THROTTLE: usize = 4;
+const ACT_REVERSE: usize = 5;
+const ACT_BOOST: usize = 6;
+const ACT_JUMP: usize = 7;
+const ACT_AIR_ROLL: usize = 8;
+const DRIVE_ACTIONS: ActionMap<9> = ActionMap::new([
+    ActionBinding::new(button::LEFT, 0),
+    ActionBinding::new(button::RIGHT, 0),
+    ActionBinding::new(button::UP, 0),
+    ActionBinding::new(button::DOWN, 0),
+    ActionBinding::new(button::R2, 0),
+    ActionBinding::new(button::L2, 0),
+    ActionBinding::new(button::CIRCLE, 0),
+    ActionBinding::new(button::CROSS, 0),
+    ActionBinding::new(button::L1, 0),
+]);
 
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
@@ -183,10 +207,6 @@ struct NitroXide {
     /// Split-screen versus: player two drives the orange car off port 2 and
     /// the AI stands down.
     two_player: bool,
-    /// Port 2 this tick and last, kept here because the engine's `Ctx` only
-    /// carries port 1.
-    pad2: PadState,
-    pad2_prev: PadState,
     /// The match is held and the pause menu is up.
     paused: bool,
     /// Highlighted pause row, as an index into [`NitroXide::pause_rows`].
@@ -224,6 +244,8 @@ struct NitroXide {
     seed: u32,
     /// Ticks spent on the boot splash, driving its fade and its skip grace.
     intro_t: i32,
+    profile: Profile<9, 0>,
+    settings_dirty: bool,
 }
 
 impl NitroXide {
@@ -240,8 +262,6 @@ impl NitroXide {
             menu_at: 0,
             ball_cam: [false; 2],
             two_player: false,
-            pad2: PadState::NONE,
-            pad2_prev: PadState::NONE,
             paused: false,
             pause_row: 0,
             settings: None,
@@ -254,6 +274,8 @@ impl NitroXide {
             ready: [false; 2],
             focus: 0,
             seed: 0,
+            profile: Profile::new(DRIVE_ACTIONS),
+            settings_dirty: false,
         }
     }
 
@@ -313,6 +335,7 @@ impl NitroXide {
         self.settings = Some(row);
         if back || (cross && rows[row] == SettingsRow::Back) {
             self.settings = None;
+            self.persist_settings();
             return;
         }
         // X steps forward like the old pause toggles did; left and right step
@@ -336,10 +359,16 @@ impl NitroXide {
                 };
                 draw::set_arena_time(self.arena_time);
             }
-            SettingsRow::Sound => audio::set_muted(!audio::muted()),
+            SettingsRow::Sound => {
+                audio::set_muted(!audio::muted());
+                self.profile.sfx_volume = if audio::muted() { 0 } else { 100 };
+                self.settings_dirty = true;
+            }
             SettingsRow::Music => {
                 let on = !self.music.enabled();
                 self.music.set_enabled(on, tick);
+                self.profile.music_volume = if on { 100 } else { 0 };
+                self.settings_dirty = true;
             }
             SettingsRow::Track => self.music.cycle_track(step, tick),
             SettingsRow::Back => {}
@@ -351,15 +380,15 @@ impl NitroXide {
     /// controller works without a menu. Both
     /// players go through this: a split-screen game where the two seats do not
     /// drive identically is a bug waiting to be reported as one.
-    fn read_pad(pad: &PadState, prev: &PadState) -> Input {
-        let held = |b: u16| pad.buttons.is_held(b);
-        let pressed = |b: u16| pad.buttons.is_held(b) && !prev.buttons.is_held(b);
+    fn read_pad(map: &ActionMap<9>, deadzone: Deadzone, pad: &PadState, prev: &PadState) -> Input {
+        let actions = map.input(*pad, *prev);
+        let held = |action: usize| actions.held(action);
 
         let mut steer = 0;
-        if held(button::LEFT) {
+        if held(ACT_LEFT) {
             steer -= 128;
         }
-        if held(button::RIGHT) {
+        if held(ACT_RIGHT) {
             steer += 128;
         }
         // Nose down on a forward push, the way Rocket League has it. The pad
@@ -368,25 +397,25 @@ impl NitroXide {
         // neither reads the throttle, because the throttle is a trigger you
         // hold the whole time you are driving.
         let mut pitch = 0;
-        if held(button::UP) {
+        if held(ACT_UP) {
             pitch += 128;
         }
-        if held(button::DOWN) {
+        if held(ACT_DOWN) {
             pitch -= 128;
         }
         let (sx, sy) = pad.sticks.left_centered();
-        if let Some(v) = STICK_DEADZONE.scaled_axis(sx) {
+        if let Some(v) = deadzone.scaled_axis(sx) {
             steer = v as i32; // -127..=127 already, the sim's steer range
         }
-        if let Some(v) = STICK_DEADZONE.scaled_axis(sy) {
+        if let Some(v) = deadzone.scaled_axis(sy) {
             pitch = -(v as i32);
         }
 
         let mut throttle = 0;
-        if held(button::R2) {
+        if held(ACT_THROTTLE) {
             throttle += 128;
         }
-        if held(button::L2) {
+        if held(ACT_REVERSE) {
             throttle -= 128;
         }
 
@@ -394,18 +423,27 @@ impl NitroXide {
             throttle,
             steer: steer.clamp(-128, 128),
             pitch: pitch.clamp(-128, 128),
-            boost: held(button::CIRCLE),
-            jump_pressed: pressed(button::CROSS),
+            boost: held(ACT_BOOST),
+            jump_pressed: actions.pressed(ACT_JUMP),
             // Held as well as tapped: the sim extends a jump for up to a fifth
             // of a second while this is down, which is what makes jump height
             // something the player controls.
-            jump_held: held(button::CROSS),
+            jump_held: held(ACT_JUMP),
             // Held, not tapped: the modifier that turns steer into roll.
             // L1 is both powerslide and air roll, the way Rocket League binds
             // it: on the ground it breaks the back end loose, in the air it
             // rolls. One button, and which it means is decided by the wheels.
-            air_roll: held(button::L1),
-            handbrake: held(button::L1),
+            air_roll: held(ACT_AIR_ROLL),
+            handbrake: held(ACT_AIR_ROLL),
+        }
+    }
+
+    fn persist_settings(&mut self) {
+        if !self.settings_dirty {
+            return;
+        }
+        if psx_settings::save_slot_one(SETTINGS_FILE, SETTINGS_TITLE, &self.profile).is_ok() {
+            self.settings_dirty = false;
         }
     }
 
@@ -416,7 +454,6 @@ impl NitroXide {
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
         self.sim.opponent_ai = self.menu != ROW_PRACTICE && !self.two_player;
         self.ball_cam = [false; 2];
-        self.pad2_prev = self.pad2;
         self.paused = false;
         self.pause_row = 0;
         draw::set_seat_paints(self.paints);
@@ -1206,6 +1243,9 @@ impl Scene for NitroXide {
         // covers a pad that was not ready at boot or gets re-plugged.
         let _ = psx_pad::enable_analog_port1();
         let _ = psx_pad::enable_analog_port2();
+        if let Ok(profile) = psx_settings::load_slot_one(SETTINGS_FILE) {
+            self.profile = profile;
+        }
         draw::setup();
         assert!(
             assets::load_arena_texture(),
@@ -1222,6 +1262,8 @@ impl Scene for NitroXide {
             draw::set_arena_time(self.arena_time);
         }
         audio::init();
+        audio::set_muted(self.profile.sfx_volume == 0);
+        self.music.set_enabled(self.profile.music_volume != 0, 0);
         self.sim = Sim::new();
         self.display = Some(FontAtlas::upload(
             &KENNEY_ROCKET,
@@ -1415,10 +1457,9 @@ impl Scene for NitroXide {
                 // Port 2 every frame, so plugging a pad in makes the second
                 // panel come alive while the player is still looking at it.
                 // The count is fixed at `start_match` and not touched again.
-                self.pad2_prev = self.pad2;
-                self.pad2 = psx_pad::poll_port2();
+                ctx.refresh_second_pad();
                 let was_two = self.two_player;
-                self.two_player = self.pad2.is_connected();
+                self.two_player = ctx.pad_for(1).is_connected();
                 if self.two_player != was_two {
                     // A pad arriving takes its own panel over, and a pad
                     // leaving hands it back. Either way nothing stays locked
@@ -1426,11 +1467,7 @@ impl Scene for NitroXide {
                     self.focus = 0;
                     self.ready[1] = false;
                 }
-                let p2 = |b: u16| {
-                    self.two_player
-                        && self.pad2.buttons.is_held(b)
-                        && !self.pad2_prev.buttons.is_held(b)
-                };
+                let p2 = |b: u16| self.two_player && ctx.just_pressed_for(1, b);
                 // Pad one always owns seat 0 in a two-pad game; alone it owns
                 // whichever panel it last hopped to.
                 let seat1 = if self.two_player { 0 } else { self.focus };
@@ -1529,15 +1566,10 @@ impl Scene for NitroXide {
                 // be driven from either seat. Whoever called it is usually the
                 // one who wants to change something.
                 if self.two_player {
-                    self.pad2_prev = self.pad2;
-                    self.pad2 = psx_pad::poll_port2();
+                    ctx.refresh_second_pad();
                 }
                 let rows = self.pause_rows();
-                let p2 = |b: u16| {
-                    self.two_player
-                        && self.pad2.buttons.is_held(b)
-                        && !self.pad2_prev.buttons.is_held(b)
-                };
+                let p2 = |b: u16| self.two_player && ctx.just_pressed_for(1, b);
                 // An open settings panel owns both pads until it is closed.
                 // The edges are collected up front because the closure holds
                 // a borrow the handler's `&mut self` cannot share.
@@ -1595,19 +1627,22 @@ impl Scene for NitroXide {
                 if ctx.just_pressed(button::TRIANGLE) {
                     self.ball_cam[0] = !self.ball_cam[0];
                 }
-                let input = Self::read_pad(&ctx.pad, &ctx.pad_prev);
+                let actions = self.profile.actions;
+                let deadzone = Deadzone::new(self.profile.move_deadzone as i16);
+                let input = Self::read_pad(&actions, deadzone, &ctx.pad, &ctx.pad_prev);
                 if self.two_player {
-                    // Port 2 is polled here rather than by the runner, which
-                    // only knows about port 1. One extra serial poll a tick,
-                    // and only in the mode that needs it.
-                    self.pad2_prev = self.pad2;
-                    self.pad2 = psx_pad::poll_port2();
-                    if self.pad2.buttons.is_held(button::TRIANGLE)
-                        && !self.pad2_prev.buttons.is_held(button::TRIANGLE)
-                    {
+                    // The engine context owns both samples, but port 2 stays
+                    // opt-in so solo play pays no second SIO transaction.
+                    ctx.refresh_second_pad();
+                    if ctx.just_pressed_for(1, button::TRIANGLE) {
                         self.ball_cam[1] = !self.ball_cam[1];
                     }
-                    let p2 = Self::read_pad(&self.pad2, &self.pad2_prev);
+                    let p2 = Self::read_pad(
+                        &actions,
+                        deadzone,
+                        &ctx.pad_for(1),
+                        &ctx.previous_pad_for(1),
+                    );
                     self.sim.tick_versus(&input, &p2);
                 } else {
                     self.sim.tick(&input);
