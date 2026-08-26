@@ -4,7 +4,7 @@ cargo-features = ["trim-paths"]
 
 [package]
 name    = "nitroxide"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 # Matches PSoXide, whose SDK and engine this links.
 license = "GPL-2.0-or-later"

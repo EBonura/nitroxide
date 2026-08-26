@@ -72,6 +72,9 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup show
 
+      - name: Hydrate the pinned PSoXide SDK
+        run: make psoxide
+
       - name: Run host-side tests
         run: make test
 
