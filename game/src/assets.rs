@@ -7,10 +7,10 @@ use crate::draw;
 
 /// `game/assets/disc/chunk_1.psxt`, assigned by its `psx-pack` filename.
 const ARENA_TEXTURE_CHUNK: u32 = 1;
-/// The cooked atlas is currently 14,908 bytes. Leave a little authoring room
+/// The cooked atlas is currently 98,460 bytes. Leave a little authoring room
 /// without reserving it permanently: this buffer lives only on the boot stack
 /// and is reclaimed as soon as the upload to VRAM finishes.
-const ARENA_TEXTURE_CAPACITY: usize = 15 * 1024;
+const ARENA_TEXTURE_CAPACITY: usize = 100 * 1024;
 const ARENA_TEXTURE_WORDS: usize = ARENA_TEXTURE_CAPACITY.div_ceil(4);
 
 /// Load and upload the arena atlas before audio or CD-DA claim the CD drive.

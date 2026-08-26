@@ -309,8 +309,6 @@ const FLOOR_BIAS: i32 = 150;
 /// their centres, not by the shared edge. They show only through the
 /// single-pixel holes the band boundary can still open.
 const UNDERDRAW_BIAS: i32 = FLOOR_BIAS + 1000;
-/// Painted lines and the centre circle: on the pitch, under everything else.
-const MARKING_BIAS: i32 = 100;
 /// Shadows sit between the pitch and the thing casting them.
 const SHADOW_DEPTH_BIAS: i32 = 60;
 /// Boost pads read as objects on the ground rather than paint, so they come
@@ -428,8 +426,6 @@ pub fn set_arena_time(time: ArenaTime) {
 // a match nobody redressed looks exactly as it did.
 const GRASS_A: Rgb = (30, 62, 40);
 const GRASS_B: Rgb = (38, 76, 48);
-const CHALK: Rgb = (205, 220, 210);
-
 // Pitch tiling. Finer than a flat surface needs, because a quad with a vertex
 // behind the camera is dropped whole: small tiles lose a sliver, one big quad
 // loses the entire floor.
@@ -437,10 +433,6 @@ const TILES_X: i32 = 8;
 const TILES_Z: i32 = 10;
 /// Segments per side wall, for the same reason.
 const WALL_SEGS: i32 = 8;
-/// Radius of the centre circle (RL: 1152).
-const CIRCLE_R: i32 = 1152;
-const CIRCLE_SEGS: usize = 8;
-
 /// Radius of the curve where the floor rolls up into the wall, and the wall
 /// rolls over into the ceiling. Rocket League's arena is a rounded tray, not a
 /// box: these transitions are most of why it reads as an arena. Real ones are
@@ -476,7 +468,7 @@ const CORNER_Z: i32 = sim::CORNER - sim::HALF_X; // 3968
 /// Where the chamfer meets the end wall, on X.
 const CORNER_X: i32 = sim::CORNER - sim::HALF_Z; // 2944
 
-// floor(80) + markings(11) + swept walls(24 spans x 7) + roof cover(96)
+// floor(80) + swept walls(24 spans x 7) + roof cover(96)
 // + goals(14) + ball(48) + flame(2 x 2) + shadows(2 x 3) + lamps(27)
 // + pads(34, up to 4 each now that each stands on a two-ring plate), with slack.
 // The pads were never in this tally and the plate pushed them past the old 448.
@@ -924,11 +916,14 @@ fn build_spans() {
 
 // ---- arena texture ---------------------------------------------------------
 // One 4bpp page holds the 64x64 pitch tile, the 32x32 wall panel, the 128x84
-// honeycomb enclosure, and a separate 96x48 square goal net. Separate CLUTs
-// let the solid surfaces and the two open meshes share the page without trying
-// to share a sixteen-colour palette.
+// honeycomb enclosure, a separate 96x48 square goal net, and two more pages of
+// full-resolution grass with the pitch markings composited into it. Separate
+// CLUTs let the solid surfaces and two open meshes share the asset without
+// trying to share a sixteen-colour palette.
 
 const TEX_TPAGE: Tpage = Tpage::new(384, 0, TexDepth::Bit4);
+const MARKED_LEFT_TPAGE: Tpage = Tpage::new(448, 0, TexDepth::Bit4);
+const MARKED_RIGHT_TPAGE: Tpage = Tpage::new(576, 0, TexDepth::Bit4);
 /// One palette each. Sharing sixteen colours between grass and wall left six
 /// for the pitch, which is the largest surface in the game; 4bpp lets every
 /// quad name its own CLUT, so they get sixteen apiece for nothing.
@@ -941,12 +936,22 @@ const GRASS_CLUT: Clut = Clut::new(384, 258);
 /// is what makes the holes in a net holes rather than black paint. Grass and
 /// wall both use entry 0 for real colour, so they cannot share this.
 const COVER_CLUT: Clut = Clut::new(384, 259);
+/// Fifteen grass colours plus chalk for the two marked-pitch pages.
+const MARKED_CLUT: Clut = Clut::new(384, 260);
 /// Grass occupies a 64x64 square at the origin, the wall a 32x32 tile beside
-/// it, the honeycomb fills the upper-right, and the square goal net sits below
-/// that in the same open-mesh column.
-const TEX_W: usize = 224;
-const TEX_H: usize = 132;
+/// it, the goal net sits directly below both, and the honeycomb fills the
+/// upper-right. Two following source pages are four by four 64-pixel marked
+/// grass tiles each. They upload into the free VRAM columns on either side of
+/// the HUD page rather than sitting contiguously at runtime.
+const TEX_W: usize = 256;
+const TEX_H: usize = 256 * 3;
 const GRASS_TILE_W: i32 = 64;
+const MARKED_TILE_W: i32 = 64;
+const MARKED_U0: i32 = 0;
+const MARKED_V0: i32 = 0;
+const MARKED_FIRST_Z: i32 = 3;
+const MARKED_ROWS: i32 = 4;
+const MARKED_COLS_PER_PAGE: i32 = 4;
 /// 4bpp packs four texels per halfword.
 const TEX_HALFWORDS_PER_ROW: usize = TEX_W / 4;
 
@@ -984,6 +989,20 @@ const COVER_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(COVER_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
+const MARKED_LEFT_PACKET: TexturedGouraudPacketMaterial =
+    TextureMaterial::new(
+        MARKED_CLUT.uv_clut_word(),
+        MARKED_LEFT_TPAGE.uv_tpage_word(0),
+    )
+    .with_dither(true)
+    .textured_gouraud_packet_material();
+const MARKED_RIGHT_PACKET: TexturedGouraudPacketMaterial =
+    TextureMaterial::new(
+        MARKED_CLUT.uv_clut_word(),
+        MARKED_RIGHT_TPAGE.uv_tpage_word(0),
+    )
+        .with_dither(true)
+        .textured_gouraud_packet_material();
 
 /// One seamless honeycomb sheet in the page's spare width. The upper walls and
 /// roof sample this same material, so the enclosure cannot change cell shape
@@ -993,7 +1012,7 @@ const COVER_PACKET: TexturedGouraudPacketMaterial =
 /// are six complete two-row honeycomb periods, enough to carry the lower net
 /// boundary continuously around the roof curve without exhausting V, while
 /// both axes still tile without a doubled strand at a patch boundary.
-const COVER_U0: u8 = 96;
+const COVER_U0: u8 = 128;
 const COVER_V0: u8 = 0;
 const COVER_W: i32 = 128;
 const COVER_H: i32 = 84;
@@ -1001,8 +1020,8 @@ const HEX_W: i32 = 8;
 /// A distinct square-string sheet for the bag inside each goal. It lives below
 /// the honeycomb so the goal can keep the same transparent palette and packet
 /// without ever sampling the arena enclosure's hexagons.
-const NET_U0: u8 = COVER_U0;
-const NET_V0: u8 = COVER_H as u8;
+const NET_U0: u8 = 0;
+const NET_V0: u8 = GRASS_TILE_W as u8;
 const NET_W: i32 = 96;
 const NET_H: i32 = 48;
 /// One cover texel represents this many world units on every face. The old
@@ -1016,8 +1035,13 @@ const _: () = assert!(
     "cover mesh runs off the texture page"
 );
 const _: () = assert!(
-    COVER_V0 as i32 + COVER_H <= NET_V0 as i32,
-    "cover mesh overlaps the square goal net"
+    NET_V0 as i32 + NET_H <= 256,
+    "goal net runs off the base texture page"
+);
+const _: () = assert!(
+    MARKED_U0 + MARKED_COLS_PER_PAGE * MARKED_TILE_W <= TEX_W as i32
+        && MARKED_V0 + MARKED_ROWS * MARKED_TILE_W <= 256,
+    "marked pitch tiles run off the texture page"
 );
 
 /// Texels of cover for `span` world units, shared by walls and roof.
@@ -1107,7 +1131,9 @@ fn apply_arena_draw_mode() {
     ARENA_MATERIAL.apply_draw_mode();
 }
 
-/// Validate the cooked arena atlas and upload its pixels and three palettes.
+/// Validate the cooked arena atlas and upload its three source pages and four
+/// palettes. The marked pages straddle the HUD's VRAM column, so their source
+/// rows are contiguous in the asset but their upload destinations are not.
 /// The caller owns the backing buffer only until this returns; VRAM owns the
 /// useful copy afterwards.
 pub fn upload_arena_texture(blob: &[u8]) -> bool {
@@ -1118,22 +1144,31 @@ pub fn upload_arena_texture(blob: &[u8]) -> bool {
         || texture.height() as usize != TEX_H
         || texture.halfwords_per_row() as usize != TEX_HALFWORDS_PER_ROW
         || texture.pixel_bytes().len() != TEX_HALFWORDS_PER_ROW * TEX_H * 2
-        || texture.clut_entries() != 16 * 3
-        || texture.clut_bytes().len() != 16 * 3 * 2
+        || texture.clut_entries() != 16 * 4
+        || texture.clut_bytes().len() != 16 * 4 * 2
     {
         return false;
     }
 
-    upload_bytes(
-        VramRect::new(
-            TEX_TPAGE.x(),
-            TEX_TPAGE.y(),
-            TEX_HALFWORDS_PER_ROW as u16,
-            TEX_H as u16,
-        ),
-        texture.pixel_bytes(),
-    );
-    for (row, clut) in [TEX_CLUT, GRASS_CLUT, COVER_CLUT]
+    const PAGE_H: usize = 256;
+    const PAGE_BYTES: usize = TEX_HALFWORDS_PER_ROW * PAGE_H * 2;
+    for (page, tpage) in [TEX_TPAGE, MARKED_LEFT_TPAGE, MARKED_RIGHT_TPAGE]
+        .iter()
+        .copied()
+        .enumerate()
+    {
+        let start = page * PAGE_BYTES;
+        upload_bytes(
+            VramRect::new(
+                tpage.x(),
+                tpage.y(),
+                TEX_HALFWORDS_PER_ROW as u16,
+                PAGE_H as u16,
+            ),
+            &texture.pixel_bytes()[start..start + PAGE_BYTES],
+        );
+    }
+    for (row, clut) in [TEX_CLUT, GRASS_CLUT, COVER_CLUT, MARKED_CLUT]
         .iter()
         .copied()
         .enumerate()
@@ -2684,6 +2719,10 @@ impl Builder<'_> {
         light: &[[Rgb; FLOOR_GZ]; FLOOR_GX],
         gx: usize,
         gz: usize,
+        tex_u0: i32,
+        tex_v0: i32,
+        tex_w: i32,
+        packet: TexturedGouraudPacketMaterial,
     ) {
         count_offered!();
         let mut sp = [(0i16, 0i16); 4];
@@ -2704,8 +2743,6 @@ impl Builder<'_> {
             return;
         }
         count_kept!();
-        let last = (GRASS_TILE_W - 1) as u8;
-        let uvs = [uvw(0, 0), uvw(last, 0), uvw(0, last), uvw(last, last)];
         let stride = FLOOR_SPLIT_MAX as usize;
         let (r0, r1) = unsafe { (light.get_unchecked(gx), light.get_unchecked(gx + stride)) };
         let tints = unsafe {
@@ -2716,7 +2753,18 @@ impl Builder<'_> {
                 *r1.get_unchecked(gz + stride),
             ]
         };
-        self.quad_tex_projected(sp, z_sum, uvs, tints, FLOOR_BIAS, GRASS_PACKET, false);
+        let (u0, v0, last) = (tex_u0 as u8, tex_v0 as u8, (tex_w - 1) as u8);
+        let (u1, v1) = (u0 + last, v0 + last);
+        let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
+        self.quad_tex_projected(
+            sp,
+            z_sum,
+            uvs,
+            tints,
+            FLOOR_BIAS,
+            packet,
+            false,
+        );
     }
 
     fn floor(&mut self, cull: &Cull) {
@@ -2750,6 +2798,22 @@ impl Builder<'_> {
                     (ix * FLOOR_SPLIT_MAX) as usize,
                     (iz * FLOOR_SPLIT_MAX) as usize,
                 );
+                let marked = (MARKED_FIRST_Z..MARKED_FIRST_Z + MARKED_ROWS).contains(&iz);
+                let (tex_u0, tex_v0, tex_w, packet) = if marked {
+                    let packet = if ix < MARKED_COLS_PER_PAGE {
+                        MARKED_LEFT_PACKET
+                    } else {
+                        MARKED_RIGHT_PACKET
+                    };
+                    (
+                        MARKED_U0 + (ix % MARKED_COLS_PER_PAGE) * MARKED_TILE_W,
+                        MARKED_V0 + (iz - MARKED_FIRST_Z) * MARKED_TILE_W,
+                        MARKED_TILE_W,
+                        packet,
+                    )
+                } else {
+                    (0, 0, GRASS_TILE_W, GRASS_PACKET)
+                };
 
                 // Most of the pitch is one-quad tiles, and the general path
                 // below charges each of them the full grid machinery (a 5x5
@@ -2758,7 +2822,9 @@ impl Builder<'_> {
                 // four projections, one emit. Pixel-identical, and an n == 1
                 // tile never conforms, so nothing else changes.
                 if n == 1 {
-                    self.floor_tile_far(x0, z0, x1, z1, light, gx, gz);
+                    self.floor_tile_far(
+                        x0, z0, x1, z1, light, gx, gz, tex_u0, tex_v0, tex_w, packet,
+                    );
                     continue;
                 }
 
@@ -2766,7 +2832,9 @@ impl Builder<'_> {
                 // texture keeps its scale and only the vertex count goes up.
                 let px = |i: i32| x0 + (x1 - x0) * i / n;
                 let pz = |i: i32| z0 + (z1 - z0) * i / n;
-                let u = |i: i32| (GRASS_TILE_W * i / n).min(GRASS_TILE_W - 1) as u8;
+                let u = |base: i32, i: i32| {
+                    (base + (tex_w * i / n).min(tex_w - 1)) as u8
+                };
 
                 // Project the tile's corner grid once. Every interior corner
                 // is shared by four sub-quads, so projecting per quad ran the
@@ -2823,7 +2891,7 @@ impl Builder<'_> {
                 }
 
                 for sx in 0..nu {
-                    let (ua, ub) = (u(sx as i32), u(sx as i32 + 1));
+                    let (ua, ub) = (u(tex_u0, sx as i32), u(tex_u0, sx as i32 + 1));
                     // Rows of the light table, resolved once per column of
                     // sub-tiles. Unchecked because the grid is sized from the
                     // same constants the loop bounds are, and a bounds check
@@ -2850,7 +2918,7 @@ impl Builder<'_> {
                             continue;
                         }
                         count_kept!();
-                        let (va, vb) = (u(sz as i32), u(sz as i32 + 1));
+                        let (va, vb) = (u(tex_v0, sz as i32), u(tex_v0, sz as i32 + 1));
                         let uvs = [uvw(ua, va), uvw(ub, va), uvw(ua, vb), uvw(ub, vb)];
                         let (j0, j1) = (gz + sz * stride, gz + (sz + 1) * stride);
                         let tints = unsafe {
@@ -2867,7 +2935,7 @@ impl Builder<'_> {
                             uvs,
                             tints,
                             FLOOR_BIAS,
-                            GRASS_PACKET,
+                            packet,
                             false,
                         );
                     }
@@ -3398,56 +3466,6 @@ impl Builder<'_> {
             team,
             GOAL_BURST_SCALE,
         );
-    }
-
-    fn markings(&mut self) {
-        // Pitch markings are a single uu above the floor, which is inside one
-        // OT slot at range: bias them forward so the sort never ties.
-        // Paint sits in the same light the grass under it does, or a chalk
-        // line at the touchline glows brighter than the pitch it is on.
-        const BIAS: i32 = MARKING_BIAS;
-        // Halfway line.
-        let half_w = 40;
-        let (lx, rx) = (-sim::HALF_X + 300, sim::HALF_X - 300);
-        let (cl, cr) = (
-            tinted(CHALK, floor_tint(lx, 0)),
-            tinted(CHALK, floor_tint(rx, 0)),
-        );
-        self.quad_biased(
-            [
-                (lx, -1, -half_w),
-                (rx, -1, -half_w),
-                (lx, -1, half_w),
-                (rx, -1, half_w),
-            ],
-            [cl, cr, cl, cr],
-            BIAS,
-        );
-        // Centre circle as a ring of trapezoids. Right under the roof rig, so
-        // one lookup at the middle covers all of it.
-        let ring = tinted(CHALK, floor_tint(0, 0));
-        let (r_in, r_out) = (CIRCLE_R - 60, CIRCLE_R);
-        // Half the trapezoids in a half-width view: the circle is never nearer
-        // than the kickoff spot there, where eight corners already round.
-        let seg_step = if split_view() { 2 } else { 1 };
-        for i in (0..CIRCLE_SEGS).step_by(seg_step) {
-            let a0 = (4096 * i as i32 / CIRCLE_SEGS as i32) as u16;
-            let a1 = (4096 * (i as i32 + seg_step as i32) / CIRCLE_SEGS as i32) as u16;
-            let p = |a: u16, rad: i32| ((sin_q12(a) * rad) >> 12, -1, (cos_q12(a) * rad) >> 12);
-            self.quad_biased(
-                [p(a0, r_in), p(a0, r_out), p(a1, r_in), p(a1, r_out)],
-                [ring; 4],
-                BIAS,
-            );
-        }
-        // There used to be a tinted apron quad in front of each net here. It
-        // was one flat 1400 uu deep quad, so the ordering table gave the whole
-        // thing a single slot taken from its mid depth, and every floor tile
-        // nearer than that drew over it. All that survived was a hard dark
-        // stripe along the goal line, which read as a hole in the pitch. The
-        // tint it wanted is already in the pitch: `build_lighting` warms each
-        // end of the floor toward its team colour, on textured grass and with
-        // no quad to sort.
     }
 
     /// The arena's cross-section, from the floor edge up and over to the
@@ -4990,7 +5008,6 @@ fn build_view(
             b.lamps(&cull);
         });
         staged!(S_TRIM, {
-            b.markings();
             // The dial belongs to whoever is looking through this view, and
             // sits the same distance in from that view's right edge.
             if let Some(panels) = &front {
