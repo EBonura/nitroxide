@@ -58,6 +58,11 @@ pub const CEIL: i32 = 2044;
 /// The renderer consumes this same value, so the visible curved skirt and the
 /// collision surface cannot quietly drift apart.
 pub const WALL_RAMP_R: i32 = 260;
+/// Radius of the wall-to-ceiling quarter pipe.
+///
+/// As with [`WALL_RAMP_R`], the renderer consumes this value directly so the
+/// cage silhouette and its collision surface stay the same shape.
+pub const CEIL_R: i32 = 260;
 /// Where a corner plane crosses each axis: the corner is `|x| + |z| = CORNER`.
 pub const CORNER: i32 = 8064;
 /// Half the width of a goal mouth (RL: 892.755).
@@ -205,10 +210,21 @@ const AIR_SPIN_DECAY: i32 = 880;
 /// Ceiling on any one axis, in Q12 turns a tick. RL caps angular speed at
 /// about 5.5 rad/s, which is 0.875 turns a second, or 60 Q12 units a tick.
 const AIR_SPIN_MAX: i32 = 60;
+/// Maximum automatic landing correction, in Q12 turns per tick. Sixteen is
+/// about 1.4 degrees a frame: visible and useful during a ceiling-height fall,
+/// but slow enough that leaving the upper curve never looks like a pose snap.
+const AIR_RIGHT_MAX: i32 = 16;
+/// Proportional part of the landing correction. Large errors use the cap;
+/// near upright, dividing by eight eases the last few degrees into place.
+const AIR_RIGHT_GAIN_DEN: i32 = 8;
 /// Speed needed to hold onto a wall. Rocket League keeps you stuck while you
 /// are moving and drops you when you are not, which is what stops walls being
 /// a place to park.
 const STICK_SPEED: i32 = 700;
+/// A wall-driving car can carry its grip through the upper curve, but the flat
+/// roof is not magnetic. Normals this close to world-down are collision only:
+/// they stop penetration, then gravity pulls the car back into the arena.
+const ROOF_STICK_LIMIT: i32 = -4090;
 /// A surface normal at least this upright is one a car can rest on without
 /// carrying any speed: Q12 cosine of 45 degrees.
 const SHALLOW_UP: i32 = 2896;
@@ -796,8 +812,8 @@ pub struct Car {
     pub jump_bonus_rem: i16,
     pub jump_sticky_rem: i16,
     /// Surface normal the jump left from, Q12. The sticky force pulls back
-    /// along this, and it is not the same as `up`, which is flattened to world
-    /// up the moment the car leaves a wall.
+    /// along this, and it is not the same as `up`, which keeps the car's body
+    /// attitude while it is detached from a wall.
     pub jump_normal: V3,
     /// Ticks of boost still owed by the minimum burn, so a tap is a real
     /// nudge rather than one frame of nothing.
@@ -881,9 +897,9 @@ fn plane_axes(up: V3) -> (V3, V3) {
 
 /// Rotate `v` about the Q12 unit `axis` by a Q0.12 angle.
 ///
-/// Rodrigues, with the parallel term dropped: every use here turns a basis
-/// vector about another basis vector, and those are perpendicular, so the
-/// `axis * (axis . v)` term is zero.
+/// Rodrigues, with the parallel term dropped. Air-control always turns a
+/// basis vector about a perpendicular basis axis, so the omitted term is zero
+/// and costs need not be paid on PlayStation.
 fn rotate_about(v: V3, axis: V3, angle_q12: i32) -> V3 {
     let a = (angle_q12 & 0xFFF) as u16;
     let (s, c) = (sin_q12(a), cos_q12(a));
@@ -892,6 +908,24 @@ fn rotate_about(v: V3, axis: V3, angle_q12: i32) -> V3 {
         ((v.x * c) >> 12) + ((k.x * s) >> 12),
         ((v.y * c) >> 12) + ((k.y * s) >> 12),
         ((v.z * c) >> 12) + ((k.z * s) >> 12),
+    )
+}
+
+/// Full Rodrigues rotation for an arbitrary axis.
+///
+/// Landing correction rotates both stored basis vectors about the shortest
+/// path to world-up. That axis need not be perpendicular to the nose, so this
+/// less frequent path retains the parallel term.
+fn rotate_any_about(v: V3, axis: V3, angle_q12: i32) -> V3 {
+    let a = (angle_q12 & 0xFFF) as u16;
+    let (s, c) = (sin_q12(a), cos_q12(a));
+    let k = cross_q12(axis, v);
+    let parallel = dot_q12(axis, v);
+    let share = (parallel * (4096 - c)) >> 12;
+    V3::new(
+        ((v.x * c) >> 12) + ((k.x * s) >> 12) + ((axis.x * share) >> 12),
+        ((v.y * c) >> 12) + ((k.y * s) >> 12) + ((axis.y * share) >> 12),
+        ((v.z * c) >> 12) + ((k.z * s) >> 12) + ((axis.z * share) >> 12),
     )
 }
 
@@ -1857,6 +1891,36 @@ impl Sim {
                 car.yaw = car.yaw.wrapping_add(car.w_yaw as u16);
             }
 
+            // A car that runs out of grip on the upper curve keeps the pose it
+            // had at the instant of release. With no explicit pitch or roll,
+            // gently turn that pose toward a wheels-down landing while it
+            // falls. The correction is capped and proportional near the end,
+            // so it is a recovery over many frames rather than the old
+            // one-tick assignment to world-up.
+            if input.pitch == 0 && !input.air_roll {
+                let (_, current_up, current_forward) = car.basis();
+                let world_up = V3::new(0, 4096, 0);
+                let mut axis = cross_q12(current_up, world_up);
+                let sine = axis.len();
+                let error = atan2_q12(sine, dot_q12(current_up, world_up)) as i32;
+                if error > 1 {
+                    // At exactly upside-down the cross product has no preferred
+                    // side. Rolling about the nose is deterministic and keeps
+                    // the heading intact while starting the recovery.
+                    axis = if sine == 0 {
+                        current_forward
+                    } else {
+                        axis.unit_q12()
+                    };
+                    let step = (error / AIR_RIGHT_GAIN_DEN).clamp(1, AIR_RIGHT_MAX);
+                    let corrected_up = rotate_any_about(current_up, axis, step).unit_q12();
+                    let corrected_forward =
+                        rotate_any_about(current_forward, axis, step).unit_q12();
+                    car.up = corrected_up;
+                    car.yaw = yaw_for(corrected_up, corrected_forward);
+                }
+            }
+
             // Throttle in the air pitches the car, above, and also pushes it a
             // little along its nose, as it does in Rocket League. Both at
             // once: the stick was doing only the first, so an airborne car
@@ -2090,20 +2154,12 @@ impl Sim {
             car.clear_jump_state();
             car.dodge_window = 0;
         }
-        // Ceiling: no wall driving yet, so just stop the jump dead.
-        let head = uu(CEIL - CAR_HALF_H * 2);
-        if car.p.y > head {
-            car.p.y = head;
-            car.v.y = 0;
-        }
-
         let in_mouth = car.p.x.abs() < uu(GOAL_HALF_W - CAR_R);
 
-        // The visible floor-to-wall quarter pipe is a real contact surface.
-        // Projecting the car centre onto its offset arc both lifts the car and
-        // gives the wheels a continuously rotating normal. A flat XZ confine
-        // here used to stop the car at an invisible vertical plane while the
-        // rendered ramp continued underneath it.
+        // Both visible quarter pipes are real contact surfaces. Projecting the
+        // car centre onto their offset arcs gives the wheels a continuously
+        // rotating normal instead of meeting invisible square joins at either
+        // end of the wall.
         let curved_surface = car_surface_contact(car, in_mouth);
 
         // A wall-driving car is supported by its wheels, so its clearance from
@@ -2133,7 +2189,9 @@ impl Sim {
             // the normal was thrown away, so the car sat at ramp height with
             // its wheels flat and the world level under it. Anything shallower
             // than 45 degrees is adopted whatever the speed.
-            .filter(|n| n.y >= SHALLOW_UP || drive_speed >= STICK_SPEED);
+            .filter(|n| {
+                n.y > ROOF_STICK_LIMIT && (n.y >= SHALLOW_UP || drive_speed >= STICK_SPEED)
+            });
         match wall {
             Some(n) => {
                 // Taking the wall re-bases the car, and yaw means something
@@ -2167,8 +2225,11 @@ impl Sim {
             // it upright every tick, which quietly caps air roll at about six
             // degrees no matter how long you hold it.
             None if car.grounded && car.up.y <= 3600 => {
-                car.up = V3::new(0, 4096, 0);
-                car.grounded = car.p.y <= uu(CAR_REST_Y);
+                // Keep the attitude at the instant the tyres lose the wall.
+                // Air control above will ease it toward a landing pose on the
+                // following ticks unless the player takes over with pitch or
+                // air roll.
+                car.grounded = false;
             }
             None => {}
         }
@@ -2690,7 +2751,7 @@ fn ball_surface_contact(ball: &mut Ball, mouth_open: bool) -> Option<V3> {
     )
 }
 
-/// Resolve a car against the rendered floor-to-wall quarter pipe.
+/// Resolve a car against the rendered floor-to-wall and wall-to-ceiling pipes.
 ///
 /// In a wall-normal slice the visible surface is a quarter circle centred at
 /// `(R, R)`. The car centre follows the concentric circle `R - ride_height`
@@ -2703,7 +2764,65 @@ fn car_surface_contact(car: &mut Car, mouth_open: bool) -> Option<V3> {
     let ride = uu(CAR_REST_Y);
     let centre_radius = radius - ride;
 
-    // Above the quarter pipe, the same sweep is a straight wall.
+    let ceiling_radius = uu(CEIL_R);
+    let ceiling_base = uu(CEIL - CEIL_R);
+    let ceiling = uu(CEIL);
+
+    // The upper quarter pipe turns the straight wall smoothly into the roof.
+    // In its wall-normal slice the centre is `(R, CEIL - R)`. Its allowed car
+    // centre lies on the inner radius `R - ride`, so its normal rotates from
+    // wall-inward to world-down while the visible mesh turns through the same
+    // angle.
+    if car.p.y > ceiling_base {
+        if wall.distance >= ceiling_radius {
+            let roof = ceiling - ride;
+            if car.p.y < roof - uu(NEAR) {
+                return None;
+            }
+            if car.p.y > roof {
+                car.p.y = roof;
+            }
+            let n = V3::new(0, -4096, 0);
+            let into = dot_q12(car.v, n).min(0);
+            add_scaled(&mut car.v, n, -into);
+            return Some(n);
+        }
+
+        let centre_radius = ceiling_radius - ride;
+        let horizontal = (ceiling_radius - wall.distance).clamp(0, ceiling_radius * 2);
+        let vertical = (car.p.y - ceiling_base).clamp(0, ceiling_radius * 2);
+        let length = isqrt_i32(
+            horizontal
+                .saturating_mul(horizontal)
+                .saturating_add(vertical.saturating_mul(vertical)),
+        );
+        if length < centre_radius - uu(NEAR) || length == 0 {
+            return None;
+        }
+
+        let projected_h = horizontal * centre_radius / length;
+        let projected_v = vertical * centre_radius / length;
+        if length > centre_radius {
+            let corrected_distance = ceiling_radius - projected_h;
+            add_scaled(&mut car.p, wall.inward, corrected_distance - wall.distance);
+            car.p.y = ceiling_base + projected_v;
+        }
+
+        let n = V3::new(
+            (wall.inward.x * projected_h) / centre_radius,
+            (-4096 * projected_v) / centre_radius,
+            (wall.inward.z * projected_h) / centre_radius,
+        )
+        .unit_q12();
+        // Collision remains solid even when the car is too slow to attach to
+        // this overhang. Cancel its into-surface velocity before the caller's
+        // speed filter decides whether the wheels can keep hold of it.
+        let into = dot_q12(car.v, n).min(0);
+        add_scaled(&mut car.v, n, -into);
+        return Some(n);
+    }
+
+    // Between the two quarter pipes the same sweep is a straight wall.
     if car.p.y >= radius {
         if wall.distance > ride + uu(NEAR) {
             return None;
@@ -4688,6 +4807,84 @@ mod tests {
     }
 
     #[test]
+    fn the_visible_ceiling_curve_is_a_drivable_collision_surface() {
+        let mut sim = solo();
+        sim.car.p = V3::new(uu(HALF_X - CAR_REST_Y), uu(CEIL - CEIL_R - 40), 0);
+        sim.car.up = V3::new(-4096, 0, 0);
+        sim.car.yaw = yaw_for(sim.car.up, V3::new(0, 4096, 0));
+        sim.car.v = V3::new(0, 1500, 0);
+        sim.car.grounded = true;
+
+        drive(
+            &mut sim,
+            8,
+            Input {
+                throttle: 128,
+                boost: true,
+                ..Input::default()
+            },
+        );
+
+        assert!(
+            sim.car.p.x < uu(HALF_X - CAR_REST_Y - 20),
+            "car did not follow the upper curve inward: {:?}",
+            sim.car.p
+        );
+        assert!(
+            sim.car.up.x < -50 && sim.car.up.y < -300,
+            "upper curve should rotate the normal continuously: {:?}",
+            sim.car.up
+        );
+        assert!(sim.car.grounded, "speed should hold the car on the curve");
+    }
+
+    #[test]
+    fn the_ceiling_keeps_the_car_inside_at_its_ride_height() {
+        let mut sim = solo();
+        sim.car.p = V3::new(0, uu(CEIL + 100), 0);
+        sim.car.v = V3::new(0, 800, 0);
+        sim.car.grounded = false;
+
+        sim.tick(&Input::default());
+
+        assert_eq!(sim.car.p.y, uu(CEIL - CAR_REST_Y));
+        assert!(sim.car.v.y <= 0, "ceiling did not stop upward travel");
+    }
+
+    #[test]
+    fn a_slow_car_falls_away_from_the_ceiling() {
+        let mut sim = solo();
+        sim.car.p = V3::new(0, uu(CEIL - CAR_REST_Y), 0);
+        sim.car.v = V3::ZERO;
+        sim.car.up = V3::new(0, -4096, 0);
+        sim.car.grounded = true;
+
+        sim.tick(&Input::default());
+
+        assert!(
+            !sim.car.grounded,
+            "a stopped car should not stick to the roof"
+        );
+        assert!(
+            sim.car.up.y < -4000,
+            "leaving the roof snapped upright: {:?}",
+            sim.car.up
+        );
+        let released_up = sim.car.up.y;
+        drive(&mut sim, 30, Input::default());
+        assert!(
+            sim.car.p.y < uu(CEIL - CAR_REST_Y),
+            "gravity should pull it away from the ceiling: {:?}",
+            sim.car.p
+        );
+        assert!(
+            sim.car.up.y > released_up && sim.car.up.y < 4000,
+            "air recovery should be gradual: {:?}",
+            sim.car.up
+        );
+    }
+
+    #[test]
     fn a_slow_car_falls_off_the_wall() {
         let mut sim = solo();
         sim.car.p = V3::new(uu(HALF_X - 200), uu(CAR_REST_Y), 0);
@@ -4998,16 +5195,7 @@ mod tests {
         let small = PADS.iter().position(|p| !p.big).unwrap();
         sim.car.p = V3::new(uu(PADS[small].x), uu(CAR_REST_Y), uu(PADS[small].z));
         sim.tick(&Input::default());
-        // Regen lands before pickup within a tick, so this is twelve pips
-        // plus a trickle rather than exactly twelve.
-        assert!(
-            sim.car.boost >= 12 * BOOST_SCALE,
-            "small pad should give twelve"
-        );
-        assert!(
-            sim.car.boost < BOOST_MAX / 2,
-            "small pad should not fill the tank"
-        );
+        assert_eq!(sim.car.boost, 12 * BOOST_SCALE, "small pad payout changed");
         assert!(sim.pad_timers[small] > 0);
         // And it comes back sooner than a big one.
         assert!(sim.pad_timers[small] < 600, "small pads respawn faster");
