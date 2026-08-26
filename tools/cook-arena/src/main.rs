@@ -8,19 +8,35 @@ use psxed_tex::{encode_indexed_psxt_with_clut_rows, quantize_rgb, PsxtDepth};
 use std::path::Path;
 
 const GRASS_W: usize = 64;
-const TEX_W: usize = 224;
-const TEX_H: usize = 132;
-const COVER_U0: usize = 96;
+const TEX_W: usize = 256;
+const TEX_H: usize = 256 * 3;
+const COVER_U0: usize = 128;
 const COVER_H: usize = 84;
-const NET_U0: usize = COVER_U0;
-const NET_V0: usize = COVER_H;
+const NET_U0: usize = 0;
+const NET_V0: usize = GRASS_W;
 const NET_W: usize = 96;
 const NET_H: usize = 48;
+const MARKED_U0: usize = 0;
+const MARKED_V0: usize = 256;
+const MARKED_PAGE_H: usize = 256;
+const MARKED_TILE_W: usize = 64;
+const MARKED_TILES_PER_PAGE: usize = 4;
+const MARKED_FIRST_Z: i32 = 3;
+const PITCH_HALF_X: i32 = 4096;
+const PITCH_HALF_Z: i32 = 5120;
+const PITCH_TILE_UU: i32 = 1024;
+const HALFWAY_HALF_W: i32 = 40;
+const HALFWAY_END_INSET: i32 = 300;
+const CIRCLE_R_IN: i32 = 1092;
+const CIRCLE_R_OUT: i32 = 1152;
 const HEX_W: i32 = 8;
 const HEX_H: i32 = 7;
 const NET_CELL: usize = 8;
 const CLUT_ENTRIES: usize = 16;
 const COVER_CLUT_ROW: usize = 2;
+const MARKED_CLUT_ROW: usize = 3;
+const CHALK_INDEX: u8 = 15;
+const CHALK: [u8; 3] = [205, 220, 210];
 
 const ARENA_PALETTE: [[u8; 3]; CLUT_ENTRIES] = [
     [44, 92, 58],
@@ -88,7 +104,7 @@ fn main() {
     }
     std::fs::write(output_path, &psxt).expect("write arena PSXT");
     println!(
-        "ARENA {}: {} bytes, {}x{} 4bpp, 3 CLUT rows",
+        "ARENA {}: {} bytes, {}x{} 4bpp, 4 CLUT rows",
         output_path.display(),
         psxt.len(),
         TEX_W,
@@ -106,12 +122,18 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
     let (grass_palette, grass_indices) =
         quantize_rgb(grass_pixels, CLUT_ENTRIES).expect("quantize grass");
     assert_eq!(grass_palette.len(), CLUT_ENTRIES);
+    let (mut marked_palette, marked_grass_indices) =
+        quantize_rgb(grass_pixels, CLUT_ENTRIES - 1).expect("quantize marked grass");
+    marked_palette.push(CHALK);
+    assert_eq!(marked_palette.len(), CLUT_ENTRIES);
 
     let mut indices = vec![0u8; TEX_W * TEX_H];
     for y in 0..TEX_H {
         for x in 0..TEX_W {
             indices[y * TEX_W + x] = if x < GRASS_W && y < GRASS_W {
                 grass_indices[y * GRASS_W + x]
+            } else if y >= MARKED_V0 {
+                marked_pitch_index(x, y, &marked_grass_indices)
             } else if x >= COVER_U0 && y < COVER_H {
                 honeycomb_index((x - COVER_U0) as i32, y as i32)
             } else if (NET_U0..NET_U0 + NET_W).contains(&x) && (NET_V0..NET_V0 + NET_H).contains(&y)
@@ -139,6 +161,7 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
         ARENA_PALETTE.to_vec(),
         grass_palette,
         COVER_PALETTE.to_vec(),
+        marked_palette,
     ];
     let mut blob = encode_indexed_psxt_with_clut_rows(
         TEX_W as u16,
@@ -158,6 +181,40 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
     set_clut_mask_bit(&mut blob, COVER_CLUT_ROW, 2);
     validate(&blob);
     blob
+}
+
+/// One texel of the two full-resolution marked-pitch pages. Each page holds
+/// four columns by four rows of 64x64 grass tiles; the second page continues
+/// at pitch column four.
+fn marked_pitch_index(px: usize, py: usize, grass: &[u8]) -> u8 {
+    let atlas_x = px - MARKED_U0;
+    let atlas_z = py - MARKED_V0;
+    let page = atlas_z / MARKED_PAGE_H;
+    let page_z = atlas_z % MARKED_PAGE_H;
+    let tile_x = page * MARKED_TILES_PER_PAGE + atlas_x / MARKED_TILE_W;
+    let tile_z = page_z / MARKED_TILE_W;
+    let local_x = atlas_x % MARKED_TILE_W;
+    let local_z = page_z % MARKED_TILE_W;
+    let grass_index = grass[local_z * GRASS_W + local_x];
+
+    let world_x = -PITCH_HALF_X
+        + tile_x as i32 * PITCH_TILE_UU
+        + local_x as i32 * PITCH_TILE_UU / MARKED_TILE_W as i32
+        + PITCH_TILE_UU / MARKED_TILE_W as i32 / 2;
+    let world_z = -PITCH_HALF_Z
+        + (MARKED_FIRST_Z + tile_z as i32) * PITCH_TILE_UU
+        + local_z as i32 * PITCH_TILE_UU / MARKED_TILE_W as i32
+        + PITCH_TILE_UU / MARKED_TILE_W as i32 / 2;
+
+    let halfway =
+        world_z.abs() <= HALFWAY_HALF_W && world_x.abs() <= PITCH_HALF_X - HALFWAY_END_INSET;
+    let radius = isqrt(world_x * world_x + world_z * world_z);
+    let circle = (CIRCLE_R_IN..=CIRCLE_R_OUT).contains(&radius);
+    if halfway || circle {
+        CHALK_INDEX
+    } else {
+        grass_index
+    }
 }
 
 fn honeycomb_index(px: i32, py: i32) -> u8 {
@@ -242,13 +299,16 @@ fn validate(blob: &[u8]) {
     assert_eq!(texture.width(), TEX_W as u16);
     assert_eq!(texture.height(), TEX_H as u16);
     assert_eq!(texture.halfwords_per_row(), (TEX_W / 4) as u16);
-    assert_eq!(texture.clut_entries(), (3 * CLUT_ENTRIES) as u16);
+    assert_eq!(texture.clut_entries(), (4 * CLUT_ENTRIES) as u16);
     let clut = texture.clut_bytes();
     for entry in [1usize, 2] {
         let offset = (COVER_CLUT_ROW * CLUT_ENTRIES + entry) * 2;
         let value = u16::from_le_bytes([clut[offset], clut[offset + 1]]);
         assert_ne!(value & 0x8000, 0, "cover strand must carry STP");
     }
+    let chalk_offset = (MARKED_CLUT_ROW * CLUT_ENTRIES + CHALK_INDEX as usize) * 2;
+    let chalk = u16::from_le_bytes([clut[chalk_offset], clut[chalk_offset + 1]]);
+    assert_eq!(chalk & 0x8000, 0, "chalk must be opaque");
 }
 
 #[cfg(test)]
@@ -266,5 +326,16 @@ mod tests {
         }
         let blob = cook(&pixels);
         validate(&blob);
+    }
+
+    #[test]
+    fn marked_pitch_composites_paint_into_grass() {
+        let grass = vec![3u8; GRASS_W * GRASS_W];
+        // World (8, 8): inside the 80-uu halfway stripe.
+        assert_eq!(marked_pitch_index(0, 640, &grass), CHALK_INDEX);
+        // World (1144, 8): also inside the centre-circle ring.
+        assert_eq!(marked_pitch_index(71, 640, &grass), CHALK_INDEX);
+        // A point between the stripe and ring remains ordinary grass.
+        assert_eq!(marked_pitch_index(0, 620, &grass), 3);
     }
 }
