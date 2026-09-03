@@ -652,13 +652,13 @@ impl NitroXide {
             // player's dial.
             if self.swap_seats {
                 &[
-                    (draw::Viewport::LEFT, &s.opponent, self.ball_cam[1]),
-                    (draw::Viewport::RIGHT, &s.car, self.ball_cam[0]),
+                    (draw::Viewport::TOP, &s.opponent, self.ball_cam[1]),
+                    (draw::Viewport::BOTTOM, &s.car, self.ball_cam[0]),
                 ]
             } else {
                 &[
-                    (draw::Viewport::LEFT, &s.car, self.ball_cam[0]),
-                    (draw::Viewport::RIGHT, &s.opponent, self.ball_cam[1]),
+                    (draw::Viewport::TOP, &s.car, self.ball_cam[0]),
+                    (draw::Viewport::BOTTOM, &s.opponent, self.ball_cam[1]),
                 ]
             }
         } else {
@@ -670,10 +670,17 @@ impl NitroXide {
             let text = u32_dec(&mut dec, pips);
             let w = font.text_width(text) as i16;
             let cx = draw::boost_gauge_x(vp);
-            Self::shadowed(font, cx - w / 2, 184, text, (255, 214, 120));
+            let cy = draw::boost_gauge_y(vp);
+            Self::shadowed(font, cx - w / 2, cy - 6, text, (255, 214, 120));
 
             if ball_cam {
-                Self::shadowed(font, vp.x + 8, 218, "BALL CAM", (146, 202, 255));
+                Self::shadowed(
+                    font,
+                    vp.x + 8,
+                    vp.y + vp.h - 22,
+                    "BALL CAM",
+                    (146, 202, 255),
+                );
             }
         }
     }
