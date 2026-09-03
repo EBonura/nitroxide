@@ -64,36 +64,48 @@ pub const SCREEN_H: i16 = 240;
 /// keeps the ball legible at kickoff.
 const PROJ_H: u16 = 260;
 
-/// One player's slice of the back buffer, side by side, the way Rocket League
-/// splits a two-player game.
+/// One player's slice of the back buffer, stacked top and bottom, the way
+/// Rocket League splits a two-player game.
 ///
-/// The projection plane stays at [`PROJ_H`] in a half-width view, so a split
-/// player keeps the full vertical field of view and gets half the horizontal
-/// one. That is the honest geometry of a 160-wide window rather than a choice,
-/// and it is also what pays for the second pass: the cull frustum narrows with
-/// the viewport, so roughly half the arena is rejected before it reaches the
-/// GTE. Widening the view back out by lowering the projection plane would hand
-/// that saving straight back.
+/// The projection plane stays at [`PROJ_H`] in a half-height view, so a split
+/// player keeps the full horizontal field of view, which is the axis car
+/// soccer is played on, and gets half the vertical one. It also pays for the
+/// second pass: the cull frustum flattens with the viewport, so the roof and
+/// the far floor are rejected before they reach the GTE. The side-by-side
+/// layout this replaces cut the horizontal field to 33 degrees a player.
 #[derive(Copy, Clone)]
 pub struct Viewport {
     /// Left edge in display pixels.
     pub x: i16,
+    /// Top edge in display pixels.
+    pub y: i16,
     /// Width in display pixels.
     pub w: i16,
+    /// Height in display pixels.
+    pub h: i16,
 }
 
 impl Viewport {
     /// The whole screen: one player.
-    pub const FULL: Viewport = Viewport { x: 0, w: SCREEN_W };
-    /// Player one's half of a side-by-side split.
-    pub const LEFT: Viewport = Viewport {
+    pub const FULL: Viewport = Viewport {
         x: 0,
-        w: SCREEN_W / 2,
+        y: 0,
+        w: SCREEN_W,
+        h: SCREEN_H,
+    };
+    /// Player one's half of a top-and-bottom split.
+    pub const TOP: Viewport = Viewport {
+        x: 0,
+        y: 0,
+        w: SCREEN_W,
+        h: SCREEN_H / 2,
     };
     /// Player two's half.
-    pub const RIGHT: Viewport = Viewport {
-        x: SCREEN_W / 2,
-        w: SCREEN_W / 2,
+    pub const BOTTOM: Viewport = Viewport {
+        x: 0,
+        y: SCREEN_H / 2,
+        w: SCREEN_W,
+        h: SCREEN_H / 2,
     };
 }
 
@@ -111,6 +123,14 @@ pub const fn boost_gauge_x(vp: Viewport) -> i16 {
     vp.x + vp.w - BOOST_GAUGE_INSET
 }
 
+/// How far up from a view's bottom edge the boost dial's centre sits.
+pub const BOOST_GAUGE_RISE: i16 = 50;
+
+/// Vertical centre of the boost dial for one view.
+pub const fn boost_gauge_y(vp: Viewport) -> i16 {
+    vp.y + vp.h - BOOST_GAUGE_RISE
+}
+
 /// Slack around the viewport that the screen-space rejection tests allow, so a
 /// quad straddling an edge is kept rather than popped. The cull frustum uses
 /// the same figure, which is what keeps the two tests from disagreeing.
@@ -126,6 +146,9 @@ const EDGE_SLACK: i16 = 80;
 static mut VIEW_MIN_X: i16 = -EDGE_SLACK;
 static mut VIEW_MAX_X: i16 = SCREEN_W + EDGE_SLACK;
 static mut VIEW_HALF_W: i32 = (SCREEN_W / 2 + EDGE_SLACK) as i32;
+static mut VIEW_MIN_Y: i16 = -EDGE_SLACK;
+static mut VIEW_MAX_Y: i16 = SCREEN_H + EDGE_SLACK;
+static mut VIEW_HALF_H: i32 = (SCREEN_H / 2 + EDGE_SLACK) as i32;
 /// True while drawing a half-width viewport. Detail follows the viewport: a
 /// 160-pixel view cannot show the near tessellation a 320-pixel one can, and
 /// it is drawn twice, so the finest band is paid for twice to be seen half as
@@ -139,13 +162,10 @@ fn split_view() -> bool {
 }
 
 /// Is a projected vertex close enough to the current viewport to keep?
-///
-/// Vertical bounds are the full screen in both modes: a side-by-side split
-/// divides the width, never the height.
 #[inline]
 fn on_view(sx: i16, sy: i16) -> bool {
-    let (min_x, max_x) = unsafe { (VIEW_MIN_X, VIEW_MAX_X) };
-    sx >= min_x && sx < max_x && sy >= -EDGE_SLACK && sy < SCREEN_H + EDGE_SLACK
+    let (min_x, max_x, min_y, max_y) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+    sx >= min_x && sx < max_x && sy >= min_y && sy < max_y
 }
 
 /// Does a projected quad's bounding box overlap the current view?
@@ -163,11 +183,9 @@ fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
         min_y = min_y.min(y);
         max_y = max_y.max(y);
     }
-    let (view_min_x, view_max_x) = unsafe { (VIEW_MIN_X, VIEW_MAX_X) };
-    max_x >= view_min_x
-        && min_x < view_max_x
-        && max_y >= -EDGE_SLACK
-        && min_y < SCREEN_H + EDGE_SLACK
+    let (view_min_x, view_max_x, view_min_y, view_max_y) =
+        unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+    max_x >= view_min_x && min_x < view_max_x && max_y >= view_min_y && min_y < view_max_y
 }
 
 /// Point the GTE and the GPU at one viewport, and set the bounds the rejection
@@ -182,17 +200,20 @@ fn enter_view(vp: Viewport, buffer_y: u16) {
         VIEW_MIN_X = vp.x - EDGE_SLACK;
         VIEW_MAX_X = vp.x + vp.w + EDGE_SLACK;
         VIEW_HALF_W = (vp.w / 2 + EDGE_SLACK) as i32;
-        VIEW_SPLIT = vp.w < SCREEN_W;
+        VIEW_MIN_Y = vp.y - EDGE_SLACK;
+        VIEW_MAX_Y = vp.y + vp.h + EDGE_SLACK;
+        VIEW_HALF_H = (vp.h / 2 + EDGE_SLACK) as i32;
+        VIEW_SPLIT = vp.w < SCREEN_W || vp.h < SCREEN_H;
     }
     scene::set_screen_offset(
         ((vp.x + vp.w / 2) as i32) << 16,
-        (SCREEN_H as i32 / 2) << 16,
+        ((vp.y + vp.h / 2) as i32) << 16,
     );
     psx_gpu::set_draw_area(
         vp.x as u16,
-        buffer_y,
+        buffer_y + vp.y as u16,
         (vp.x + vp.w) as u16 - 1,
-        buffer_y + SCREEN_H as u16 - 1,
+        buffer_y + (vp.y + vp.h) as u16 - 1,
     );
 }
 
@@ -1439,7 +1460,9 @@ impl Cull {
             return false;
         }
         let y = Self::dot(self.vertical, d);
-        let half_h = SCREEN_H as i32 / 2 + EDGE_SLACK as i32;
+        // Follows the viewport the way the side planes do: a half-height view
+        // has half the vertical frustum, and the roof and far floor go with it.
+        let half_h = unsafe { VIEW_HALF_H };
         y.abs() - Self::extent(self.vertical, h) <= z * half_h / PROJ_H as i32
     }
 
@@ -2059,6 +2082,8 @@ static mut CAR_VERT_COUNT: [u16; CAR_COUNT] = [0; CAR_COUNT];
 /// rebuilds three `u16` from six `lbu` behind a stride branch, once per face
 /// per car per view.
 static mut CAR_FACES: [[[u16; 3]; CAR_FACE_CAP]; CAR_COUNT] = [[[0; 3]; CAR_FACE_CAP]; CAR_COUNT];
+/// Depth-sorted face keys for one car draw (`submit_car_faces`).
+static mut CAR_SORT_KEYS: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
 static mut CAR_FACE_COUNT: [u16; CAR_COUNT] = [0; CAR_COUNT];
 
 /// Decode one gameplay car's vertices and normals into the aligned tables.
@@ -2225,14 +2250,35 @@ fn submit_car_faces(
     tris: &mut PrimitiveArena<'_, TriGouraud>,
     ot: &mut OtFrame<'_, OT_DEPTH>,
 ) {
-    for face in faces {
+    // The ordering table has 512 slots over the arena's 14,000 uu of depth,
+    // about 27 uu a slot, and a car is 120 uu long: its faces land in four
+    // or five slots, and within a slot they drew in mesh order, which is why
+    // windows came through the roof and wheels through the sills. Sort the
+    // front faces by depth first and insert them nearest first: the table
+    // prepends, so within one slot the last insert draws first and the far
+    // face goes down before the near one. Exact painter's order inside the
+    // car, and the slot spread still orders it against the world.
+    // Off the stack: the cap is sized for the detailed front-end car.
+    let keys = unsafe { &mut CAR_SORT_KEYS };
+    let mut n = 0usize;
+    for (i, face) in faces.iter().enumerate().take(CAR_FACE_CAP) {
         let a = &projected[face[0] as usize];
         let b = &projected[face[1] as usize];
         let c = &projected[face[2] as usize];
         if car_back_facing(a, b, c) {
             continue;
         }
-        let depth = (a.sz as i32 + b.sz as i32 + c.sz as i32) / 3;
+        let depth = ((a.sz as i32 + b.sz as i32 + c.sz as i32) / 3).clamp(0, 0xffff) as u32;
+        keys[n] = (depth << 16) | i as u32;
+        n += 1;
+    }
+    keys[..n].sort_unstable();
+    for &key in &keys[..n] {
+        let face = &faces[(key & 0xffff) as usize];
+        let a = &projected[face[0] as usize];
+        let b = &projected[face[1] as usize];
+        let c = &projected[face[2] as usize];
+        let depth = (key >> 16) as i32;
         let prim = TriGouraud::new(
             [(a.sx, a.sy), (b.sx, b.sy), (c.sx, c.sy)],
             [(a.r, a.g, a.b), (b.r, b.g, b.b), (c.r, c.g, c.b)],
@@ -2821,7 +2867,12 @@ impl Builder<'_> {
                 let z0 = -sim::HALF_Z + iz * step_z;
                 let (x1, z1) = (x0 + step_x, z0 + step_z);
                 let (mx, mz) = ((x0 + x1) / 2, (z0 + z1) / 2);
-                if !cull.visible((mx, 0, mz), tile_h) {
+                // The vertical test matters in a half-height view: the tiles
+                // under and just ahead of the camera, the subdivided ones,
+                // fall below its bottom edge.
+                if !cull.visible((mx, 0, mz), tile_h)
+                    || !cull.visible_vertically((mx, 0, mz), tile_h)
+                {
                     continue;
                 }
                 // Mown stripes down the pitch and the whole floodlight
@@ -3000,7 +3051,9 @@ impl Builder<'_> {
             // Orb and pool together: the orb tops out at `lift + r` and the
             // pool lies on the pitch, so the box runs the whole way down.
             let top = lift + r;
-            if !cull.visible((pad.x, -top / 2, pad.z), (r, top / 2, r)) {
+            if !cull.visible((pad.x, -top / 2, pad.z), (r, top / 2, r))
+                || !cull.visible_vertically((pad.x, -top / 2, pad.z), (r, top / 2, r))
+            {
                 continue;
             }
             // Past 3000 in a half-width view the orb is a pixel or two;
@@ -3145,11 +3198,11 @@ impl Builder<'_> {
 
     /// The boost dial, centred `cx` across. One player's screen puts it near
     /// the right edge; a split game gives each half its own.
-    fn boost_gauge(&mut self, cx: i16, boost_pips: i32) {
-        const CY: i16 = 190;
+    fn boost_gauge(&mut self, cx: i16, cy: i16, boost_pips: i32) {
         const SEGS: i32 = 18;
-        const R_OUT: i32 = 30;
-        const R_IN: i32 = 22;
+        // Two thirds the size in a half-height view, or the dial is a
+        // quarter of the picture.
+        let (r_out, r_in) = if split_view() { (20, 15) } else { (30, 22) };
         // Sweep three quarters of a turn, opening at the bottom right so the
         // gap faces away from the pitch.
         const START: i32 = 1300;
@@ -3171,12 +3224,12 @@ impl Builder<'_> {
             let p = |a: u16, rad: i32| {
                 (
                     cx + ((sin_q12(a) * rad) >> 12) as i16,
-                    CY - ((cos_q12(a) * rad) >> 12) as i16,
+                    cy - ((cos_q12(a) * rad) >> 12) as i16,
                 )
             };
             self.screen_quad(
                 1,
-                [p(a0, R_IN), p(a0, R_OUT), p(a1, R_IN), p(a1, R_OUT)],
+                [p(a0, r_in), p(a0, r_out), p(a1, r_in), p(a1, r_out)],
                 [c; 4],
             );
         }
@@ -4935,8 +4988,8 @@ pub fn render_split(
         (ball_cam[0], ball_cam[1], 0, 1)
     };
     for (vp, subject, cam, camera_slot) in [
-        (Viewport::LEFT, near, near_cam, near_slot),
-        (Viewport::RIGHT, far, far_cam, far_slot),
+        (Viewport::TOP, near, near_cam, near_slot),
+        (Viewport::BOTTOM, far, far_cam, far_slot),
     ] {
         enter_view(vp, buffer_y);
         render_view(s, cars, cam, subject, vp, camera_slot);
@@ -5008,23 +5061,24 @@ fn build_view(
             // viewport rather than the screen, so a split pass does not hand
             // the rasteriser a full-width quad to throw half of away.
             let (x0, x1) = (vp.x, vp.x + vp.w);
+            let (y0, y1) = (vp.y, vp.y + vp.h);
             b.screen_quad(
                 SKY_SLOT,
-                [(x0, 0), (x1, 0), (x0, SCREEN_H), (x1, SCREEN_H)],
+                [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
                 arena_sky(&view),
             );
             // Two views butted together read as one broken picture without a
             // seam between them. Emitted per pass and clipped by the scissor,
             // so each half draws its own side of the line.
-            if vp.w < SCREEN_W {
-                let inner = if vp.x == 0 { vp.w } else { vp.x };
+            if vp.h < SCREEN_H {
+                let inner = if vp.y == 0 { vp.h } else { vp.y };
                 b.screen_quad(
                     SPLIT_SEAM_SLOT,
                     [
-                        (inner - SPLIT_SEAM_W, 0),
-                        (inner + SPLIT_SEAM_W, 0),
-                        (inner - SPLIT_SEAM_W, SCREEN_H),
-                        (inner + SPLIT_SEAM_W, SCREEN_H),
+                        (0, inner - SPLIT_SEAM_W),
+                        (SCREEN_W, inner - SPLIT_SEAM_W),
+                        (0, inner + SPLIT_SEAM_W),
+                        (SCREEN_W, inner + SPLIT_SEAM_W),
                     ],
                     [(10, 12, 20); 4],
                 );
@@ -5048,7 +5102,7 @@ fn build_view(
                     FrontPanels::Select(select) => select_panels(&mut b, select),
                 }
             } else {
-                b.boost_gauge(vp.x + vp.w - BOOST_GAUGE_INSET, boost);
+                b.boost_gauge(boost_gauge_x(vp), boost_gauge_y(vp), boost);
                 // Score and clock stay whole-screen and straddle the seam, the
                 // way a split-screen game shares one scoreline. Each pass draws
                 // the part of it the scissor lets through.
