@@ -737,6 +737,34 @@ static mut CURB_Z: [[i32; 5]; SPAN_COUNT] = [[0; 5]; SPAN_COUNT];
 
 /// The four corners of the roof, lit like everything else.
 static mut CEIL_LIGHT: [Rgb; 4] = [(128, 128, 128); 4];
+/// Roof patch layout, shared by the light bake and the draw so the corner
+/// light table below indexes exactly the corners `ceiling` projects.
+/// Smaller than the atlas itself because PS1 texture mapping is affine.
+/// A full 128x84 patch viewed from directly underneath shears its near
+/// cells into long rectangles. These dimensions remain exact lattice
+/// periods (8 texels across, 14 down), so subdivision adds no seam.
+const ROOF_PATCH_U: i32 = 64;
+const ROOF_PATCH_V: i32 = 28;
+const ROOF_STEP_X: i32 = ROOF_PATCH_U * COVER_UU_PER_TEXEL;
+const ROOF_STEP_Z: i32 = ROOF_PATCH_V * COVER_UU_PER_TEXEL;
+const ROOF_HALF_X: i32 = sim::HALF_X - CEIL_R;
+const ROOF_HALF_Z: i32 = sim::HALF_Z - CEIL_R;
+const ROOF_COLS: usize = ((2 * ROOF_HALF_X + ROOF_STEP_X - 1) / ROOF_STEP_X) as usize;
+const ROOF_ROWS: usize = ((2 * ROOF_HALF_Z + ROOF_STEP_Z - 1) / ROOF_STEP_Z) as usize;
+/// Light at every roof patch corner, baked once with `CEIL_LIGHT`. The draw
+/// used to re-blend the four roof corners for all four corners of every patch
+/// every frame (twelve mixes a patch, about a hundred patches a view), which
+/// was the single largest cost of a split frame; the roof never moves.
+static mut ROOF_CORNER_LIGHT: [[Rgb; ROOF_ROWS + 1]; ROOF_COLS + 1] =
+    [[(128, 128, 128); ROOF_ROWS + 1]; ROOF_COLS + 1];
+/// World X of roof corner column `ix` (the last column is clipped to the
+/// roof edge, as the patch walk always did).
+fn roof_corner_x(ix: usize) -> i32 {
+    (-ROOF_HALF_X + ix as i32 * ROOF_STEP_X).min(ROOF_HALF_X)
+}
+fn roof_corner_z(iz: usize) -> i32 {
+    (-ROOF_HALF_Z + iz as i32 * ROOF_STEP_Z).min(ROOF_HALF_Z)
+}
 
 /// Multiply a surface colour by a tint the way the GPU does for a texture,
 /// so the untextured pieces of the arena sit in the same light as the
@@ -877,6 +905,20 @@ fn build_lighting() {
     for (i, &(sx, sz)) in [(-1, -1), (1, -1), (-1, 1), (1, 1)].iter().enumerate() {
         unsafe {
             CEIL_LIGHT[i] = lamp_light((sx * cx, -sim::CEIL, sz * cz), (0, 4096, 0));
+        }
+    }
+    // The same bilinear blend `ceiling` used to evaluate per patch corner per
+    // frame, evaluated once per distinct corner instead.
+    let l = unsafe { CEIL_LIGHT };
+    let (x, z) = (ROOF_HALF_X, ROOF_HALF_Z);
+    for ix in 0..=ROOF_COLS {
+        for iz in 0..=ROOF_ROWS {
+            let (px, pz) = (roof_corner_x(ix), roof_corner_z(iz));
+            let tx = ((px + x) * 16 / (2 * x)).clamp(0, 16);
+            let tz = ((pz + z) * 16 / (2 * z)).clamp(0, 16);
+            unsafe {
+                ROOF_CORNER_LIGHT[ix][iz] = mix(mix(l[0], l[1], tx), mix(l[2], l[3], tx), tz);
+            }
         }
     }
 }
@@ -3854,7 +3896,7 @@ impl Builder<'_> {
 
     /// The translucent cover over the roof.
     fn ceiling(&mut self, cull: &Cull) {
-        let (x, z) = (sim::HALF_X - CEIL_R, sim::HALF_Z - CEIL_R);
+        let (x, z) = (ROOF_HALF_X, ROOF_HALF_Z);
         // The old pitch threshold omitted the roof whenever a wall-climbing
         // camera looked level, even with the ceiling plainly inside the right
         // side of the frame. Test the whole roof against both view axes
@@ -3868,28 +3910,20 @@ impl Builder<'_> {
         // One quad stretched a 32-pixel wall tile over the whole 7,672 by
         // 9,720-uu roof. Patch it at exact texture-repeat distances instead:
         // every roof cell now has the same dimensions as one on the wall, and
-        // the 128x84 atlas periods meet without a doubled strand.
+        // the 128x84 atlas periods meet without a doubled strand. Corner
+        // light comes from the boot-time table; each patch is culled on its
+        // own box, the way floor tiles are, so a camera looking along the
+        // pitch projects the dozen patches in front of it and not the roof.
         let y = -sim::CEIL;
-        let l = unsafe { &CEIL_LIGHT };
-        let light_at = |px: i32, pz: i32| {
-            let tx = ((px + x) * 16 / (2 * x)).clamp(0, 16);
-            let tz = ((pz + z) * 16 / (2 * z)).clamp(0, 16);
-            mix(mix(l[0], l[1], tx), mix(l[2], l[3], tx), tz)
-        };
-        // Smaller than the atlas itself because PS1 texture mapping is affine.
-        // A full 128x84 patch viewed from directly underneath shears its near
-        // cells into long rectangles. These dimensions remain exact lattice
-        // periods (8 texels across, 14 down), so subdivision adds no seam.
-        const ROOF_PATCH_U: i32 = 64;
-        const ROOF_PATCH_V: i32 = 28;
-        let step_x = ROOF_PATCH_U * COVER_UU_PER_TEXEL;
-        let step_z = ROOF_PATCH_V * COVER_UU_PER_TEXEL;
-        let mut z0 = -z;
-        while z0 < z {
-            let z1 = (z0 + step_z).min(z);
-            let mut x0 = -x;
-            while x0 < x {
-                let x1 = (x0 + step_x).min(x);
+        let lights = unsafe { &ROOF_CORNER_LIGHT };
+        let (half_x, half_z) = (ROOF_STEP_X / 2, ROOF_STEP_Z / 2);
+        for iz in 0..ROOF_ROWS {
+            let (z0, z1) = (roof_corner_z(iz), roof_corner_z(iz + 1));
+            for ix in 0..ROOF_COLS {
+                let (x0, x1) = (roof_corner_x(ix), roof_corner_x(ix + 1));
+                if !cull.visible(((x0 + x1) / 2, y, (z0 + z1) / 2), (half_x, 0, half_z)) {
+                    continue;
+                }
                 let w = cover_texels(x1 - x0);
                 let h = ((z1 - z0 + COVER_UU_PER_TEXEL - 1) / COVER_UU_PER_TEXEL)
                     .clamp(1, ROOF_PATCH_V) as u8;
@@ -3902,18 +3936,16 @@ impl Builder<'_> {
                         uvw(COVER_U0 + w, COVER_V0 + h),
                     ],
                     [
-                        light_at(x0, z0),
-                        light_at(x1, z0),
-                        light_at(x0, z1),
-                        light_at(x1, z1),
+                        lights[ix][iz],
+                        lights[ix + 1][iz],
+                        lights[ix][iz + 1],
+                        lights[ix + 1][iz + 1],
                     ],
                     0,
                     COVER_PACKET,
                     true,
                 );
-                x0 = x1;
             }
-            z0 = z1;
         }
     }
 
