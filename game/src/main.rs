@@ -182,9 +182,19 @@ enum SettingsRow {
     Back,
 }
 
+/// Analog re-assert attempts per plug-in before a pad is taken as
+/// digital-only (the boot handshake in `init` is on top of these).
+const ANALOG_ATTEMPTS: u8 = 4;
+
 struct NitroXide {
     /// Frames since boot, used only to pace the analog re-assert.
     analog_retry: u32,
+    /// Analog re-assert attempts left per port since it was last seen
+    /// connected. A pad that stays digital after these is digital-only.
+    analog_attempts: [u8; 2],
+    /// Whether each port answered last frame, to re-arm the attempts when a
+    /// pad is plugged in mid-session.
+    pad_seen: [bool; 2],
     /// Wide display face: title, menu rows, the goal headline.
     display: Option<FontAtlas>,
     /// Compact face: score, clock, boost, captions.
@@ -252,6 +262,8 @@ impl NitroXide {
     fn new() -> Self {
         NitroXide {
             analog_retry: 0,
+            analog_attempts: [ANALOG_ATTEMPTS; 2],
+            pad_seen: [false; 2],
             display: None,
             hud: None,
             phase: Phase::Intro,
@@ -1400,12 +1412,31 @@ impl Scene for NitroXide {
 
     fn update(&mut self, ctx: &mut Ctx) {
         // Re-assert analog for a pad that missed the boot handshake or was
-        // plugged in mid-session. Skips once the pad reports analog, and is
-        // harmless on a digital-only controller.
+        // plugged in mid-session. The handshake is three config transactions
+        // with spin-delays plus a poll, so it only runs for a port that is
+        // connected and not yet analog, a bounded number of times per
+        // plug-in: unconditionally every fifteen frames it was 4.7% of the
+        // split route's instructions.
         self.analog_retry = self.analog_retry.wrapping_add(1);
-        if self.analog_retry % 15 == 0 {
-            let _ = psx_pad::enable_analog_port1();
-            let _ = psx_pad::enable_analog_port2();
+        for port in 0..2 {
+            let pad = ctx.pad_for(port);
+            let connected = pad.is_connected();
+            if connected && !self.pad_seen[port] {
+                self.analog_attempts[port] = ANALOG_ATTEMPTS;
+            }
+            self.pad_seen[port] = connected;
+            if self.analog_retry % 15 == 0
+                && connected
+                && !pad.is_analog()
+                && self.analog_attempts[port] > 0
+            {
+                self.analog_attempts[port] -= 1;
+                let _ = if port == 0 {
+                    psx_pad::enable_analog_port1()
+                } else {
+                    psx_pad::enable_analog_port2()
+                };
+            }
         }
         // Outside the phase machine: the disc's music plays over the front
         // end and the match alike, and a pause holds the game, not the song.
