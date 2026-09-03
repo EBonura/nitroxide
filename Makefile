@@ -48,6 +48,11 @@ PREPARED      := $(ROOT)/build/prepared-cars
 # runs, so faces are what the target is really buying. 150 lands level with
 # the old low-poly cars on cost while keeping the shape fix.
 CAR_FACE_TARGET ?= 150
+# The split-screen distance LOD (draw.rs CAR_LOD_DISTANCE). Below 150 the prep
+# script scales every role cap by target/150 and uses four-sided wheels.
+CAR_LOD_FACE_TARGET ?= 60
+PREPARED_LOD  := $(ROOT)/build/prepared-cars-lod
+LOD_OUT       := $(ROOT)/build/lod-out
 
 # Headless capture: how many instructions to run, and what to hold on pad 1.
 # 0x0200 = R2 (accelerate). See sdk/crates/psx-pad for the mask table.
@@ -99,6 +104,24 @@ assets:
 		grep '^PREPARED' "$$log"; \
 	done
 	cd $(COOK) && cargo run --release -- "$(PREPARED)" "$(GAME)/assets" --components
+	@# The split-screen distance LOD: the same three sources at 60 faces,
+	@# cooked beside the gameplay set as <car>_lod.psxm / .psxw.
+	@mkdir -p "$(PREPARED_LOD)" "$(LOD_OUT)"
+	@for car in sedan hatchback hatchback2; do \
+		log="$(PREPARED_LOD)/$$car.log"; \
+		if ! "$(BLENDER)" --background --python "$(ROOT)/tools/prepare_car_models.py" -- \
+			"$(MODELS_DIR)/$$car.glb" "$(PREPARED_LOD)/$$car.glb" "$(CAR_LOD_FACE_TARGET)" \
+			>"$$log" 2>&1; then \
+			tail -40 "$$log"; \
+			exit 1; \
+		fi; \
+		grep '^PREPARED' "$$log"; \
+	done
+	cd $(COOK) && cargo run --release -- "$(PREPARED_LOD)" "$(LOD_OUT)" --components
+	@for car in sedan hatchback hatchback2; do \
+		cp "$(LOD_OUT)/$$car.psxm" "$(GAME)/assets/$${car}_lod.psxm"; \
+		cp "$(LOD_OUT)/$$car.psxw" "$(GAME)/assets/$${car}_lod.psxw"; \
+	done
 
 # The arena atlas is the first shared-format runtime asset: source imagery and
 # procedural patterns are cooked on the host, packed into WORLD.PAK, loaded at
