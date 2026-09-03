@@ -191,9 +191,9 @@ for obj in list(objects):
             obj.name.lower().startswith("disk")
             or material_stem(obj) in {"chrome", "dark_chrome"}
         ):
-            replace_rim_disc(obj, sides=6)
+            replace_rim_disc(obj, sides=6 if target_faces >= 100 else 4)
         else:
-            replace_wheel(obj, sides=6)
+            replace_wheel(obj, sides=6 if target_faces >= 100 else 4)
 objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
 
 # At gameplay scale, budget by visual role rather than by the source object's
@@ -233,8 +233,13 @@ def gameplay_face_cap(obj):
 
 
 if target_faces < 500:
+    # The role caps above add up to the 150-face gameplay car. A smaller
+    # target scales every cap down proportionally (never below a triangle
+    # pair), which is how the split-screen distance LOD is cooked from the
+    # same sources.
+    scale = min(1.0, target_faces / 150.0)
     decimate = [
-        (obj, min(len(obj.data.polygons), gameplay_face_cap(obj)))
+        (obj, min(len(obj.data.polygons), max(2, round(gameplay_face_cap(obj) * scale))))
         for obj in objects
     ]
 else:

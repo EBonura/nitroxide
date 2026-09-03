@@ -1743,11 +1743,25 @@ fn look_from(pos: (i32, i32, i32), yaw: u16, pitch: u16) -> View {
 /// colours everywhere except `Role::Body` and `Role::BodyDark` -- which are
 /// exactly the two roles the select screen repaints. The orange cook was a
 /// second copy of the same car carrying the two bytes that get overwritten.
-static CAR_BLOBS: [&[u8]; CAR_COUNT] = [
+static CAR_BLOBS: [&[u8]; CAR_SLOTS] = [
     include_bytes!("../assets/sedan.psxm"),
     include_bytes!("../assets/hatchback.psxm"),
     include_bytes!("../assets/hatchback2.psxm"),
+    // Distance LOD, cooked from the same sources at 60 faces
+    // (`make assets CAR_FACE_TARGET=60`, see the Makefile), in the same
+    // order so slot `which + CAR_COUNT` is the far copy of `which`.
+    include_bytes!("../assets/sedan_lod.psxm"),
+    include_bytes!("../assets/hatchback_lod.psxm"),
+    include_bytes!("../assets/hatchback2_lod.psxm"),
 ];
+
+/// Every cooked car mesh: the three select-screen cars, then their LODs.
+const CAR_SLOTS: usize = CAR_COUNT * 2;
+
+/// Distance past which a half-height split view draws a car from its LOD
+/// slot: at 1,200 uu on the 260-plane projection a car is under 30 pixels
+/// long, where 60 faces read the same as 150 and cost a third.
+const CAR_LOD_DISTANCE: i32 = 1200;
 
 /// The blue body colours the cooker writes, which are the keys the garage
 /// repaints. They must match `paint.rs`'s `Role::Body` and `Role::BodyDark`
@@ -1844,6 +1858,8 @@ pub const PAINT_COUNT: usize = PAINTS.len();
 /// say what one scan says.
 /// One per seat, because both cars are now repainted from the same blob.
 static mut PAINTED_GAME: [[Rgb; CAR_MAX_VERTS]; SEATS] = [[(128, 128, 128); CAR_MAX_VERTS]; SEATS];
+/// The same seat paints applied to the LOD copy of each seat's car.
+static mut PAINTED_LOD: [[Rgb; CAR_MAX_VERTS]; SEATS] = [[(128, 128, 128); CAR_MAX_VERTS]; SEATS];
 /// Which (car, paint) each seat's working tables currently hold, so a frame
 /// that changes nothing does no work.
 static mut PAINTED_FOR: [Option<(usize, usize)>; SEATS] = [None; SEATS];
@@ -1873,6 +1889,7 @@ pub fn set_appearance(seat: usize, car: usize, paint: usize) {
     };
     unsafe {
         repaint(&CAR_MATERIALS[which], &mut PAINTED_GAME[seat]);
+        repaint(&CAR_MATERIALS[which + CAR_COUNT], &mut PAINTED_LOD[seat]);
         PAINTED_FOR[seat] = Some((car, paint));
     }
 }
@@ -1882,10 +1899,13 @@ pub fn set_appearance(seat: usize, car: usize, paint: usize) {
 /// Slots are rear-left, rear-right, front-left, front-right; `255` is rigid
 /// bodywork. Geometry is identical between team variants, so the blue maps
 /// serve both cars.
-static CAR_WHEELS: [&[u8]; CAR_COUNT] = [
+static CAR_WHEELS: [&[u8]; CAR_SLOTS] = [
     include_bytes!("../assets/sedan.psxw"),
     include_bytes!("../assets/hatchback.psxw"),
     include_bytes!("../assets/hatchback2.psxw"),
+    include_bytes!("../assets/sedan_lod.psxw"),
+    include_bytes!("../assets/hatchback_lod.psxw"),
+    include_bytes!("../assets/hatchback2_lod.psxw"),
 ];
 const WHEEL_NONE: u8 = u8::MAX;
 
@@ -1967,7 +1987,7 @@ static mut CAR_TRIS: [TriGouraud; CAR_TRI_CAP] =
 static mut CAR_PROJ: [ProjectedLit; CAR_VERT_CAP] = [EMPTY_LIT; CAR_VERT_CAP];
 /// Four authored wheel pivots per selectable gameplay car, derived once from
 /// the `.psxw` vertex groups while the loading screen is up.
-static mut CAR_WHEEL_CENTRES: [[Vec3I16; 4]; CAR_COUNT] = [[Vec3I16::ZERO; 4]; CAR_COUNT];
+static mut CAR_WHEEL_CENTRES: [[Vec3I16; 4]; CAR_SLOTS] = [[Vec3I16::ZERO; 4]; CAR_SLOTS];
 
 /// Largest vertex table across the prepared gameplay and menu asset library,
 /// with slack.
@@ -1990,8 +2010,8 @@ const CAR_MAX_VERTS: usize = 1344;
 /// built once here and `project_cars` feeds `submit_projected_mesh` instead.
 /// Walking faces in order and keeping the first colour to claim each vertex
 /// reproduces the engine's forward scan exactly, so the pixels are identical.
-static mut CAR_MATERIALS: [[(u8, u8, u8); CAR_MAX_VERTS]; CAR_COUNT] =
-    [[(128, 128, 128); CAR_MAX_VERTS]; CAR_COUNT];
+static mut CAR_MATERIALS: [[(u8, u8, u8); CAR_MAX_VERTS]; CAR_SLOTS] =
+    [[(128, 128, 128); CAR_MAX_VERTS]; CAR_SLOTS];
 
 /// Resolve one blob's per-vertex colours into `out`.
 fn car_materials_for(blob: &[u8], out: &mut [(u8, u8, u8); CAR_MAX_VERTS]) {
@@ -2021,7 +2041,7 @@ fn car_materials_for(blob: &[u8], out: &mut [(u8, u8, u8); CAR_MAX_VERTS]) {
 /// independent of tessellation density: a rim with six vertices and a tyre
 /// with twelve still rotate about the same axle.
 fn build_car_wheel_centres() {
-    for which in 0..CAR_COUNT {
+    for which in 0..CAR_SLOTS {
         let Ok(mesh) = Mesh::from_bytes(CAR_BLOBS[which]) else {
             continue;
         };
@@ -2072,19 +2092,20 @@ fn build_car_wheel_centres() {
 /// Cost is 95 KiB of `.bss` against a 54 KiB starting footprint and most of
 /// two megabytes free, which is the trade this hardware wants: the RAM is
 /// sitting there and the cycles are not.
-static mut CAR_VERTS: [[Vec3I16; CAR_VERT_CAP]; CAR_COUNT] =
-    [[Vec3I16::ZERO; CAR_VERT_CAP]; CAR_COUNT];
-static mut CAR_NORMALS: [[Vec3I16; CAR_VERT_CAP]; CAR_COUNT] =
-    [[Vec3I16::ZERO; CAR_VERT_CAP]; CAR_COUNT];
+static mut CAR_VERTS: [[Vec3I16; CAR_VERT_CAP]; CAR_SLOTS] =
+    [[Vec3I16::ZERO; CAR_VERT_CAP]; CAR_SLOTS];
+static mut CAR_NORMALS: [[Vec3I16; CAR_VERT_CAP]; CAR_SLOTS] =
+    [[Vec3I16::ZERO; CAR_VERT_CAP]; CAR_SLOTS];
 /// How many of those entries each model actually filled.
-static mut CAR_VERT_COUNT: [u16; CAR_COUNT] = [0; CAR_COUNT];
+static mut CAR_VERT_COUNT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
 /// Triangle indices, decoded the same way and for the same reason: `Mesh::face`
 /// rebuilds three `u16` from six `lbu` behind a stride branch, once per face
 /// per car per view.
-static mut CAR_FACES: [[[u16; 3]; CAR_FACE_CAP]; CAR_COUNT] = [[[0; 3]; CAR_FACE_CAP]; CAR_COUNT];
+static mut CAR_FACES: [[[u16; 3]; CAR_FACE_CAP]; CAR_SLOTS] = [[[0; 3]; CAR_FACE_CAP]; CAR_SLOTS];
 /// Depth-sorted face keys for one car draw (`submit_car_faces`).
 static mut CAR_SORT_KEYS: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
-static mut CAR_FACE_COUNT: [u16; CAR_COUNT] = [0; CAR_COUNT];
+static mut CAR_SORT_SPARE: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
+static mut CAR_FACE_COUNT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
 
 /// Decode one gameplay car's vertices and normals into the aligned tables.
 fn decode_car_geometry(blob: &[u8], which: usize) {
@@ -2244,6 +2265,35 @@ fn draw_far_car(
     slab(sy - h(52), sy - h(22), body_col, dark_col);
 }
 
+/// Sort `keys` ascending by their high 16 bits with two 256-bucket counting
+/// passes over the depth bytes, ties kept in index order. `CAR_SORT_SPARE`
+/// is the scratch the second pass writes through.
+fn radix_sort_u32_high16(keys: &mut [u32]) {
+    let n = keys.len();
+    let spare = unsafe { &mut CAR_SORT_SPARE[..n] };
+    let mut src: &mut [u32] = keys;
+    let mut dst: &mut [u32] = spare;
+    for shift in [16u32, 24] {
+        let mut counts = [0u16; 256];
+        for &k in src.iter() {
+            counts[((k >> shift) & 0xff) as usize] += 1;
+        }
+        let mut start = 0u16;
+        for c in counts.iter_mut() {
+            let n = *c;
+            *c = start;
+            start += n;
+        }
+        for &k in src.iter() {
+            let b = ((k >> shift) & 0xff) as usize;
+            dst[counts[b] as usize] = k;
+            counts[b] += 1;
+        }
+        core::mem::swap(&mut src, &mut dst);
+    }
+    // Two passes leave the result back in `keys`.
+}
+
 fn submit_car_faces(
     faces: &[[u16; 3]],
     projected: &[ProjectedLit],
@@ -2272,7 +2322,10 @@ fn submit_car_faces(
         keys[n] = (depth << 16) | i as u32;
         n += 1;
     }
-    keys[..n].sort_unstable();
+    // Two-pass radix on the 16-bit depth (the index rides in the low half):
+    // about a third of quicksort's cost at this size, and the order is
+    // total, so painter's order inside a slot is exact either way.
+    radix_sort_u32_high16(&mut keys[..n]);
     for &key in &keys[..n] {
         let face = &faces[(key & 0xffff) as usize];
         let a = &projected[face[0] as usize];
@@ -2658,8 +2711,11 @@ impl Builder<'_> {
         // split kickoff, with both views down the long axis, was the one
         // scene missing its deadline, and a 160-pixel-wide view cannot show
         // the two-way tessellation past 1800 that it is paying twice for.
+        // A half-height view shows a tile 900 uu out at a dozen pixels tall,
+        // where the two-way cells stop being visible; the top-and-bottom
+        // kickoff, both views down the long axis, is the scene that needs it.
         let (near_distance, mid_distance) = if split_view() {
-            (400, 1200)
+            (400, 900)
         } else {
             (2200, 4000)
         };
@@ -3645,12 +3701,12 @@ impl Builder<'_> {
         // without ever crossing an arc endpoint or a rail/material boundary.
         let ahead = Cull::dot(cull.fwd, (mid.0 - cull.pos.0, 0, mid.1 - cull.pos.2)) > 0;
         let curve_stride = match (ahead, distance) {
-            (true, d) if d < 1400 => 1,
+            (true, d) if d < if split_view() { 1000 } else { 1400 } => 1,
             // A half-width view hands the two-sample curve back to four-sample
             // a thousand units sooner; past that, one band per curve: the
             // stride clamps at the arc endpoints, which keeps the rail and
             // material boundaries exactly where they were.
-            (true, d) if d < if split_view() { 2400 } else { 3600 } => 2,
+            (true, d) if d < if split_view() { 1800 } else { 3600 } => 2,
             (_, d) if d > 3600 && split_view() => 8,
             _ => 4,
         };
@@ -4491,6 +4547,11 @@ fn draw_cars(
         // so the blob is never parsed again here: that was a header walk per
         // car per view, four of them in a split frame.
         let which = which.min(CAR_COUNT - 1);
+        // Beyond the LOD distance a half-height view draws the 60-face copy
+        // with the same paint; the full mesh costs the same ~83k cycles at
+        // thirty pixels as it does filling the screen.
+        let far = split_view() && cull.flat_distance(ground.0, ground.2) > CAR_LOD_DISTANCE;
+        let which = if far { which + CAR_COUNT } else { which };
         // Mid-flip, spin the car about the axis across its dodge direction:
         // yaw into the dodge frame, tumble about X, yaw back out. A forward
         // dodge front-flips, a sideways one barrel-rolls, which is the whole
@@ -4510,7 +4571,13 @@ fn draw_cars(
             .with_rotation(view_rot)
             .load_gte();
         lights.for_object(&view_rot).load();
-        let materials = unsafe { &PAINTED_GAME[seat] };
+        let materials = unsafe {
+            if far {
+                &PAINTED_LOD[seat]
+            } else {
+                &PAINTED_GAME[seat]
+            }
+        };
         // `Car::steer` stores tan(angle), because that is what the bicycle
         // model consumes. Convert it back to a signed turn for the authored
         // front-wheel groups. Wheel roll is about their local axle before the
