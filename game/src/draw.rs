@@ -1759,9 +1759,11 @@ static CAR_BLOBS: [&[u8]; CAR_SLOTS] = [
 const CAR_SLOTS: usize = CAR_COUNT * 2;
 
 /// Distance past which a half-height split view draws a car from its LOD
-/// slot: at 1,200 uu on the 260-plane projection a car is under 30 pixels
-/// long, where 60 faces read the same as 150 and cost a third.
-const CAR_LOD_DISTANCE: i32 = 1200;
+/// slot. The chase camera trails its own car by 800 uu, where a 320x120
+/// view shows it about sixty pixels wide; past 500 uu the LOD reads the
+/// same and costs a third, and that covers the own car in every view, the
+/// two full lit meshes a split frame could not afford at kickoff.
+const CAR_LOD_DISTANCE: i32 = 500;
 
 /// The blue body colours the cooker writes, which are the keys the garage
 /// repaints. They must match `paint.rs`'s `Role::Body` and `Role::BodyDark`
