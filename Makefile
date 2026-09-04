@@ -146,7 +146,7 @@ bake:
 # dependencies and the linker script resolve. `make PSOXIDE_FROM=/path/to/tree`
 # overrides it with a working tree, which is how the demo disc puts every
 # program on one SDK.
-PSOXIDE_REV ?= c2933287ea882b267a88ad34ea92640584edfbba
+PSOXIDE_REV ?= dcf8d830b304a6bebeba4645d49a2f02a595b19b
 PSOXIDE_FROM ?=
 psoxide:
 	@if [ -n "$(PSOXIDE_FROM)" ]; then \
@@ -158,6 +158,7 @@ psoxide:
 
 build: psoxide
 	cd $(GAME) && cargo build --release
+	python3 $(PSOXIDE)/tools/hazard_patch.py $(EXE)
 
 # The game plays CD-DA tracks 2-5 when the disc carries them (game/src/music.rs)
 # and stays silent when it does not. The four songs are the demo disc's menu
