@@ -42,7 +42,6 @@ pub const fn uu(v: i32) -> i32 {
     v << FP
 }
 
-
 // ---- arena, in uu ----------------------------------------------------------
 // Standard Soccar. Side walls +-4096, back walls +-5120, ceiling 2044, and the
 // four corners cut by 45-degree planes crossing the axes at 8064.
@@ -148,10 +147,10 @@ const CAR_BOOST_SPEED: i32 = 2453; // RL 2300 uu/s, the absolute ceiling
 const BALL_MAX_SPEED: i32 = 6400; // RL 6000 uu/s
 
 const CAR_ACCEL: i32 = 28; // RL ~1600 uu/s^2 at a standstill, curved below
-// Boost acceleration, on top of throttle. Neither figure is a whole number of
-// sub-units per tick squared, so both are carried as rationals and spent
-// through a remainder the same way gravity is: 991.667 * 64 / 3600 = 3572/203
-// is 17.6, and rounding it to 18 was 2.1% strong.
+                           // Boost acceleration, on top of throttle. Neither figure is a whole number of
+                           // sub-units per tick squared, so both are carried as rationals and spent
+                           // through a remainder the same way gravity is: 991.667 * 64 / 3600 = 3572/203
+                           // is 17.6, and rounding it to 18 was 2.1% strong.
 const CAR_BOOST_ACCEL_NUM: i32 = 476; // RL 991.667 uu/s^2 (2975/3) on the floor
 const CAR_BOOST_ACCEL_AIR_NUM: i32 = 508; // RL 1058.333 uu/s^2 (3175/3) in the air
 /// Shared by both, and by the air throttle below.
@@ -165,15 +164,15 @@ const CAR_BRAKE: i32 = 62; // RL 3500 uu/s^2
 const CAR_COAST: i32 = 9; // RL ~525 uu/s^2 of engine braking
 const CAR_GRIP: i32 = 780; // /1024 of sideways velocity killed per tick, with full grip
 const CAR_JUMP_V: i32 = 311; // RL 291.67 uu/s (875/3) immediate jump impulse
-// Holding jump keeps accelerating the car for up to a fifth of a second. This
-// is what makes jump height controllable; without it a tap and a long press
-// produce the identical trajectory, which is what made the button feel broken.
-//
-// Rocket League runs at 120 Hz and applies 1458.333 uu/s^2 (4375/3) per slice.
-// In this simulation's units one slice is worth
-//     (4375/3) / 120 * 64 / 60 = 350/27 sub-units of velocity,
-// carried as a rational so twenty-four slices add 311, the same as the
-// immediate impulse, instead of twenty-four rounded-down twelves.
+                             // Holding jump keeps accelerating the car for up to a fifth of a second. This
+                             // is what makes jump height controllable; without it a tap and a long press
+                             // produce the identical trajectory, which is what made the button feel broken.
+                             //
+                             // Rocket League runs at 120 Hz and applies 1458.333 uu/s^2 (4375/3) per slice.
+                             // In this simulation's units one slice is worth
+                             //     (4375/3) / 120 * 64 / 60 = 350/27 sub-units of velocity,
+                             // carried as a rational so twenty-four slices add 311, the same as the
+                             // immediate impulse, instead of twenty-four rounded-down twelves.
 const JUMP_BONUS_NUM: i32 = 350;
 const JUMP_BONUS_DEN: i32 = 27;
 /// Slices the hold can extend over: 24 at 120 Hz is 0.2 s.
@@ -1466,8 +1465,7 @@ impl Sim {
             // model turns hardest in the mid range, so the correction that
             // settles a slow car overshoots a fast one and it answers by
             // cranking the other way, which is a weave their car does not have.
-            steer: (delta * (128 - (quick * 64 / SUPERSONIC_SPEED).min(64)) / 256)
-                .clamp(-128, 128),
+            steer: (delta * (128 - (quick * 64 / SUPERSONIC_SPEED).min(64)) / 256).clamp(-128, 128),
             // Retro League's rule: at the ball, and pointed at it. Everything
             // else is fuel spent getting somewhere a turn would have reached.
             //
@@ -1583,7 +1581,10 @@ impl Sim {
             // Nothing else runs: no clock, no ball, no pads, no pickups, and
             // no way to score twice.
             let gravity = self.gravity_step();
-            for (team, car) in [(Team::Blue, &mut self.car), (Team::Orange, &mut self.opponent)] {
+            for (team, car) in [
+                (Team::Blue, &mut self.car),
+                (Team::Orange, &mut self.opponent),
+            ] {
                 if car.wrecked() {
                     car.demo_timer -= 1;
                     if car.demo_timer == 0 {
@@ -2007,10 +2008,7 @@ impl Sim {
             // to flip forwards, and reading it as one meant a neutral double
             // jump -- the move you want when you are going for height -- was
             // impossible without first letting go of the trigger.
-            let (steer, pitch) = (
-                input.steer.clamp(-128, 128),
-                input.pitch.clamp(-128, 128),
-            );
+            let (steer, pitch) = (input.steer.clamp(-128, 128), input.pitch.clamp(-128, 128));
             if steer.abs() > 40 || pitch.abs() > 40 {
                 // Direction in the car's own frame: sine is the steer axis,
                 // cosine the pitch axis, so forward is 0 and right is a
@@ -2442,12 +2440,7 @@ impl Sim {
         // direction and take away the way anybody aims in this game long
         // before they can aim on purpose.
         let n = contact.normal;
-        let radial = V3::new(
-            ball.p.x - car.p.x,
-            ball.p.y - car.p.y,
-            ball.p.z - car.p.z,
-        )
-        .unit_q12();
+        let radial = V3::new(ball.p.x - car.p.x, ball.p.y - car.p.y, ball.p.z - car.p.z).unit_q12();
 
         // Push the ball clear along the contact normal so it cannot sink into
         // the car and rattle. Out to exactly one radius from the touched face.
@@ -2485,12 +2478,7 @@ impl Sim {
         //    renormalise: a ball caught square on the bumper leaves straight,
         //    one caught on the corner leaves across.
         let (_, _, fwd) = car.basis();
-        let flat = V3::new(
-            radial.x,
-            (radial.y * CARBALL_UP_SCALE) >> 10,
-            radial.z,
-        )
-        .unit_q12();
+        let flat = V3::new(radial.x, (radial.y * CARBALL_UP_SCALE) >> 10, radial.z).unit_q12();
         let along = dot_q12(flat, fwd);
         let bias = (along * (1024 - CARBALL_FWD_SCALE)) >> 10;
         let aim = V3::new(
@@ -2516,8 +2504,6 @@ struct BoxContact {
     normal: V3,
     /// The touching point on the box surface, world sub-units.
     point: V3,
-    /// How far past touching the sphere has sunk, sub-units.
-    penetration: i32,
 }
 
 /// Half-diagonal of the car box, in uu, for the broad phase.
@@ -2532,11 +2518,7 @@ const CAR_BOUND_R: i32 = 104;
 /// box is what the car is drawn as and what the constants already described.
 fn car_box_contact(car: &Car, sphere: V3, radius: i32) -> Option<BoxContact> {
     let reach = uu(radius + CAR_BOUND_R);
-    let d = V3::new(
-        sphere.x - car.p.x,
-        sphere.y - car.p.y,
-        sphere.z - car.p.z,
-    );
+    let d = V3::new(sphere.x - car.p.x, sphere.y - car.p.y, sphere.z - car.p.z);
     // Per-axis reject first: the common case, and it keeps the squared
     // lengths below well inside i32 for a distant pair.
     if d.x.abs() >= reach || d.y.abs() >= reach || d.z.abs() >= reach {
@@ -2585,11 +2567,7 @@ fn car_box_contact(car: &Car, sphere: V3, radius: i32) -> Option<BoxContact> {
             axes[best].y * sign,
             axes[best].z * sign,
         );
-        return Some(BoxContact {
-            normal,
-            point,
-            penetration: want + best_pen,
-        });
+        return Some(BoxContact { normal, point });
     }
 
     let dist = isqrt_i32(dist2).max(1);
@@ -2600,7 +2578,6 @@ fn car_box_contact(car: &Car, sphere: V3, radius: i32) -> Option<BoxContact> {
             (out.z << 12) / dist,
         ),
         point,
-        penetration: want - dist,
     })
 }
 
@@ -2738,7 +2715,11 @@ fn ball_surface_contact(ball: &mut Ball, mouth_open: bool) -> Option<V3> {
 
     let projected_h = horizontal * centre_radius / length;
     let projected_v = vertical * centre_radius / length;
-    add_scaled(&mut ball.p, wall.inward, radius - projected_h - wall.distance);
+    add_scaled(
+        &mut ball.p,
+        wall.inward,
+        radius - projected_h - wall.distance,
+    );
     ball.p.y = radius - projected_v;
 
     Some(
@@ -3858,11 +3839,7 @@ mod tests {
             up: V3::new(0, 4096, 0),
             ..Car::default()
         };
-        let ball = V3::new(
-            uu(local.0),
-            uu(CAR_REST_Y + local.1),
-            uu(local.2),
-        );
+        let ball = V3::new(uu(local.0), uu(CAR_REST_Y + local.1), uu(local.2));
         car_box_contact(&car, ball, BALL_R).map(|c| c.normal)
     }
 
@@ -4288,10 +4265,6 @@ mod tests {
         // Out of the way, so nothing the AI does is a reaction to the player.
         sim.car.p = V3::new(uu(-3600), uu(CAR_REST_Y), uu(-4600));
         sim
-    }
-
-    fn flat_gap(a: V3, b: V3) -> i32 {
-        isqrt_i32(((a.x - b.x) >> FP).pow(2) + ((a.z - b.z) >> FP).pow(2))
     }
 
     #[test]
@@ -4952,7 +4925,8 @@ mod tests {
     fn the_car_can_be_aimed_in_the_air() {
         let mut sim = solo();
         sim.tick(&Input {
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         assert!(!sim.car.grounded);
@@ -4973,7 +4947,8 @@ mod tests {
     fn air_roll_turns_the_car_about_its_nose() {
         let mut sim = solo();
         sim.tick(&Input {
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         let fwd_before = sim.car.basis().2;
@@ -5000,7 +4975,8 @@ mod tests {
     fn pitch_tips_the_nose_in_the_air() {
         let mut sim = solo();
         sim.tick(&Input {
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         let before = sim.car.basis().2.y;
@@ -5061,7 +5037,8 @@ mod tests {
     fn attitude_resets_on_landing() {
         let mut sim = solo();
         sim.tick(&Input {
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         drive(
@@ -5099,7 +5076,8 @@ mod tests {
         let before = sim.car.v.len_xz();
         sim.tick(&Input {
             throttle: 128,
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         assert!(!sim.car.grounded, "the first press should leave the ground");
@@ -5114,7 +5092,8 @@ mod tests {
         sim.tick(&Input {
             throttle: 128,
             pitch: 128,
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         assert_eq!(sim.car.jumps_used, 2);
@@ -5134,13 +5113,15 @@ mod tests {
     fn a_second_jump_with_no_direction_is_a_double_jump() {
         let mut sim = solo();
         sim.tick(&Input {
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         drive(&mut sim, 4, Input::default());
         let rising = sim.car.v.y;
         sim.tick(&Input {
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         assert_eq!(sim.car.dodge_timer, 0, "no direction means no flip");
@@ -5151,14 +5132,16 @@ mod tests {
     fn the_dodge_window_closes() {
         let mut sim = solo();
         sim.tick(&Input {
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         // Wait it out. The car is still airborne, but the chance has gone.
         drive(&mut sim, DODGE_WINDOW as u32 + 2, Input::default());
         sim.tick(&Input {
             pitch: 128,
-            jump_pressed: true, jump_held: true,
+            jump_pressed: true,
+            jump_held: true,
             ..Input::default()
         });
         assert_eq!(sim.car.jumps_used, 1, "a late press should not count");
@@ -5617,9 +5600,7 @@ mod tests {
                 }
             }
             let (h, v) = (to_uu_s(sim.ball.v.z), to_uu_s(sim.ball.v.y));
-            std::println!(
-                "car {speed_uu_s:4} uu/s -> ball horizontal {h:5} vertical {v:4} uu/s"
-            );
+            std::println!("car {speed_uu_s:4} uu/s -> ball horizontal {h:5} vertical {v:4} uu/s");
         }
     }
 

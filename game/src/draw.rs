@@ -446,7 +446,6 @@ pub fn set_arena_time(time: ArenaTime) {
 // of PAINTS[0] and PAINTS[5], which are what the two seats wear by default, so
 // a match nobody redressed looks exactly as it did.
 const GRASS_A: Rgb = (30, 62, 40);
-const GRASS_B: Rgb = (38, 76, 48);
 // Pitch tiling. Finer than a flat surface needs, because a quad with a vertex
 // behind the camera is dropped whole: small tiles lose a sliver, one big quad
 // loses the entire floor.
@@ -1052,20 +1051,18 @@ const COVER_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(COVER_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
-const MARKED_LEFT_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(
-        MARKED_CLUT.uv_clut_word(),
-        MARKED_LEFT_TPAGE.uv_tpage_word(0),
-    )
-    .with_dither(true)
-    .textured_gouraud_packet_material();
-const MARKED_RIGHT_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(
-        MARKED_CLUT.uv_clut_word(),
-        MARKED_RIGHT_TPAGE.uv_tpage_word(0),
-    )
-        .with_dither(true)
-        .textured_gouraud_packet_material();
+const MARKED_LEFT_PACKET: TexturedGouraudPacketMaterial = TextureMaterial::new(
+    MARKED_CLUT.uv_clut_word(),
+    MARKED_LEFT_TPAGE.uv_tpage_word(0),
+)
+.with_dither(true)
+.textured_gouraud_packet_material();
+const MARKED_RIGHT_PACKET: TexturedGouraudPacketMaterial = TextureMaterial::new(
+    MARKED_CLUT.uv_clut_word(),
+    MARKED_RIGHT_TPAGE.uv_tpage_word(0),
+)
+.with_dither(true)
+.textured_gouraud_packet_material();
 
 /// One seamless honeycomb sheet in the page's spare width. The upper walls and
 /// roof sample this same material, so the enclosure cannot change cell shape
@@ -1516,13 +1513,7 @@ fn keep_inside(mut x: i32, mut z: i32) -> (i32, i32) {
 /// that loses the car is useless. A celebration wants the opposite -- the car
 /// is parked and the thing worth looking at is the ball -- so it asks for the
 /// undiluted aim.
-fn camera(
-    s: &Sim,
-    subject: &sim::Car,
-    ball_cam: bool,
-    hold_car: bool,
-    camera_slot: usize,
-) -> View {
+fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_slot: usize) -> View {
     let camera_slot = camera_slot.min(1);
     let previous = unsafe { CHASE_CAMERAS[camera_slot] };
     let (_, car_up, car_fwd) = subject.basis();
@@ -1668,8 +1659,7 @@ fn camera(
         let shift = (delta.abs() - CAM_BALL_CAR_PITCH).max(0);
         signed += delta.signum() * shift;
     }
-    let pitch_min =
-        CAM_PITCH_MIN + (((CAM_WALL_PITCH_MIN - CAM_PITCH_MIN) * wall_amount) >> 12);
+    let pitch_min = CAM_PITCH_MIN + (((CAM_WALL_PITCH_MIN - CAM_PITCH_MIN) * wall_amount) >> 12);
     let desired_pitch = signed.clamp(pitch_min, CAM_PITCH_MAX);
     let mut view_yaw = atan2_q12(aim_x - cx, aim_z - cz);
     if ball_cam && hold_car {
@@ -1686,8 +1676,8 @@ fn camera(
     let (view_yaw, pitch) = if previous.valid {
         let yaw_delta = ((view_yaw as i32 - previous.yaw as i32 + 2048).rem_euclid(4096)) - 2048;
         (
-            (previous.yaw as i32 + yaw_delta.clamp(-CAM_YAW_STEP, CAM_YAW_STEP))
-                .rem_euclid(4096) as u16,
+            (previous.yaw as i32 + yaw_delta.clamp(-CAM_YAW_STEP, CAM_YAW_STEP)).rem_euclid(4096)
+                as u16,
             previous.pitch
                 + (desired_pitch - previous.pitch).clamp(-CAM_PITCH_STEP, CAM_PITCH_STEP),
         )
@@ -1702,11 +1692,7 @@ fn camera(
             pitch,
         };
     }
-    look_from(
-        (cx, cyy, cz),
-        view_yaw,
-        pitch.rem_euclid(4096) as u16,
-    )
+    look_from((cx, cyy, cz), view_yaw, pitch.rem_euclid(4096) as u16)
 }
 
 /// A camera at `pos` looking along `yaw` with `pitch` below the horizontal.
@@ -2743,7 +2729,7 @@ impl Builder<'_> {
     #[inline(never)]
     fn conform_tile(
         g: &mut [[Option<(i16, i16, i32)>; FLOOR_SPLIT_MAX as usize + 1];
-             FLOOR_SPLIT_MAX as usize + 1],
+                 FLOOR_SPLIT_MAX as usize + 1],
         cull: &Cull,
         ix: i32,
         iz: i32,
@@ -2812,8 +2798,7 @@ impl Builder<'_> {
     #[inline(never)]
     fn underdraw_edge(
         &mut self,
-        g: &[[Option<(i16, i16, i32)>; FLOOR_SPLIT_MAX as usize + 1];
-             FLOOR_SPLIT_MAX as usize + 1],
+        g: &[[Option<(i16, i16, i32)>; FLOOR_SPLIT_MAX as usize + 1]; FLOOR_SPLIT_MAX as usize + 1],
         nu: usize,
         k: usize,
         ta: Rgb,
@@ -2902,15 +2887,7 @@ impl Builder<'_> {
         let (u0, v0, last) = (tex_u0 as u8, tex_v0 as u8, (tex_w - 1) as u8);
         let (u1, v1) = (u0 + last, v0 + last);
         let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
-        self.quad_tex_projected(
-            sp,
-            z_sum,
-            uvs,
-            tints,
-            FLOOR_BIAS,
-            packet,
-            false,
-        );
+        self.quad_tex_projected(sp, z_sum, uvs, tints, FLOOR_BIAS, packet, false);
     }
 
     fn floor(&mut self, cull: &Cull) {
@@ -2983,9 +2960,7 @@ impl Builder<'_> {
                 // texture keeps its scale and only the vertex count goes up.
                 let px = |i: i32| x0 + (x1 - x0) * i / n;
                 let pz = |i: i32| z0 + (z1 - z0) * i / n;
-                let u = |base: i32, i: i32| {
-                    (base + (tex_w * i / n).min(tex_w - 1)) as u8
-                };
+                let u = |base: i32, i: i32| (base + (tex_w * i / n).min(tex_w - 1)) as u8;
 
                 // Project the tile's corner grid once. Every interior corner
                 // is shared by four sub-quads, so projecting per quad ran the
@@ -2993,8 +2968,8 @@ impl Builder<'_> {
                 // corner behind the near plane, and any quad touching one is
                 // skipped exactly as `quad_tex`'s own per-corner check did.
                 let nu = n as usize;
-                let mut corners = [[None; FLOOR_SPLIT_MAX as usize + 1];
-                    FLOOR_SPLIT_MAX as usize + 1];
+                let mut corners =
+                    [[None; FLOOR_SPLIT_MAX as usize + 1]; FLOOR_SPLIT_MAX as usize + 1];
                 for (sx, column) in corners.iter_mut().enumerate().take(nu + 1) {
                     for (sz, corner) in column.iter_mut().enumerate().take(nu + 1) {
                         let (cx, cz) = Self::chamfer(px(sx as i32), pz(sz as i32));
@@ -4013,8 +3988,7 @@ impl Builder<'_> {
         // side of the frame. Test the whole roof against both view axes
         // instead, retaining the all-patches skip when it is truly offscreen.
         let roof_box = ((0, -sim::CEIL, 0), (x, 0, z));
-        if !cull.visible(roof_box.0, roof_box.1)
-            || !cull.visible_vertically(roof_box.0, roof_box.1)
+        if !cull.visible(roof_box.0, roof_box.1) || !cull.visible_vertically(roof_box.0, roof_box.1)
         {
             return;
         }
@@ -4060,7 +4034,7 @@ impl Builder<'_> {
         }
     }
 
-    fn goals(&mut self, view: &View) {
+    fn goals(&mut self, _view: &View) {
         // The far goal (+Z) is the one you shoot at, so it wears the
         // opponent's colour; your own net behind you is blue.
         for (z_line, color) in [
@@ -4994,30 +4968,6 @@ const S_CAR_LAYER: u16 = telemetry::stage::MODEL_BOUNDS;
 const S_CAR_FACES: u16 = telemetry::stage::TEXTURED_MODEL_FACES;
 #[cfg(feature = "profile")]
 const S_CAR_FLUSH: u16 = telemetry::stage::TEXTURED_MODEL_JOINTS;
-#[cfg(not(feature = "profile"))]
-const S_FLOOR: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_WALLS: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_TRIM: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_PADS: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_BALL: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_CARS: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_SETUP: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_SUBMIT: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_CAR_PROJECT: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_CAR_LAYER: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_CAR_FACES: u16 = 0;
-#[cfg(not(feature = "profile"))]
-const S_CAR_FLUSH: u16 = 0;
 
 /// Draw one frame of the match for one player, on the whole screen.
 pub fn render(s: &Sim, cars: [usize; SEATS], ball_cam: bool, buffer_y: u16) {

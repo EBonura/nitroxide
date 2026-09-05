@@ -201,8 +201,10 @@ impl Music {
         // The track is absolute, so the loader's base is pre-subtracted here
         // to cancel the shift `try_play_track` applies (see the module note).
         let absolute = FIRST_TRACK + self.index;
-        self.starter
-            .tick(tick, absolute.wrapping_sub(psx_io::disc_base::cdda_track_base()));
+        self.starter.tick(
+            tick,
+            absolute.wrapping_sub(psx_io::disc_base::cdda_track_base()),
+        );
 
         if self.starter.started() && tick.wrapping_sub(self.next_poll) < u32::MAX / 2 {
             self.next_poll = tick.wrapping_add(POLL_TICKS);
@@ -211,13 +213,6 @@ impl Music {
                 self.index = (self.index + 1) % TRACK_COUNT;
                 self.begin_track(tick);
             }
-        }
-    }
-
-    /// Stop the drive. For leaving the program, not for muting.
-    pub fn stop(&mut self) {
-        if self.available {
-            cdrom::try_pause(SPINS);
         }
     }
 }

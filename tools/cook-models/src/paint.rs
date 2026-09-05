@@ -212,7 +212,11 @@ mod tests {
     /// failing test anywhere else.
     #[test]
     fn the_body_colours_are_the_keys_the_garage_repaints() {
-        assert_eq!(Role::Body.colour(), (32, 80, 168), "draw.rs BODY_KEY must match");
+        assert_eq!(
+            Role::Body.colour(),
+            (32, 80, 168),
+            "draw.rs BODY_KEY must match"
+        );
         assert_eq!(
             Role::BodyDark.colour(),
             (16, 34, 80),
@@ -255,7 +259,10 @@ mod tests {
             Role::Indicator,
             Role::Chassis,
         ] {
-            assert!(!keys.contains(&role.colour()), "{role:?} sits on a repaint key");
+            assert!(
+                !keys.contains(&role.colour()),
+                "{role:?} sits on a repaint key"
+            );
         }
     }
 }
