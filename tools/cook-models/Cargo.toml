@@ -22,5 +22,5 @@ gltf = "1"
 # PSoXide's own glTF importer, from the pinned submodule. Host-side only: it
 # pulls in a full glTF parser, which is fine here and would never fit on the
 # console. The runtime side reads its output with psx-asset.
-psxed-format = { path = "../../.psoxide/editor/crates/psxed-format" }
+psxed-format = { path = "../../.psoxide/crates/psxed-format" }
 psxed-gltf = { path = "../../.psoxide/editor/crates/psxed-gltf" }
