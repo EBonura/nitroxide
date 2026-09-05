@@ -743,7 +743,7 @@ impl NitroXide {
 
     /// Text over the front end. The panels and the car are 3D, drawn by
     /// `draw`; this only writes on top of them.
-    fn draw_title(&self, font: &FontAtlas, small: &FontAtlas, tick: u32) {
+    fn draw_title(&self, font: &FontAtlas, _small: &FontAtlas, tick: u32) {
         // Animated title. Drawn as one string rather than letter by letter:
         // this font is proportional, so stepping a fixed advance leaves gaps
         // after narrow glyphs like I, which is what the first attempt did.
@@ -939,12 +939,8 @@ impl NitroXide {
                         draw::ArenaTime::Night => "NIGHT",
                     },
                 ),
-                SettingsRow::Sound => {
-                    ("SOUND: ", if audio::muted() { "OFF" } else { "ON" })
-                }
-                SettingsRow::Music => {
-                    ("MUSIC: ", if self.music.enabled() { "ON" } else { "OFF" })
-                }
+                SettingsRow::Sound => ("SOUND: ", if audio::muted() { "OFF" } else { "ON" }),
+                SettingsRow::Music => ("MUSIC: ", if self.music.enabled() { "ON" } else { "OFF" }),
                 SettingsRow::Track => ("TRACK: ", self.music.track_name()),
                 SettingsRow::Back => ("BACK", ""),
             };
@@ -990,9 +986,7 @@ impl NitroXide {
         /// highlight's own sweep time, so the two animations feel related.
         const SLIDE: u32 = draw::MENU_SWEEP_TICKS;
 
-        let tw = font
-            .text_width("NOW PLAYING")
-            .max(font.text_width(name)) as i16;
+        let tw = font.text_width("NOW PLAYING").max(font.text_width(name)) as i16;
         // Sheared left end, then the disc, then the type, right-aligned at
         // the same margin the old text-only banner used. The plate leads the
         // disc by enough that the shear never crowds it.
@@ -1085,7 +1079,12 @@ impl NitroXide {
             let a0 = spin.wrapping_add(half * 2048);
             let a1 = a0.wrapping_add(460);
             psx_gpu::draw_quad_flat(
-                [point(a0, 5), point(a0, R_BODY), point(a1, 5), point(a1, R_BODY)],
+                [
+                    point(a0, 5),
+                    point(a0, R_BODY),
+                    point(a1, 5),
+                    point(a1, R_BODY),
+                ],
                 244,
                 248,
                 255,
@@ -1621,15 +1620,7 @@ impl Scene for NitroXide {
                         || p2(button::CIRCLE)
                         || ctx.just_pressed(button::START)
                         || p2(button::START);
-                    self.settings_input(
-                        up,
-                        down,
-                        left,
-                        right,
-                        cross,
-                        back,
-                        ctx.sim_tick.as_u32(),
-                    );
+                    self.settings_input(up, down, left, right, cross, back, ctx.sim_tick.as_u32());
                     return;
                 }
                 if ctx.just_pressed(button::UP) || p2(button::UP) {

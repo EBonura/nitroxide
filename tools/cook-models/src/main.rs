@@ -108,31 +108,31 @@ fn main() {
         }
         let out = dst.join(format!("{name}.psxm"));
         match cook(&glb, length) {
-                Ok((blob, components, wheels, stats)) => {
-                    std::fs::write(&out, &blob).expect("write psxm");
-                    if emit_components {
-                        let component_out = dst.join(format!("{name}.psxc"));
-                        std::fs::write(component_out, &components).expect("write psxc");
-                        let wheel_out = dst.join(format!("{name}.psxw"));
-                        std::fs::write(wheel_out, &wheels).expect("write psxw");
-                    }
-                    println!(
-                        "{name:12} {:4} tris {:4} verts {:2} parts {:5} B  {:>4}x{:>3}x{:>3} uu  {}",
-                        stats.faces,
-                        stats.verts,
-                        stats.components,
-                        blob.len(),
-                        stats.size.2,
-                        stats.size.0,
-                        stats.size.1,
-                        // The vertex tally, not the face tally: a part that
-                        // reaches no vertex is not in the picture, whatever the
-                        // face table says. This is the line to read when a car
-                        // comes out looking like a lozenge again.
-                        stats.claims,
-                    );
+            Ok((blob, components, wheels, stats)) => {
+                std::fs::write(&out, &blob).expect("write psxm");
+                if emit_components {
+                    let component_out = dst.join(format!("{name}.psxc"));
+                    std::fs::write(component_out, &components).expect("write psxc");
+                    let wheel_out = dst.join(format!("{name}.psxw"));
+                    std::fs::write(wheel_out, &wheels).expect("write psxw");
                 }
-                Err(e) => eprintln!("{name}: {e}"),
+                println!(
+                    "{name:12} {:4} tris {:4} verts {:2} parts {:5} B  {:>4}x{:>3}x{:>3} uu  {}",
+                    stats.faces,
+                    stats.verts,
+                    stats.components,
+                    blob.len(),
+                    stats.size.2,
+                    stats.size.0,
+                    stats.size.1,
+                    // The vertex tally, not the face tally: a part that
+                    // reaches no vertex is not in the picture, whatever the
+                    // face table says. This is the line to read when a car
+                    // comes out looking like a lozenge again.
+                    stats.claims,
+                );
+            }
+            Err(e) => eprintln!("{name}: {e}"),
         }
     }
 }
@@ -166,10 +166,7 @@ impl std::fmt::Display for Claims {
     }
 }
 
-fn cook(
-    glb: &Path,
-    target_length: i32,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Stats), String> {
+fn cook(glb: &Path, target_length: i32) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Stats), String> {
     let mut face_components = components_by_face(glb)?;
     let cfg = Config {
         decimate_grid: DECIMATE_GRID,
@@ -948,10 +945,7 @@ fn tally_claims(blob: &[u8]) -> Result<Claims, String> {
     for face in 0..faces {
         let o = colour_table + face * 3;
         let colour = (blob[o], blob[o + 1], blob[o + 2]);
-        let role = roles
-            .iter()
-            .copied()
-            .find(|role| role.colour() == colour);
+        let role = roles.iter().copied().find(|role| role.colour() == colour);
         for corner in 0..3 {
             let i = index_table + face * 6 + corner * 2;
             let vertex = u16::from_le_bytes([blob[i], blob[i + 1]]) as usize;
@@ -1318,17 +1312,8 @@ mod tests {
     #[test]
     fn a_lamp_beside_a_small_panel_claims_the_shared_vertex() {
         let (mut blob, stats) = two_face_blob(6);
-        let claims = repaint(
-            &mut blob,
-            &stats,
-            &lamp_and_panel(),
-            &mut [0, 1],
-        )
-        .unwrap();
-        assert_eq!(
-            first_colour(&blob, &stats),
-            Role::Taillight.colour()
-        );
+        let claims = repaint(&mut blob, &stats, &lamp_and_panel(), &mut [0, 1]).unwrap();
+        assert_eq!(first_colour(&blob, &stats), Role::Taillight.colour());
         assert_eq!(claimed(&claims, Role::Taillight), 3);
     }
 
@@ -1338,13 +1323,7 @@ mod tests {
         // would bleed the length of it. It goes behind the body instead, and
         // keeps only the two corners the body never touches.
         let (mut blob, stats) = two_face_blob(200);
-        let claims = repaint(
-            &mut blob,
-            &stats,
-            &lamp_and_panel(),
-            &mut [0, 1],
-        )
-        .unwrap();
+        let claims = repaint(&mut blob, &stats, &lamp_and_panel(), &mut [0, 1]).unwrap();
         assert_eq!(first_colour(&blob, &stats), Role::Body.colour());
         assert_eq!(claimed(&claims, Role::Taillight), 2);
     }
@@ -1354,13 +1333,7 @@ mod tests {
         let (mut blob, stats) = two_face_blob(200);
         let before = index_table(&blob, &stats);
         let mut components = [0, 1];
-        repaint(
-            &mut blob,
-            &stats,
-            &lamp_and_panel(),
-            &mut components,
-        )
-        .unwrap();
+        repaint(&mut blob, &stats, &lamp_and_panel(), &mut components).unwrap();
         let mut after = index_table(&blob, &stats);
         let mut before = before;
         before.sort_unstable();
