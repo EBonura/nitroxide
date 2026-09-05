@@ -1,13 +1,15 @@
 # NitroXide
 
+Start with the [PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc): it includes NitroXide
+and the other Bonnie Studios PlayStation demos. Standalone downloads are available
+for testing just this project.
+
 Rocket-powered car soccer for the original PlayStation, written in Rust on the
 [PSoXide SDK](https://github.com/EBonura/PSoXide) and
 [engine](https://github.com/EBonura/PSoXide-editor/tree/main/engine). Drive a car into a
 ball, put the ball in the net, burn nitro to get there first.
 
-No emulation, no reverse-engineered assets: this is an original game that
-borrows the shape of the genre. It runs on real hardware. GPL-2.0-or-later,
-matching PSoXide.
+An original game for PS1 hardware, licensed GPL-2.0-or-later.
 
 ## Screenshots
 
@@ -302,3 +304,8 @@ bootstrapping; imports refuse to overwrite unowned or edited files.
 `make run FRONTEND=/path/to/PSoXide-emulator/target/release/frontend` uses the
 standalone emulator. The demo disc may supply a bootstrapped editor checkout
 explicitly with `PSOXIDE_FROM`.
+
+## Recent changes
+
+Source snapshot **2026.09.05**: Pinned SDK and engine sources separately and switched to the standalone emulator.
+See the [changelog](CHANGELOG.md) for the remaining changes and published download versions.
