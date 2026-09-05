@@ -1,7 +1,8 @@
 # NitroXide
 
 Rocket-powered car soccer for the original PlayStation, written in Rust on the
-[PSoXide](https://github.com/EBonura/PSoXide) SDK and engine. Drive a car into a
+[PSoXide SDK](https://github.com/EBonura/PSoXide) and
+[engine](https://github.com/EBonura/PSoXide-editor/tree/main/engine). Drive a car into a
 ball, put the ball in the net, burn nitro to get there first.
 
 No emulation, no reverse-engineered assets: this is an original game that
@@ -26,19 +27,23 @@ runs at the original PlayStation's 320×240 resolution.
 The disc image is on [itch.io](https://bonnie-studios.itch.io/nitroxide),
 music included: the soundtrack rides the disc as CD audio, so the download is
 the full experience. NitroXide also ships on the
-[PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc) with
-nine other programs, and that disc runs
+[PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc), which runs
 [in your browser](https://bonnie-studios.itch.io/psoxide) on the PSoXide
 page, no console needed.
 
 ## Build
 
+Install Rust through rustup, Make, Python 3, host C/C++ build tools and
+`mipsel-none-elf-objdump` for the guest load-delay patcher.
+
 ```sh
-make bootstrap   # fetch the pinned PSoXide submodule
+git clone https://github.com/EBonura/nitroxide.git
+cd nitroxide
+make psoxide     # import the revisions in components.lock.json
 make test        # physics tests, on the host, no console needed
 make build       # PSX-EXE at game/target/mipsel-sony-psx/release/nitroxide.exe
 make disc        # bootable disc, straight into the PS1 library
-make run         # disc + boot it in the PSoXide frontend
+make run FRONTEND=/absolute/path/to/frontend # disc + standalone emulator
 ```
 
 Discs always land in `~/Downloads/ps1 games/NitroXide/`, never in a folder
@@ -46,7 +51,12 @@ inside the repo. That is where the emulator's library and the burn tooling both
 look, so a finished build is always one that can be launched or burned without
 a copy step. Override with `make disc GAMES_DIR=...` or `GAME_NAME=...`.
 
-Nightly Rust, date-pinned in `rust-toolchain.toml` to match the submodule.
+Rust nightly is date-pinned in `rust-toolchain.toml`. The default disc has no
+music: add `CDDA_DIR=/path/to/PSoXide-demo-disc/audio` when those authorized
+source tracks are available. They are external to this repository; see
+[the audio notes](game/assets/audio/README.md). Keep the BIN and CUE together.
+Blender and the original car models are needed only for `make assets`; normal
+builds use the committed cooked models.
 
 ## Controls
 
