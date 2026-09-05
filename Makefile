@@ -1,5 +1,5 @@
 # NitroXide -- rocket-car soccer for the PlayStation 1, built on the PSoXide
-# Rust stack (hydrated into .psoxide/ from the pin in psoxide-pin/). A plain
+# Rust stack (hydrated into .psoxide/ from components.lock.json). A plain
 # `cargo build --release` in game/ already produces a PSX-EXE (see
 # game/.cargo/config.toml + game/build.rs); these targets add disc packing and
 # the headless capture loop used to check the render without a console.
@@ -11,7 +11,7 @@ COOK      := $(ROOT)/tools/cook-models
 ARENA_COOK := $(ROOT)/tools/cook-arena
 PSOXIDE   := $(ROOT)/.psoxide
 MKISOPSX  := $(PSOXIDE)/tools/mkisopsx
-FRONTEND  := $(PSOXIDE)/emu
+FRONTEND  ?= frontend
 TARGET    := mipsel-sony-psx
 EXE       := $(GAME)/target/$(TARGET)/release/nitroxide.exe
 ARENA_SOURCE   := $(ROOT)/assets-src/grass.bmp
@@ -141,19 +141,15 @@ bake:
 			"$(BAKED)/$${car}_baked.glb" 128 300 2>&1 | grep '^BAKED'; \
 	done
 
-# Which PSoXide this is built against. Cargo owns the pin (psoxide-pin/), and
-# psoxide-link copies the resolved checkout to .psoxide so the game's path
-# dependencies and the linker script resolve. `make PSOXIDE_FROM=/path/to/tree`
-# overrides it with a working tree, which is how the demo disc puts every
-# program on one SDK.
-PSOXIDE_REV ?= e4f27c2fad3de1b827ec460b2c3db89117b1ad94
+# Exact SDK, engine/cookers and emulator-library sources are locked separately.
+# PSOXIDE_FROM remains an explicit demo-disc override.
 PSOXIDE_FROM ?=
 psoxide:
 	@if [ -n "$(PSOXIDE_FROM)" ]; then \
 		cargo run -q --manifest-path $(PSOXIDE_FROM)/tools/psoxide-link/Cargo.toml -- \
 			--from "$(PSOXIDE_FROM)" --into $(PSOXIDE); \
 	else \
-		cargo run -q --manifest-path $(ROOT)/psoxide-pin/Cargo.toml -- $(PSOXIDE); \
+		python3 $(ROOT)/tools/bootstrap-components.py --root $(PSOXIDE) --lock $(ROOT)/components.lock.json; \
 	fi
 
 build: psoxide
@@ -182,7 +178,7 @@ disc: build $(ARENA_PSXT)
 	@echo "DISC -> $(OUT)/$(GAME_NAME).cue"
 
 run: disc
-	cd $(FRONTEND) && cargo run -p frontend --release -- launch \
+	"$(FRONTEND)" launch \
 		--path "$(OUT)/$(GAME_NAME).cue"
 
 # Boot straight into a match, hold accelerate, and dump the final frame. This
@@ -195,7 +191,7 @@ shot: psoxide $(ARENA_PSXT)
 		--out "$(SHOT_DISC_BIN)" \
 		--volume NITROXIDE \
 		--world-pack-extra-dir "$(ARENA_DISC_DIR)"
-	cd $(FRONTEND) && cargo run -p frontend --release -- launch \
+	"$(FRONTEND)" launch \
 		--path "$(SHOT_DISC_CUE)" --steps $(STEPS) --pad-pulses "$(PULSES)" --dump-hw $(SHOT)
 	@echo "SHOT -> $(SHOT)"
 

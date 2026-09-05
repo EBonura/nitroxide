@@ -282,3 +282,13 @@ which is PSoXide's own copy verbatim.
 The car models under `game/assets/` are cooked from a third-party low-poly
 asset pack and carry whatever terms that pack came with, independently of the
 code licence.
+
+## PSoXide components
+
+`make psoxide` imports the exact SDK, editor/engine and emulator-library revisions
+in `components.lock.json` into ignored `.psoxide/`. Cortex projects are excluded.
+For an existing checkout, preserve or remove its old `.psoxide/` cache once before
+bootstrapping; imports refuse to overwrite unowned or edited files.
+`make run FRONTEND=/path/to/PSoXide-emulator/target/release/frontend` uses the
+standalone emulator. The demo disc may supply a bootstrapped editor checkout
+explicitly with `PSOXIDE_FROM`.

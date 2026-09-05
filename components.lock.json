@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "components": {
+    "sdk": {
+      "repository": "EBonura/PSoXide",
+      "revision": "a7bde2b5baeb409061e9458e92f2e0037ba1c7f5",
+      "paths": [
+        "sdk",
+        "crates",
+        "tools/mkisopsx",
+        "tools/psoxide-link",
+        "tools/hazard_scan.py",
+        "tools/hazard_patch.py",
+        "tools/guest_symbol_gate.sh",
+        "tools/check_mfc0.py",
+        "tools/sdk-examples.mk"
+      ]
+    },
+    "emulator": {
+      "repository": "EBonura/PSoXide-emulator",
+      "revision": "fd914c5ed8fbb0b46f8276c5ff7376904b9b444f",
+      "paths": [
+        "emu/crates/emulator-core",
+        "emu/crates/psoxide-settings",
+        "emu/crates/psoxide-validation",
+        "emu/crates/psx-gpu-render"
+      ]
+    },
+    "editor": {
+      "repository": "EBonura/PSoXide-editor",
+      "revision": "b4a650bee8765a4eef04f65298167fe9b5759350",
+      "paths": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "engine",
+        "editor/crates",
+        "editor/assets",
+        "editor/projects/default",
+        "emu/crates/frontend",
+        "tools/psoxide-dev",
+        "assets"
+      ]
+    }
+  }
+}

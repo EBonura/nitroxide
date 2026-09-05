@@ -10,6 +10,6 @@ repository = "https://github.com/EBonura/nitroxide"
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["bmp"] }
 psx-asset = { path = "../../.psoxide/sdk/crates/psx-asset" }
-psxed-format = { path = "../../.psoxide/editor/crates/psxed-format" }
+psxed-format = { path = "../../.psoxide/crates/psxed-format" }
 psxed-tex = { path = "../../.psoxide/editor/crates/psxed-tex" }
 
