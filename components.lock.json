@@ -3,7 +3,7 @@
   "components": {
     "sdk": {
       "repository": "EBonura/PSoXide",
-      "revision": "0046b5a51e1e094044b4bc5113ab39987531d737",
+      "revision": "f78f0fe64de485e770ba328fe0b9f9707eaafb38",
       "paths": [
         "sdk",
         "crates",
@@ -18,7 +18,7 @@
     },
     "emulator": {
       "repository": "EBonura/PSoXide-emulator",
-      "revision": "1fa69b5018a7fb8f6863069fa334901a5e9ac3e6",
+      "revision": "f251cb69b7e4a1fe3c075e632f7a9ba83fd10564",
       "paths": [
         "emu/crates/emulator-core",
         "emu/crates/psoxide-settings",
@@ -28,7 +28,7 @@
     },
     "editor": {
       "repository": "EBonura/PSoXide-editor",
-      "revision": "8e49444f591d664cf71309fd8b4bf8bb89b95cca",
+      "revision": "35725f597a248c298124baf82cc8e07964812e39",
       "paths": [
         "Cargo.toml",
         "Cargo.lock",
