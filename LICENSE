@@ -431,5 +431,5 @@ obtained copies.
 
 Ignored tests (canaries, commercial guards) may require:
 
-- PSOXIDE_BIOS=/path/to/bios.bin
+- PSoXide runs supported homebrew through its built-in runtime; no external firmware is loaded.
 - local game images you legally own

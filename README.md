@@ -309,3 +309,10 @@ explicitly with `PSOXIDE_FROM`.
 
 Source snapshot **2026.09.05**: Pinned SDK and engine sources separately and switched to the standalone emulator.
 See the [changelog](CHANGELOG.md) for the remaining changes and published download versions.
+
+## PSoXide source components
+
+`components.lock.json` pins the SDK, engine/editor and emulator libraries separately.
+`make psoxide` verifies and materializes them into the ignored `.psoxide` directory.
+The demo disc can pass `PSOXIDE_FROM` with a verified composite editor checkout.
+Pass `FRONTEND=/path/to/PSoXide-emulator/target/release/frontend` to player helpers.
