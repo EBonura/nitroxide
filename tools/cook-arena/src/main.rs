@@ -169,7 +169,9 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
         PsxtDepth::Bit4,
         &indices,
         &palette_rows,
-        false,
+        // Preserve the cover row's black index zero as a hole. Other rows
+        // have a nonblack entry zero, which the encoder preserves unchanged.
+        true,
     )
     .expect("encode arena PSXT");
 
@@ -301,6 +303,20 @@ fn validate(blob: &[u8]) {
     assert_eq!(texture.halfwords_per_row(), (TEX_W / 4) as u16);
     assert_eq!(texture.clut_entries(), (4 * CLUT_ENTRIES) as u16);
     let clut = texture.clut_bytes();
+    let cover_zero = COVER_CLUT_ROW * CLUT_ENTRIES * 2;
+    assert_eq!(
+        u16::from_le_bytes([clut[cover_zero], clut[cover_zero + 1]]),
+        0,
+        "cover and net holes must remain transparent"
+    );
+    for row in [0usize, 1, MARKED_CLUT_ROW] {
+        let offset = row * CLUT_ENTRIES * 2;
+        assert_ne!(
+            u16::from_le_bytes([clut[offset], clut[offset + 1]]) & 0x7fff,
+            0,
+            "arena and grass palette zero must retain its opaque color"
+        );
+    }
     for entry in [1usize, 2] {
         let offset = (COVER_CLUT_ROW * CLUT_ENTRIES + entry) * 2;
         let value = u16::from_le_bytes([clut[offset], clut[offset + 1]]);
