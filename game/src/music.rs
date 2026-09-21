@@ -77,10 +77,7 @@ const IDLE_POLLS_TO_ADVANCE: u8 = 8;
 /// handshake takes the same precaution.
 const PROBE_TICK: u32 = 90;
 
-/// BCD byte to binary. Track numbers come off the drive packed.
-fn from_bcd(v: u8) -> u8 {
-    (v >> 4) * 10 + (v & 0x0F)
-}
+use psx_io::cdrom::bcd_to_bin as from_bcd;
 
 pub struct Music {
     /// The disc really does carry the menu tracks.
