@@ -13,7 +13,8 @@
         "tools/hazard_patch.py",
         "tools/guest_symbol_gate.sh",
         "tools/check_mfc0.py",
-        "tools/sdk-examples.mk"
+        "tools/sdk-examples.mk",
+        "tools/psoxide-pgo"
       ]
     },
     "emulator": {
