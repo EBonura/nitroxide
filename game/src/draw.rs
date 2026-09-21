@@ -1270,13 +1270,7 @@ fn ry(v: i32) -> i32 {
     -(v >> FP)
 }
 
-fn shade(c: Rgb, num: i32, den: i32) -> Rgb {
-    (
-        (c.0 as i32 * num / den).clamp(0, 255) as u8,
-        (c.1 as i32 * num / den).clamp(0, 255) as u8,
-        (c.2 as i32 * num / den).clamp(0, 255) as u8,
-    )
-}
+use psx_math::color::scale_rgb as shade;
 
 fn mix(a: Rgb, b: Rgb, weight_b: i32) -> Rgb {
     let w = weight_b.clamp(0, 16);
@@ -1294,21 +1288,15 @@ fn mix(a: Rgb, b: Rgb, weight_b: i32) -> Rgb {
 /// `Mat3I16::rotate_y` exists but takes 256-per-revolution angles off an
 /// uninterpolated table, which is 1.4 degrees a step: a car yawing at walking
 /// pace visibly clicks between orientations. `psx-math`'s Q0.12 sin/cos
-/// interpolates to 4096 steps, so the matrices are built here and composed
-/// with the engine's own `mul`.
+/// interpolates to 4096 steps; the shared Q12 constructors preserve that
+/// precision before composition with `mul`.
 fn rot_y_q12(a: u16) -> Mat3I16 {
-    let (s, c) = (sin_q12(a) as i16, cos_q12(a) as i16);
-    Mat3I16 {
-        m: [[c, 0, s], [0, 4096, 0], [-s, 0, c]],
-    }
+    Mat3I16::rotate_y_q12(a)
 }
 
 /// Roll about X, which for a rolling ball is the axis it turns on.
 fn rot_x_q12(a: u16) -> Mat3I16 {
-    let (s, c) = (sin_q12(a) as i16, cos_q12(a) as i16);
-    Mat3I16 {
-        m: [[4096, 0, 0], [0, c, -s], [0, s, c]],
-    }
+    Mat3I16::rotate_x_q12(a)
 }
 
 const IDENTITY: Mat3I16 = Mat3I16 {
@@ -1323,8 +1311,8 @@ const FLIP_Y: Mat3I16 = Mat3I16 {
 /// `m * v`, Q12, on i32 inputs. `Mat3I16::transform` wants a `Vec3I16`, and
 /// camera-relative offsets here are i32 by habit even though they fit.
 fn apply(m: &Mat3I16, v: (i32, i32, i32)) -> (i32, i32, i32) {
-    let row = |r: [i16; 3]| ((r[0] as i32) * v.0 + (r[1] as i32) * v.1 + (r[2] as i32) * v.2) >> 12;
-    (row(m.m[0]), row(m.m[1]), row(m.m[2]))
+    let [x, y, z] = m.transform_i32([v.0, v.1, v.2]);
+    (x, y, z)
 }
 
 /// The camera for one frame: a view matrix plus where it is standing.
