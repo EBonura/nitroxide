@@ -146,10 +146,10 @@ bake:
 PSOXIDE_FROM ?=
 psoxide:
 	@if [ -n "$(PSOXIDE_FROM)" ]; then \
-		cargo run -q --manifest-path $(PSOXIDE_FROM)/tools/psoxide-link/Cargo.toml -- \
-			--from "$(PSOXIDE_FROM)" --into $(PSOXIDE); \
+		cargo run -q --manifest-path "$(PSOXIDE_FROM)/tools/psoxide-link/Cargo.toml" -- \
+			--from "$(PSOXIDE_FROM)" --into "$(PSOXIDE)"; \
 	else \
-		python3 $(ROOT)/tools/bootstrap-components.py --root $(PSOXIDE) --lock $(ROOT)/components.lock.json; \
+		python3 "$(ROOT)/tools/bootstrap-components.py" --root "$(PSOXIDE)" --lock "$(ROOT)/components.lock.json"; \
 	fi
 
 # LLVM's MIPS delay-slot filler searches backwards only by default, which left
@@ -168,8 +168,8 @@ PSX_DELAY_SLOT_FLAGS = $(filter -C%,$(subst ", ,$(subst $(comma), ,$(shell sed -
 DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rustflags=[$(foreach f,$(PSX_DELAY_SLOT_FLAGS),"$(f)",)]',$(error PSX_DELAY_SLOT_FLAGS not found in $(PSOXIDE)/tools/sdk-examples.mk))
 
 build: psoxide
-	cd $(GAME) && cargo build --release $(DELAY_SLOT_CONFIG)
-	python3 $(PSOXIDE)/tools/hazard_patch.py $(EXE)
+	cd "$(GAME)" && cargo build --release $(DELAY_SLOT_CONFIG)
+	python3 "$(PSOXIDE)/tools/hazard_patch.py" "$(EXE)"
 
 # The game plays CD-DA tracks 2-5 when the disc carries them (game/src/music.rs)
 # and stays silent when it does not. The four songs are the demo disc's menu
