@@ -1,0 +1,19 @@
+# `trim-paths` is a nightly cargo feature; these crates are nightly-pinned
+# anyway (bare-metal MIPS needs build-std), so the gate costs nothing.
+cargo-features = ["trim-paths"]
+
+# The guest workspace root is the repo root so every path dependency (.psoxide
+# and ../sim) sits inside it and cargo hashes it by its workspace-relative path.
+# Outside the root cargo hashes the absolute path, which made the crate
+# disambiguators, and so the image layout, depend on the checkout path.
+[workspace]
+resolver = "2"
+members  = ["game"]
+# .psoxide is generated; sim and tools are host-side workspaces of their own.
+exclude  = [".psoxide", "sim", "tools"]
+
+[profile.release]
+trim-paths    = "all"
+panic         = "abort"
+codegen-units = 1
+lto           = true

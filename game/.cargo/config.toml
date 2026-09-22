@@ -2,6 +2,8 @@
 # `cargo build --release` produces a PSX-EXE.
 [build]
 target = "mipsel-sony-psx"
+# Relative to game/: the image stays at game/target/ with the workspace at the repo root.
+target-dir = "target"
 
 [unstable]
 # No prebuilt std for the PSX target: compile core ourselves, with the
