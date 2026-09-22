@@ -12,6 +12,14 @@ fn main() {
     let ld = repo_root.join(".psoxide/sdk/psoxide.ld");
     let ld = ld.canonicalize().unwrap_or(ld);
     println!("cargo:rustc-link-arg=-T{}", ld.display());
-    println!("cargo:rustc-link-arg=--oformat=binary");
+    // `PSOXIDE_LINK_ELF=1` (set by the SDK's psoxide-pgo driver) keeps the ELF
+    // instead of the flat PSX-EXE, so the driver can read its DWARF. Same code
+    // at the same addresses; it does not boot. Cargo passes build-script link
+    // arguments after rustflags, so the driver's own --oformat=elf cannot
+    // override this one.
+    println!("cargo:rerun-if-env-changed=PSOXIDE_LINK_ELF");
+    if std::env::var_os("PSOXIDE_LINK_ELF").is_none() {
+        println!("cargo:rustc-link-arg=--oformat=binary");
+    }
     println!("cargo:rerun-if-changed={}", ld.display());
 }

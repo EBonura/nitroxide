@@ -60,17 +60,20 @@ STEPS  ?= 120000000
 PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
-.PHONY: help test assets textures bake build disc run shot clean psoxide
+.PHONY: help test assets textures bake compile build pack disc run shot clean psoxide \
+	pgo-collect pgo-choose
 
 help:
 	@echo "NitroXide targets:"
 	@echo "  make test      - run the physics + cook tests on the host"
 	@echo "  make assets    - bake + cook the car models from $(MODELS_DIR)"
 	@echo "  make textures  - cook the arena atlas to shared .psxt"
-	@echo "  make build     - build the PSX-EXE"
+	@echo "  make build     - build the PSX-EXE (PGO_VARIANT=off for no PGO; alias: compile)"
 	@echo "  make disc      - build + pack the disc into '$(OUT)'"
 	@echo "  make run       - disc + boot it in the PSoXide frontend"
 	@echo "  make shot      - headless capture to $(SHOT) (no window)"
+	@echo "  make pgo-collect FRONTEND=x - regenerate the committed PGO profile"
+	@echo "  make pgo-choose  FRONTEND=x - build and gate every PGO variant"
 	@echo "  make clean     - cargo clean both crates"
 
 # The physics is a plain host crate: it does not need a PlayStation, so this is
@@ -159,17 +162,38 @@ psoxide:
 # guest builds with one set; they are read from there rather than copied.
 # Every search can leave a load in a slot whose consumer runs inside the load
 # delay, so the link is always followed by hazard_patch.py, which reroutes
-# those branches through psx-rt's HAZARD_TRAMPOLINES and rescans (81 of the
-# default 96 words used; psx-rt's hazard-trampolines-256 feature is the room
-# to grow into). `--config` appends to game/.cargo/config.toml; an exported
+# those branches through psx-rt's HAZARD_TRAMPOLINES and rescans (46 of the
+# default 96 words in the shipping PGO build; psx-rt's hazard-trampolines-256
+# feature is the room to grow into). `--config` appends to game/.cargo/config.toml; an exported
 # RUSTFLAGS would replace it.
 comma := ,
 PSX_DELAY_SLOT_FLAGS = $(filter -C%,$(subst ", ,$(subst $(comma), ,$(shell sed -n 's/^PSX_DELAY_SLOT_FLAGS :*= *//p' "$(PSOXIDE)/tools/sdk-examples.mk"))))
 DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rustflags=[$(foreach f,$(PSX_DELAY_SLOT_FLAGS),"$(f)",)]',$(error PSX_DELAY_SLOT_FLAGS not found in $(PSOXIDE)/tools/sdk-examples.mk))
 
-build: psoxide
-	cd "$(GAME)" && cargo build --release $(DELAY_SLOT_CONFIG)
-	python3 "$(PSOXIDE)/tools/hazard_patch.py" "$(EXE)"
+# Profile-guided optimisation through the SDK's shared driver
+# ($(PSOXIDE)/tools/psoxide-pgo/README.md). pgo/nitroxide.prof is committed and
+# portable (its names carry no checkout-path or feature hashes), so every build
+# applies it with no emulator: `make build`, `make disc`, CI and the demo disc.
+# PGO_VARIANT is the winner of `make pgo-choose`; PGO_VARIANT=off builds the
+# plain image. Either way the driver runs the hazard patcher and scanner and
+# stops on a failure, and the exe lands at $(EXE) as before.
+#
+# The host tools (psoxide-pgo, mkisopsx) build in .psoxide's Cargo workspace
+# against the Cargo.lock imported from the editor pin. --locked keeps a host
+# build from rewriting that imported file, which the next `make psoxide` would
+# refuse as an edit.
+FEATURES    ?=
+GAME_CARGO   = build --release$(if $(strip $(FEATURES)), --features "$(FEATURES)") $(DELAY_SLOT_CONFIG)
+PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-pgo/Cargo.toml" --
+PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
+PGO_VARIANT ?= accurate+nopgso+hot=1000
+
+compile: psoxide
+	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
+		--variant "$(PGO_VARIANT)" -- $(GAME_CARGO)
+	@echo "EXE -> $(EXE)"
+
+build: compile
 
 # The game plays CD-DA tracks 2-5 when the disc carries them (game/src/music.rs)
 # and stays silent when it does not. The four songs are the demo disc's menu
@@ -182,15 +206,53 @@ build: psoxide
 CDDA_DIR  ?=
 CDDA_ARGS  = $(if $(CDDA_DIR),$(foreach t,knuckle-dust rusted-hammer chainsaw-heart night-crawler,--cdda-track "$(CDDA_DIR)/$(t).cdda"))
 
-disc: build $(ARENA_PSXT)
-	@mkdir -p "$(OUT)"
-	cd $(MKISOPSX) && cargo run --release -- \
-		--exe $(EXE) \
-		--out "$(OUT)/$(GAME_NAME).bin" \
+# `make pack PACK_EXE=x PACK_OUT=y.bin` wraps any exe in the game's disc image.
+PACK_EXE ?= $(EXE)
+PACK_OUT ?= $(OUT)/$(GAME_NAME).bin
+pack: $(ARENA_PSXT)
+	@mkdir -p "$$(dirname "$(PACK_OUT)")"
+	cd "$(MKISOPSX)" && cargo run -q --release --locked -- \
+		--exe "$(PACK_EXE)" \
+		--out "$(PACK_OUT)" \
 		--volume NITROXIDE \
 		--world-pack-extra-dir "$(ARENA_DISC_DIR)" \
 		$(CDDA_ARGS)
+
+disc: build
+	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(OUT)/$(GAME_NAME).bin"
 	@echo "DISC -> $(OUT)/$(GAME_NAME).cue"
+
+# Regenerating the profile and picking the variant need the emulator:
+#   make pgo-collect FRONTEND=/path/to/frontend CDDA_DIR=...  (after gameplay code changes or an SDK repin)
+#   make pgo-choose  FRONTEND=/path/to/frontend CDDA_DIR=...  (then commit the winner as PGO_VARIANT)
+# The committed profile and the variant were measured on a disc with the four
+# songs (CDDA_DIR = the demo disc's audio/), as the itch and demo-disc builds
+# ship. pgo/train.pxtape presses through the menus to kickoff; polls 396..1200
+# are gameplay. There is no second route yet, so the gate has no holdout tape.
+# PGO_LAUNCH_ARGS adds frontend arguments (--launch-arg X per word).
+TRAIN_TAPE   = $(ROOT)/pgo/train.pxtape
+TRAIN_POLLS  = 396..1200
+PGO_LAUNCH_ARGS ?=
+PGO_PACK = '$(MAKE) --no-print-directory -C "$(ROOT)" pack PACK_EXE="$$PSOXIDE_PGO_EXE" PACK_OUT="$$PSOXIDE_PGO_DISC"'
+pgo-collect: psoxide
+	PSOXIDE="$(PSOXIDE)" $(PGO) collect --crate "$(GAME)" --frontend "$(FRONTEND)" \
+		--tape "$(TRAIN_TAPE)" --polls $(TRAIN_POLLS) \
+		--pack $(PGO_PACK) --launch-arg --embedded-playtest $(PGO_LAUNCH_ARGS) \
+		--out "$(PGO_PROFILE)" -- $(GAME_CARGO)
+	@$(MAKE) --no-print-directory compile
+
+# NitroXide renders every second vblank and waits out the rest, so `choose`
+# ranks the variants by the work cycles `measure` counts outside the wait loops.
+# The last build is the last variant, so this rebuilds the shipping exe at the end.
+PGO_VARIANTS = off default hot=500 hot=500+profi accurate+nopgso+hot=1000 accurate+nopgso+hot=1500
+PGO_MEASURE  = "$$PSOXIDE_PGO" measure --frontend "$(FRONTEND)" --image "$$PSOXIDE_PGO_IMAGE" \
+	--launch-arg --embedded-playtest $(PGO_LAUNCH_ARGS)
+pgo-choose: psoxide
+	PSOXIDE="$(PSOXIDE)" $(PGO) choose --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
+		$(foreach v,$(PGO_VARIANTS),--variant $(v)) --pack $(PGO_PACK) \
+		--gate '$(PGO_MEASURE) --tape "$(TRAIN_TAPE)" --polls $(TRAIN_POLLS) --name train' \
+		-- $(GAME_CARGO)
+	@$(MAKE) --no-print-directory compile
 
 run: disc
 	"$(FRONTEND)" launch \
