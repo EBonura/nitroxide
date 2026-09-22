@@ -152,8 +152,23 @@ psoxide:
 		python3 $(ROOT)/tools/bootstrap-components.py --root $(PSOXIDE) --lock $(ROOT)/components.lock.json; \
 	fi
 
+# LLVM's MIPS delay-slot filler searches backwards only by default, which left
+# a nop in 18.8M of the 22.0M delay slots a kickoff-and-drive replay executed.
+# The SDK owns the switches that also search the successor block and past
+# calls (PSX_DELAY_SLOT_FLAGS in the hydrated tools/sdk-examples.mk), so every
+# guest builds with one set; they are read from there rather than copied.
+# Every search can leave a load in a slot whose consumer runs inside the load
+# delay, so the link is always followed by hazard_patch.py, which reroutes
+# those branches through psx-rt's HAZARD_TRAMPOLINES and rescans (81 of the
+# default 96 words used; psx-rt's hazard-trampolines-256 feature is the room
+# to grow into). `--config` appends to game/.cargo/config.toml; an exported
+# RUSTFLAGS would replace it.
+comma := ,
+PSX_DELAY_SLOT_FLAGS = $(filter -C%,$(subst ", ,$(subst $(comma), ,$(shell sed -n 's/^PSX_DELAY_SLOT_FLAGS :*= *//p' "$(PSOXIDE)/tools/sdk-examples.mk"))))
+DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rustflags=[$(foreach f,$(PSX_DELAY_SLOT_FLAGS),"$(f)",)]',$(error PSX_DELAY_SLOT_FLAGS not found in $(PSOXIDE)/tools/sdk-examples.mk))
+
 build: psoxide
-	cd $(GAME) && cargo build --release
+	cd $(GAME) && cargo build --release $(DELAY_SLOT_CONFIG)
 	python3 $(PSOXIDE)/tools/hazard_patch.py $(EXE)
 
 # The game plays CD-DA tracks 2-5 when the disc carries them (game/src/music.rs)
@@ -184,7 +199,8 @@ run: disc
 # Boot straight into a match, hold accelerate, and dump the final frame. This
 # is how render changes get checked without opening the GUI.
 shot: psoxide $(ARENA_PSXT)
-	cd $(GAME) && cargo build --release --features boot-play
+	cd $(GAME) && cargo build --release --features boot-play $(DELAY_SLOT_CONFIG)
+	python3 $(PSOXIDE)/tools/hazard_patch.py $(EXE)
 	@mkdir -p "$(ROOT)/build/shot"
 	cd $(MKISOPSX) && cargo run --release -- \
 		--exe $(EXE) \
