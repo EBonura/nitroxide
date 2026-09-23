@@ -4924,7 +4924,7 @@ pub fn render_menu(s: &Sim, cars: [usize; SEATS], panels: FrontPanels, pair: boo
     );
     enter_view(Viewport::FULL, buffer_y);
     build_view(s, cars, view, Viewport::FULL, Some(panels), 0);
-    submit_prepared();
+    submit_detached();
 }
 
 // Borrowed slots from the engine's stage table. Nothing in this game uses
@@ -4961,7 +4961,7 @@ const S_CAR_FLUSH: u16 = telemetry::stage::TEXTURED_MODEL_JOINTS;
 pub fn render(s: &Sim, cars: [usize; SEATS], ball_cam: bool, buffer_y: u16) {
     enter_view(Viewport::FULL, buffer_y);
     render_view(s, cars, ball_cam, &s.car, Viewport::FULL, 0);
-    submit_prepared();
+    submit_detached();
 }
 
 /// Draw one frame of a two-player match: player one on the left half of the
@@ -5169,12 +5169,13 @@ fn build_view(
     }
 }
 
-/// Kick the ordering table prepared by [`render`] or [`render_menu`].
+/// Kick the ordering table a split-screen pass prepared and wait for the walk.
 ///
-/// The scene uses the engine's queued contract: while the CPU prepares frame
-/// N+1, the GPU rasterises frame N. Submission therefore has to remain
-/// separate from packet construction, and immediate text waits until the
-/// runner's overlay hook after the linked list has drained.
+/// The scene uses the engine's immediate contract: `render` kicks its own
+/// table and the runner drains it before the HUD overlay and the flip. A
+/// split pass has to wait here, because the next pass (and `leave_view`)
+/// moves the drawing area with an immediate GP0 command, which must not land
+/// while this pass's packets are still being walked.
 pub fn submit_prepared() {
     staged!(S_SUBMIT, {
         apply_arena_draw_mode();
@@ -5182,5 +5183,27 @@ pub fn submit_prepared() {
         // The GPU keeps rasterising afterwards; the engine's draw_sync
         // before the flip covers that tail, same as voxide's frame shape.
         unsafe { OtFrame::resume(&mut OT) }.submit();
+    });
+}
+
+/// Kick a whole-screen table and return while the walk runs.
+///
+/// Nothing between here and the present touches the GPU or the packets: the
+/// runner drains the channel and the GPU before `render_overlay` and the
+/// flip. What the CPU gains is the fixed update that falls due while the GPU
+/// is still drawing, which a blocking kick left waiting behind the walk.
+///
+/// The engine's queued contract is the other way to overlap, and measures
+/// worse here. It kicks this table only after the previous frame's flip and
+/// waits for the walk before building the next one into the same packet
+/// arena, and this game's build runs past one vblank, so on a FIFO-paced
+/// DMA model the walk and the next build end up in series again
+/// (2026-09-23, frozen frontend, train tape polls 396..1200: overrun frames
+/// 11 -> 4 on the default model but 29 -> 75 with
+/// PSOXIDE_EXPERIMENTAL_DMA_FIFO=1).
+fn submit_detached() {
+    staged!(S_SUBMIT, {
+        apply_arena_draw_mode();
+        unsafe { OtFrame::resume(&mut OT) }.submit_async().detach();
     });
 }
