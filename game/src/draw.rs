@@ -1790,6 +1790,15 @@ const CAR_LOD_EXIT_DEPTH: i32 = 2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_EX
 /// Which seats a full-screen view is currently drawing from the LOD.
 static mut CAR_FAR_LOD: [bool; SEATS] = [false; SEATS];
 
+/// The same idea for the ball: a full-screen view drops to eight columns (the
+/// split view's mesh) once the ball is this many pixels across or less, and
+/// goes back to sixteen above [`BALL_LOD_EXIT_PX`].
+const BALL_LOD_ENTER_PX: i32 = 20;
+const BALL_LOD_EXIT_PX: i32 = 24;
+const BALL_LOD_ENTER_DEPTH: i32 = 2 * sim::BALL_R * PROJ_H as i32 / BALL_LOD_ENTER_PX;
+const BALL_LOD_EXIT_DEPTH: i32 = 2 * sim::BALL_R * PROJ_H as i32 / BALL_LOD_EXIT_PX;
+static mut BALL_FAR_LOD: bool = false;
+
 /// Hysteresis between two depths: `far` turns on past `enter` and off
 /// nearer than `exit`.
 fn lod_far(far: &mut bool, depth: i32, enter: i32, exit: i32) -> bool {
@@ -4559,7 +4568,13 @@ impl Builder<'_> {
         // Sixteen columns around the ball is what stops the silhouette
         // reading as a polygon at one player's scale. At half the width, drawn
         // twice, eight is past the point where anybody counts them.
-        let lon_step = if split_view() { 2 } else { 1 };
+        let far = lod_far(
+            unsafe { &mut BALL_FAR_LOD },
+            view.camera_space(ball_pos).2,
+            BALL_LOD_ENTER_DEPTH,
+            BALL_LOD_EXIT_DEPTH,
+        );
+        let lon_step = if split_view() || far { 2 } else { 1 };
         let mesh = unsafe { &BALL_MESH };
         // Two latitude rows at a time, the band's top and bottom edge, so the
         // frame fits the scratchpad stack `build_view` runs this on.
