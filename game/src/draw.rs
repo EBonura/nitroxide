@@ -1775,6 +1775,32 @@ const CAR_SLOTS: usize = CAR_COUNT * 2;
 /// two full lit meshes a split frame could not afford at kickoff.
 const CAR_LOD_DISTANCE: i32 = 500;
 
+/// A full-screen view swaps a car to its 60-face LOD once it is this many
+/// pixels long or less on screen, and back to the full mesh above
+/// [`CAR_LOD_EXIT_PX`]. Screen size rather than distance, because size is what
+/// decides whether the extra faces can be seen; the gap between the two is
+/// hysteresis, so a car hovering at the threshold does not flicker between
+/// meshes every frame.
+const CAR_LOD_ENTER_PX: i32 = 24;
+const CAR_LOD_EXIT_PX: i32 = 28;
+/// Camera-space depths those sizes fall at: car length on screen is
+/// `2 * CAR_HALF_L * PROJ_H / depth`.
+const CAR_LOD_ENTER_DEPTH: i32 = 2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_ENTER_PX;
+const CAR_LOD_EXIT_DEPTH: i32 = 2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_EXIT_PX;
+/// Which seats a full-screen view is currently drawing from the LOD.
+static mut CAR_FAR_LOD: [bool; SEATS] = [false; SEATS];
+
+/// Hysteresis between two depths: `far` turns on past `enter` and off
+/// nearer than `exit`.
+fn lod_far(far: &mut bool, depth: i32, enter: i32, exit: i32) -> bool {
+    if depth > enter {
+        *far = true;
+    } else if depth < exit {
+        *far = false;
+    }
+    *far
+}
+
 /// The blue body colours the cooker writes, which are the keys the garage
 /// repaints. They must match `paint.rs`'s `Role::Body` and `Role::BodyDark`
 /// for `Team::Blue` exactly: the remap is a colour match, and a change there
@@ -4759,7 +4785,17 @@ fn draw_cars(
         // Beyond the LOD distance a half-height view draws the 60-face copy
         // with the same paint; the full mesh costs the same ~83k cycles at
         // thirty pixels as it does filling the screen.
-        let far = split_view() && cull.flat_distance(ground.0, ground.2) > CAR_LOD_DISTANCE;
+        let far = if split_view() {
+            cull.flat_distance(ground.0, ground.2) > CAR_LOD_DISTANCE
+        } else {
+            let depth = view.camera_space(ground).2;
+            lod_far(
+                unsafe { &mut CAR_FAR_LOD[seat] },
+                depth,
+                CAR_LOD_ENTER_DEPTH,
+                CAR_LOD_EXIT_DEPTH,
+            )
+        };
         let which = if far { which + CAR_COUNT } else { which };
         // Mid-flip, spin the car about the axis across its dodge direction:
         // yaw into the dodge frame, tumble about X, yaw back out. A forward
