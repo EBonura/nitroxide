@@ -575,10 +575,16 @@ impl NitroXide {
 
     // ---- HUD ---------------------------------------------------------------
 
-    /// How long after a kickoff the scoreboard stays open, in ticks of live
-    /// play. A first guess, not tuned: two seconds reads the score without
-    /// holding the full board open over the first touch.
-    const KICKOFF_SCOREBOARD_TICKS: u8 = 120;
+    /// The earliest a kickoff reaches the ball, in ticks of live play: the
+    /// first contact with throttle and boost held from the first tick
+    /// (measured on the sim, 2026-09-23; either car, or both). The AI alone
+    /// gets there on tick 221 and throttle alone on 235.
+    const KICKOFF_CONTACT_TICKS: u8 = 158;
+
+    /// How long after a kickoff the scoreboard stays open. It has to be shut,
+    /// slide included, half a second before the fastest kickoff reaches the
+    /// ball, so nothing moves at the top of the screen while the cars meet.
+    const KICKOFF_SCOREBOARD_TICKS: u8 = Self::KICKOFF_CONTACT_TICKS - draw::SCOREBOARD_STEPS - 30;
 
     /// Whether the scoreboard should be open, heading for the full board, or
     /// closed down to the in-play tab.
@@ -596,13 +602,15 @@ impl NitroXide {
             || final_minute
     }
 
-    /// A HUD text colour as the tint that shows it.
+    /// A text colour as the tint that shows it. Every text call in this file
+    /// goes through it (the shadow helpers apply it themselves) except the
+    /// intro's sheen line, which is authored in tint units already.
     ///
     /// The font's texels are white and the GPU multiplies a texel by
     /// tint/128, so a tint shows at twice its value and anything over 128
     /// saturates: the authored light blue and pale clock used to come out
-    /// white, and the urgent red a pale pink. Colours are authored as they
-    /// should look and halved here.
+    /// white, the urgent red a pale pink, and a menu's unlit rows as white as
+    /// its lit one. Colours are authored as they should look and halved here.
     const fn ink(c: (u8, u8, u8)) -> (u8, u8, u8) {
         (c.0.div_ceil(2), c.1.div_ceil(2), c.2.div_ceil(2))
     }
@@ -616,14 +624,14 @@ impl NitroXide {
     /// HUD did.
     fn shadowed(font: &FontAtlas, x: i16, y: i16, text: &str, tint: (u8, u8, u8)) {
         font.draw_text(x + 1, y + 1, text, (0, 0, 0));
-        font.draw_text(x, y, text, tint);
+        font.draw_text(x, y, text, Self::ink(tint));
     }
 
     /// As `shadowed`, at an exact 2x. Q8 512 is whole-pixel doubling, not the
     /// fractional scaling that chewed the old title.
     fn shadowed_big(font: &FontAtlas, x: i16, y: i16, text: &str, tint: (u8, u8, u8)) {
         font.draw_text_scaled_q8(x + 1, y + 1, text, 512, 512, (0, 0, 0));
-        font.draw_text_scaled_q8(x, y, text, 512, 512, tint);
+        font.draw_text_scaled_q8(x, y, text, 512, 512, Self::ink(tint));
     }
 
     fn draw_hud(&self, font: &FontAtlas) {
@@ -641,7 +649,7 @@ impl NitroXide {
         // the character count by a guessed cell width lands everything off
         // centre, most visibly on the clock where the colon is much narrower
         // than a digit.
-        let white = Self::ink((255, 255, 255));
+        let white = (255, 255, 255);
         for (cx, score) in board
             .score_x
             .into_iter()
@@ -659,7 +667,7 @@ impl NitroXide {
         // The centre states the active win condition. Timed matches keep the
         // familiar M:SS clock; first-to matches show their target instead of
         // a frozen or fake countdown.
-        let pale = Self::ink((226, 232, 244));
+        let pale = (226, 232, 244);
         match s.win_condition {
             WinCondition::TimeLimit(_) => {
                 let secs = s.clock / 60;
@@ -672,9 +680,9 @@ impl NitroXide {
                 // Under a minute, and in the colour of trouble.
                 let urgent = s.clock < 60 * 60;
                 let tint = if urgent && (s.clock / 15) % 2 == 0 {
-                    Self::ink((255, 120, 96))
+                    (255, 120, 96)
                 } else if urgent {
-                    Self::ink((255, 196, 170))
+                    (255, 196, 170)
                 } else {
                     pale
                 };
@@ -698,7 +706,7 @@ impl NitroXide {
                     x + font.text_width(prefix) as i16,
                     board.clock_y,
                     target,
-                    Self::ink((255, 220, 120)),
+                    (255, 220, 120),
                 );
             }
         }
@@ -730,7 +738,7 @@ impl NitroXide {
             let w = font.text_width(text) as i16;
             let cx = draw::boost_gauge_x(vp);
             let cy = draw::boost_gauge_y(vp);
-            Self::shadowed(font, cx - w / 2, cy - 6, text, Self::ink((255, 214, 120)));
+            Self::shadowed(font, cx - w / 2, cy - 6, text, (255, 255, 255));
 
             if ball_cam {
                 Self::shadowed(
@@ -738,7 +746,7 @@ impl NitroXide {
                     vp.x + 8,
                     vp.y + vp.h - 22,
                     "BALL CAM",
-                    Self::ink((146, 202, 255)),
+                    (146, 202, 255),
                 );
             }
         }
@@ -772,9 +780,16 @@ impl NitroXide {
         // camera puts the net, so the headline covered the explosion it was
         // announcing.
         const Y: i16 = 34;
-        font.draw_text_scaled_q8(x, Y, text, grow, grow, color);
         let after = x + (font.text_width(text) as i32 * grow as i32 / 256) as i16;
-        font.draw_text_scaled_q8(after, Y, " SCORED", grow, grow, (240, 240, 220));
+        // A black outline, one pixel each way. The team colour is its true
+        // shade now rather than washed out by saturation, and the cobalt is
+        // too dark to hold its edges against the stands' grey lattice alone.
+        for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)] {
+            font.draw_text_scaled_q8(x + dx, Y + dy, text, grow, grow, (0, 0, 0));
+            font.draw_text_scaled_q8(after + dx, Y + dy, " SCORED", grow, grow, (0, 0, 0));
+        }
+        font.draw_text_scaled_q8(x, Y, text, grow, grow, Self::ink(color));
+        font.draw_text_scaled_q8(after, Y, " SCORED", grow, grow, Self::ink((240, 240, 220)));
     }
 
     /// What to call a seat on screen.
@@ -812,7 +827,7 @@ impl NitroXide {
             "NITROXIDE",
             352,
             352,
-            ((110 + wave * 4) as u8, (188 + wave) as u8, 255),
+            Self::ink(((110 + wave * 4) as u8, (188 + wave) as u8, 255)),
         );
 
         // Centred on the ink, not on the cell. `line_height` is fifteen rows
@@ -1279,23 +1294,23 @@ impl NitroXide {
         } else {
             ("DRAW", (230, 230, 150))
         };
-        font.draw_text_scaled_q8(96, 48, verdict, 448, 448, color);
+        font.draw_text_scaled_q8(96, 48, verdict, 448, 448, Self::ink(color));
         let mut dec = [0u8; U32_DEC_MAX];
-        small.draw_text(84, 120, "GOALS", (160, 175, 205));
+        small.draw_text(84, 120, "GOALS", Self::ink((160, 175, 205)));
         small.draw_text(
             200,
             120,
             u32_dec(&mut dec, s.score_blue as u32),
-            (245, 245, 190),
+            Self::ink((245, 245, 190)),
         );
-        small.draw_text(84, 144, "CONCEDED", (160, 175, 205));
+        small.draw_text(84, 144, "CONCEDED", Self::ink((160, 175, 205)));
         small.draw_text(
             200,
             144,
             u32_dec(&mut dec, s.score_orange as u32),
-            (245, 245, 190),
+            Self::ink((245, 245, 190)),
         );
-        small.draw_text(92, 206, "PRESS START", (230, 230, 160));
+        small.draw_text(92, 206, "PRESS START", Self::ink((230, 230, 160)));
     }
 }
 
