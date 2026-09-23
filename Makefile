@@ -188,7 +188,11 @@ FEATURES    ?=
 GAME_CARGO   = build --release$(if $(strip $(FEATURES)), --features "$(FEATURES)") $(DELAY_SLOT_CONFIG)
 PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-pgo/Cargo.toml" --
 PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
-PGO_VARIANT ?= hot=500+profi
+# `off` since 60 fps: hot=500+profi wins on average work per frame (the
+# number `pgo-choose` ranks by) but loses on the heavy frames with both cars
+# on screen, which are the ones that miss a vblank. Judge a variant by the
+# share of frames at 60, not by the average.
+PGO_VARIANT ?= off
 
 compile: psoxide
 	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
