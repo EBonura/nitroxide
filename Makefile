@@ -188,7 +188,7 @@ FEATURES    ?=
 GAME_CARGO   = build --release$(if $(strip $(FEATURES)), --features "$(FEATURES)") $(DELAY_SLOT_CONFIG)
 PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-pgo/Cargo.toml" --
 PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
-PGO_VARIANT ?= accurate+nopgso+hot=1000
+PGO_VARIANT ?= hot=500+profi
 
 compile: psoxide
 	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
