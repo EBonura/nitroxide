@@ -269,6 +269,20 @@ const CAM_BALL_CAR_YAW: i32 = 330;
 /// nearer than the ball at kickoff, so its downward sightline is considerably
 /// steeper even though both subjects are on the floor.
 const CAM_BALL_CAR_PITCH: i32 = 260;
+/// The same limit for a half-height split view. The split keeps [`PROJ_H`],
+/// so its vertical half-field is 60 lines, about 13 degrees against the full
+/// screen's 25, and the full-screen limit left the car below the view.
+/// `atan2_q12` is linear in the slope inside an octant, so this is not a
+/// clean angle: it was set from headless captures (boot-split-play and
+/// boot-split-wall, both seats) to keep the whole car inside the bottom of
+/// the view with the ball still below the scoreboard.
+const CAM_BALL_CAR_PITCH_SPLIT: i32 = 68;
+/// Ball cam's eye height in a split view. From the full `CAM_HEIGHT` the car
+/// sits about 22 degrees below a far ball, nearly the whole 26-degree split
+/// field, so holding the car pushed the ball up under the scoreboard and the
+/// view read as looking down from above. Only the ball cam that holds the
+/// car uses it; the chase camera and the goal celebration keep `CAM_HEIGHT`.
+const CAM_SPLIT_BALL_HEIGHT: i32 = 200;
 /// Car cam looks just beyond the nose. A far-ahead aim point works only while
 /// the full follow distance is available; at kickoff the end wall shortens
 /// that distance and the same pitch put the car below the 240-line frame.
@@ -1531,7 +1545,14 @@ fn keep_inside(mut x: i32, mut z: i32) -> (i32, i32) {
 /// that loses the car is useless. A celebration wants the opposite -- the car
 /// is parked and the thing worth looking at is the ball -- so it asks for the
 /// undiluted aim.
-fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_slot: usize) -> View {
+fn camera(
+    s: &Sim,
+    subject: &sim::Car,
+    ball_cam: bool,
+    hold_car: bool,
+    split: bool,
+    camera_slot: usize,
+) -> View {
     let camera_slot = camera_slot.min(1);
     let previous = unsafe { CHASE_CAMERAS[camera_slot] };
     let now = unsafe { CAMERA_TICK };
@@ -1619,7 +1640,12 @@ fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_sl
     // on screen-space Y, behind the car rather than above it.
     let vertical_trail = (((car_fwd.y * CAM_WALL_TRAIL) >> 12) * wall_amount) >> 12;
     let car_y = ry(subject.p.y);
-    let desired_cyy = car_y + vertical_trail - ((car_up.y * CAM_HEIGHT) >> 12);
+    let height = if ball_cam && hold_car && split {
+        CAM_SPLIT_BALL_HEIGHT
+    } else {
+        CAM_HEIGHT
+    };
+    let desired_cyy = car_y + vertical_trail - ((car_up.y * height) >> 12);
     let desired_offset = (cx - car_x, desired_cyy - car_y, cz - car_z);
     let offset = if !previous.valid {
         desired_offset
@@ -1679,7 +1705,12 @@ fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_sl
             car_raw
         };
         let delta = car_pitch - signed;
-        let shift = (delta.abs() - CAM_BALL_CAR_PITCH).max(0);
+        let limit = if split {
+            CAM_BALL_CAR_PITCH_SPLIT
+        } else {
+            CAM_BALL_CAR_PITCH
+        };
+        let shift = (delta.abs() - limit).max(0);
         signed += delta.signum() * shift;
     }
     let pitch_min = CAM_PITCH_MIN + (((CAM_WALL_PITCH_MIN - CAM_PITCH_MIN) * wall_amount) >> 12);
@@ -5338,6 +5369,7 @@ fn render_view(
             subject,
             ball_cam || celebrating,
             !celebrating,
+            vp.h < SCREEN_H,
             camera_slot,
         )
     });
