@@ -1854,7 +1854,11 @@ fn main() -> ! {
     // the deadline while physics stays at the full 60 Hz.
     let config = Config {
         clear_color: (6, 8, 16),
-        visual_pacing: VisualPacing::EveryVBlank,
+        visual_pacing: if cfg!(feature = "pace-30") {
+            VisualPacing::EveryNVBlanks(2)
+        } else {
+            VisualPacing::EveryVBlank
+        },
         ..Config::default()
     };
     let mut game = NitroXide::new();
