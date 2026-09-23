@@ -285,6 +285,8 @@ struct CameraState {
     offset: (i32, i32, i32),
     yaw: u16,
     pitch: i32,
+    /// Sim tick this state was computed on.
+    tick: u32,
 }
 
 impl CameraState {
@@ -293,10 +295,18 @@ impl CameraState {
         offset: (0, 0, 0),
         yaw: 0,
         pitch: 0,
+        tick: 0,
     };
 }
 
 static mut CHASE_CAMERAS: [CameraState; 2] = [CameraState::EMPTY; 2];
+/// EXPERIMENT: the sim tick being rendered. The chase camera's step limits
+/// were tuned per 30 Hz frame (two ticks); scaling them by the ticks since
+/// the last update keeps the camera's catch-up speed the same at any rate.
+static mut CAMERA_TICK: u32 = 0;
+pub fn set_camera_tick(tick: u32) {
+    unsafe { CAMERA_TICK = tick };
+}
 const DEPTH_RANGE: DepthRange = DepthRange::new(120, 14000);
 const SKY_SLOT: usize = OT_DEPTH - 1;
 /// The scoreboard fascia. In front of the world, behind the boost dial on
@@ -1242,8 +1252,12 @@ pub fn upload_arena_texture(blob: &[u8]) -> bool {
     true
 }
 
-static mut OT: OrderingTable<OT_DEPTH> = OrderingTable::new();
-static mut QUADS: [QuadGouraud; MAX_QUADS] =
+static mut OT_SETS: [OrderingTable<OT_DEPTH>; 2] = [OrderingTable::new(), OrderingTable::new()];
+/// EXPERIMENT: which packet set the frame being built uses; the other may be in flight.
+static mut SET: usize = 0;
+static mut PENDING: bool = false;
+static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; 2] = [QUADS_INIT; 2];
+const QUADS_INIT: [QuadGouraud; MAX_QUADS] =
     [const { QuadGouraud::new([(0, 0); 4], [(0, 0, 0); 4]) }; MAX_QUADS];
 /// Textured quads live in their own pool: a different packet size, and the
 /// arena's floor and walls are the only things that use them.
@@ -1256,7 +1270,8 @@ static mut QUADS: [QuadGouraud; MAX_QUADS] =
 // Keep another thirty-two packets of headroom for a near-plane split rather
 // than allowing a high aerial to lose random cells from the enclosure.
 const MAX_TEX_QUADS: usize = 704;
-static mut TEX_QUADS: [QuadTexturedGouraud; MAX_TEX_QUADS] =
+static mut TEX_QUADS_SETS: [[QuadTexturedGouraud; MAX_TEX_QUADS]; 2] = [TEX_INIT; 2];
+const TEX_INIT: [QuadTexturedGouraud; MAX_TEX_QUADS] =
     [const { QuadTexturedGouraud::EMPTY }; MAX_TEX_QUADS];
 
 /// Sim sub-units -> uu.
@@ -1504,6 +1519,11 @@ fn keep_inside(mut x: i32, mut z: i32) -> (i32, i32) {
 fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_slot: usize) -> View {
     let camera_slot = camera_slot.min(1);
     let previous = unsafe { CHASE_CAMERAS[camera_slot] };
+    let now = unsafe { CAMERA_TICK };
+    let ticks = (now.wrapping_sub(previous.tick).clamp(1, 8)) as i32;
+    let offset_step = CAM_OFFSET_STEP * ticks / 2;
+    let yaw_step = CAM_YAW_STEP * ticks / 2;
+    let pitch_step = CAM_PITCH_STEP * ticks / 2;
     let (_, car_up, car_fwd) = subject.basis();
     let dx = if ball_cam {
         r(s.ball.p.x - subject.p.x)
@@ -1591,11 +1611,11 @@ fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_sl
     } else {
         (
             previous.offset.0
-                + (desired_offset.0 - previous.offset.0).clamp(-CAM_OFFSET_STEP, CAM_OFFSET_STEP),
+                + (desired_offset.0 - previous.offset.0).clamp(-offset_step, offset_step),
             previous.offset.1
-                + (desired_offset.1 - previous.offset.1).clamp(-CAM_OFFSET_STEP, CAM_OFFSET_STEP),
+                + (desired_offset.1 - previous.offset.1).clamp(-offset_step, offset_step),
             previous.offset.2
-                + (desired_offset.2 - previous.offset.2).clamp(-CAM_OFFSET_STEP, CAM_OFFSET_STEP),
+                + (desired_offset.2 - previous.offset.2).clamp(-offset_step, offset_step),
         )
     };
     (cx, cz) = keep_inside(car_x + offset.0, car_z + offset.2);
@@ -1664,10 +1684,10 @@ fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_sl
     let (view_yaw, pitch) = if previous.valid {
         let yaw_delta = ((view_yaw as i32 - previous.yaw as i32 + 2048).rem_euclid(4096)) - 2048;
         (
-            (previous.yaw as i32 + yaw_delta.clamp(-CAM_YAW_STEP, CAM_YAW_STEP)).rem_euclid(4096)
+            (previous.yaw as i32 + yaw_delta.clamp(-yaw_step, yaw_step)).rem_euclid(4096)
                 as u16,
             previous.pitch
-                + (desired_pitch - previous.pitch).clamp(-CAM_PITCH_STEP, CAM_PITCH_STEP),
+                + (desired_pitch - previous.pitch).clamp(-pitch_step, pitch_step),
         )
     } else {
         (view_yaw, desired_pitch)
@@ -1678,6 +1698,7 @@ fn camera(s: &Sim, subject: &sim::Car, ball_cam: bool, hold_car: bool, camera_sl
             offset: (cx - car_x, cyy - car_y, cz - car_z),
             yaw: view_yaw,
             pitch,
+            tick: now,
         };
     }
     look_from((cx, cyy, cz), view_yaw, pitch.rem_euclid(4096) as u16)
@@ -1958,7 +1979,8 @@ const EMPTY_LIT: ProjectedLit = ProjectedLit {
 /// rounded up for the bodywork that overhangs the collision box.
 const CAR_BOUND_R: i32 = 128;
 
-static mut CAR_TRIS: [TriGouraud; CAR_TRI_CAP] =
+static mut CAR_TRIS_SETS: [[TriGouraud; CAR_TRI_CAP]; 2] = [TRIS_INIT; 2];
+const TRIS_INIT: [TriGouraud; CAR_TRI_CAP] =
     [const { TriGouraud::new([(0, 0); 3], [(0, 0, 0); 3]) }; CAR_TRI_CAP];
 static mut CAR_PROJ: [ProjectedLit; CAR_VERT_CAP] = [EMPTY_LIT; CAR_VERT_CAP];
 /// Four authored wheel pivots per selectable gameplay car, derived once from
@@ -4488,7 +4510,7 @@ fn draw_cars(
     ot: &mut OtFrame<'_, OT_DEPTH>,
     lights: &LightRig,
 ) {
-    let mut tris = unsafe { PrimitiveArena::new(&mut CAR_TRIS) };
+    let mut tris = unsafe { PrimitiveArena::new(&mut CAR_TRIS_SETS[SET]) };
     let cull = view.cull();
 
     // One entry a seat, in the sim's own order: seat 0 defends -Z, seat 1
@@ -4939,6 +4961,7 @@ pub fn render_menu(s: &Sim, cars: [usize; SEATS], panels: FrontPanels, pair: boo
         STAGE_CAM_PITCH,
     );
     enter_view(Viewport::FULL, buffer_y);
+    unsafe { PENDING = false };
     build_view(s, cars, view, Viewport::FULL, Some(panels), 0);
     submit_detached();
 }
@@ -4976,8 +4999,16 @@ const S_CAR_FLUSH: u16 = telemetry::stage::TEXTURED_MODEL_JOINTS;
 /// Draw one frame of the match for one player, on the whole screen.
 pub fn render(s: &Sim, cars: [usize; SEATS], ball_cam: bool, buffer_y: u16) {
     enter_view(Viewport::FULL, buffer_y);
+    // EXPERIMENT: kick the table the previous call built, then build this
+    // frame's into the other set while the GPU draws that one.
+    unsafe {
+        if PENDING {
+            submit_detached();
+        }
+        SET ^= 1;
+    }
     render_view(s, cars, ball_cam, &s.car, Viewport::FULL, 0);
-    submit_detached();
+    unsafe { PENDING = true };
 }
 
 /// Draw one frame of a two-player match: player one on the left half of the
@@ -5088,9 +5119,9 @@ fn build_view(
     {
         let mut b = staged!(S_SETUP, {
             let mut b = Builder {
-                ot: unsafe { OtFrame::begin(&mut OT) },
-                arena: unsafe { PrimitiveArena::new(&mut QUADS) },
-                textured: unsafe { PrimitiveArena::new(&mut TEX_QUADS) },
+                ot: unsafe { OtFrame::begin(&mut OT_SETS[SET]) },
+                arena: unsafe { PrimitiveArena::new(&mut QUADS_SETS[SET]) },
+                textured: unsafe { PrimitiveArena::new(&mut TEX_QUADS_SETS[SET]) },
             };
 
             // Sky behind everything: screen-space, no geometry. Sized to the
@@ -5190,7 +5221,7 @@ fn build_view(
     }
 
     // Phase 2: the car mesh, appended into the same frame.
-    let mut ot = unsafe { OtFrame::resume(&mut OT) };
+    let mut ot = unsafe { OtFrame::resume(&mut OT_SETS[SET]) };
     staged!(S_CARS, { draw_cars(s, cars, &view, &mut ot, &lights) });
 
     #[cfg(feature = "profile")]
@@ -5217,7 +5248,7 @@ pub fn submit_prepared() {
         // Synchronous: kick the linked-list DMA and wait for the walk.
         // The GPU keeps rasterising afterwards; the engine's draw_sync
         // before the flip covers that tail, same as voxide's frame shape.
-        unsafe { OtFrame::resume(&mut OT) }.submit();
+        unsafe { OtFrame::resume(&mut OT_SETS[SET]) }.submit();
     });
 }
 
@@ -5239,6 +5270,6 @@ pub fn submit_prepared() {
 fn submit_detached() {
     staged!(S_SUBMIT, {
         apply_arena_draw_mode();
-        unsafe { OtFrame::resume(&mut OT) }.submit_async().detach();
+        unsafe { OtFrame::resume(&mut OT_SETS[SET]) }.submit_async().detach();
     });
 }
