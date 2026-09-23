@@ -2278,22 +2278,21 @@ fn pose_wheels(which: usize, centres: &[Vec3I16; 4], pose: &WheelPose) {
                 ((vxy[i] >> 16) as i16).wrapping_sub(centre.y),
                 vz[i].wrapping_sub(centre.z),
             );
-            mtc2!(0, local.xy_packed());
-            mtc2!(1, local.z_packed());
-            // SAFETY: V0 loaded, RT/TR loaded above.
-            unsafe { psx_gte::ops::mvmva_rt_v0_tr_sf1() };
-            let turned = (mfc2!(25) as i32, mfc2!(26) as i32, mfc2!(27) as i32);
-            mtc2!(0, nxy[i]);
-            mtc2!(1, nz[i] as i32 as u32);
-            // SAFETY: as above, with the normal in V0.
-            unsafe { psx_gte::ops::mvmva_rt_v0_tr_sf1() };
-            let lit = (mfc2!(25) as i32, mfc2!(26) as i32, mfc2!(27) as i32);
+            // The SDK's padded schedule: two NOPs between the V0 writes and
+            // MVMVA, the console-confirmed fix for the HWB-010/011 commit slip
+            // that has MVMVA read the previous V0.x.
+            let turned = scene::transform_vertex_scheduled(local);
+            let lit = scene::transform_vertex_scheduled(Vec3I16::new(
+                nxy[i] as i16,
+                (nxy[i] >> 16) as i16,
+                nz[i],
+            ));
             let p = Vec3I16::new(
-                narrow(centre.x as i32 + turned.0),
-                narrow(centre.y as i32 + turned.1 + travel),
-                narrow(centre.z as i32 + turned.2),
+                narrow(centre.x as i32 + turned.x),
+                narrow(centre.y as i32 + turned.y + travel),
+                narrow(centre.z as i32 + turned.z),
             );
-            let n = Vec3I16::new(narrow(lit.0), narrow(lit.1), narrow(lit.2));
+            let n = Vec3I16::new(narrow(lit.x), narrow(lit.y), narrow(lit.z));
             posed[i] = [p.xy_packed(), p.z_packed(), n.xy_packed(), n.z_packed()];
         }
     }
