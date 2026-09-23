@@ -22,4 +22,14 @@ fn main() {
         println!("cargo:rustc-link-arg=--oformat=binary");
     }
     println!("cargo:rerun-if-changed={}", ld.display());
+    // `PSOXIDE_LINK_ORDER` (set by the SDK's psoxide-pgo driver for a
+    // `+order` variant) names a symbol-ordering file for this link only. The
+    // driver checks the relinked map follows it.
+    println!("cargo:rerun-if-env-changed=PSOXIDE_LINK_ORDER");
+    if let Some(order) = std::env::var_os("PSOXIDE_LINK_ORDER") {
+        println!(
+            "cargo:rustc-link-arg=--symbol-ordering-file={}",
+            order.to_string_lossy()
+        );
+    }
 }
