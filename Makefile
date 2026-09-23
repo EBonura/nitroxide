@@ -175,8 +175,10 @@ DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rust
 # portable (its names carry no checkout-path or feature hashes), so every build
 # applies it with no emulator: `make build`, `make disc`, CI and the demo disc.
 # PGO_VARIANT is the winner of `make pgo-choose`; PGO_VARIANT=off builds the
-# plain image. Either way the driver runs the hazard patcher and scanner and
-# stops on a failure, and the exe lands at $(EXE) as before.
+# plain image. Either way the driver runs the hazard patcher, the scanner and
+# the stack guard (tools/stack_guard.py, which proves every scratchpad stack
+# call tree in draw.rs fits its region) with the link map, stops on a failure,
+# and the exe lands at $(EXE) as before.
 #
 # The host tools (psoxide-pgo, mkisopsx) build in .psoxide's Cargo workspace
 # against the Cargo.lock imported from the editor pin. --locked keeps a host
@@ -260,9 +262,10 @@ run: disc
 
 # Boot straight into a match, hold accelerate, and dump the final frame. This
 # is how render changes get checked without opening the GUI.
+# The plain image goes through the driver too: the renderer runs phases on a
+# scratchpad stack, and only the driver has the link map the stack guard needs.
 shot: psoxide $(ARENA_PSXT)
-	cd $(GAME) && cargo build --release --features boot-play $(DELAY_SLOT_CONFIG)
-	python3 $(PSOXIDE)/tools/hazard_patch.py $(EXE)
+	@$(MAKE) --no-print-directory compile FEATURES=boot-play PGO_VARIANT=off
 	@mkdir -p "$(ROOT)/build/shot"
 	cd $(MKISOPSX) && cargo run --release -- \
 		--exe $(EXE) \
