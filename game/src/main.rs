@@ -224,6 +224,9 @@ struct NitroXide {
     paused: bool,
     /// Highlighted pause row, as an index into [`NitroXide::pause_rows`].
     pause_row: usize,
+    /// How far the scoreboard has opened, 0 (the in-play tab) to
+    /// `draw::SCOREBOARD_STEPS` (the full scoreboard). One step a tick.
+    scoreboard_open: u8,
     /// The settings panel is open, holding its highlighted row. `None` when
     /// closed. One field serves the title menu and the pause menu both, since
     /// only one of them can have opened it.
@@ -279,6 +282,7 @@ impl NitroXide {
             two_player: false,
             paused: false,
             pause_row: 0,
+            scoreboard_open: draw::SCOREBOARD_STEPS,
             settings: None,
             swap_seats: false,
             music: music::Music::new(),
@@ -471,6 +475,7 @@ impl NitroXide {
         self.ball_cam = [false; 2];
         self.paused = false;
         self.pause_row = 0;
+        self.scoreboard_open = draw::SCOREBOARD_STEPS;
         draw::set_seat_paints(self.paints);
         self.phase = Phase::Play;
     }
@@ -570,9 +575,37 @@ impl NitroXide {
 
     // ---- HUD ---------------------------------------------------------------
 
-    /// Centres of the two team blocks, matching `draw::scoreboard`'s geometry.
-    const SCORE_BLUE_X: i16 = 104;
-    const SCORE_ORANGE_X: i16 = 216;
+    /// How long after a kickoff the scoreboard stays open, in ticks of live
+    /// play. A first guess, not tuned: two seconds reads the score without
+    /// holding the full board open over the first touch.
+    const KICKOFF_SCOREBOARD_TICKS: u8 = 120;
+
+    /// Whether the scoreboard should be open, heading for the full board, or
+    /// closed down to the in-play tab.
+    ///
+    /// A split game keeps it open: it sits over player one's view only, and
+    /// at 18 lines it is already 3.6% of that view.
+    fn scoreboard_wanted_open(&self) -> bool {
+        let s = &self.sim;
+        let final_minute =
+            matches!(s.win_condition, WinCondition::TimeLimit(_)) && s.clock < 60 * 60;
+        self.two_player
+            || self.paused
+            || s.goal_freeze > 0
+            || s.kickoff_ticks() < Self::KICKOFF_SCOREBOARD_TICKS
+            || final_minute
+    }
+
+    /// A HUD text colour as the tint that shows it.
+    ///
+    /// The font's texels are white and the GPU multiplies a texel by
+    /// tint/128, so a tint shows at twice its value and anything over 128
+    /// saturates: the authored light blue and pale clock used to come out
+    /// white, and the urgent red a pale pink. Colours are authored as they
+    /// should look and halved here.
+    const fn ink(c: (u8, u8, u8)) -> (u8, u8, u8) {
+        (c.0.div_ceil(2), c.1.div_ceil(2), c.2.div_ceil(2))
+    }
 
     /// One string with a hard shadow under it.
     ///
@@ -597,6 +630,8 @@ impl NitroXide {
         let s = &self.sim;
         let mut dec = [0u8; U32_DEC_MAX];
 
+        let board = draw::scoreboard(self.scoreboard_open);
+
         // Scores sit on the team blocks `draw::scoreboard` lays down, so the
         // colour does the work the BLU and ORG labels used to. Both are white:
         // tinting a digit that already sits on its team's colour only costs
@@ -606,22 +641,25 @@ impl NitroXide {
         // the character count by a guessed cell width lands everything off
         // centre, most visibly on the clock where the colon is much narrower
         // than a digit.
-        let blue = u32_dec(&mut dec, s.score_blue as u32);
-        let bw = font.text_width(blue) as i16 * 2;
-        Self::shadowed_big(font, Self::SCORE_BLUE_X - bw / 2, 3, blue, (255, 255, 255));
-        let orange = u32_dec(&mut dec, s.score_orange as u32);
-        let ow = font.text_width(orange) as i16 * 2;
-        Self::shadowed_big(
-            font,
-            Self::SCORE_ORANGE_X - ow / 2,
-            3,
-            orange,
-            (255, 255, 255),
-        );
+        let white = Self::ink((255, 255, 255));
+        for (cx, score) in board
+            .score_x
+            .into_iter()
+            .zip([s.score_blue, s.score_orange])
+        {
+            let text = u32_dec(&mut dec, score as u32);
+            let w = font.text_width(text) as i16;
+            if board.big {
+                Self::shadowed_big(font, cx - w, board.score_y, text, white);
+            } else {
+                Self::shadowed(font, cx - w / 2, board.score_y, text, white);
+            }
+        }
 
         // The centre states the active win condition. Timed matches keep the
         // familiar M:SS clock; first-to matches show their target instead of
         // a frozen or fake countdown.
+        let pale = Self::ink((226, 232, 244));
         match s.win_condition {
             WinCondition::TimeLimit(_) => {
                 let secs = s.clock / 60;
@@ -634,27 +672,33 @@ impl NitroXide {
                 // Under a minute, and in the colour of trouble.
                 let urgent = s.clock < 60 * 60;
                 let tint = if urgent && (s.clock / 15) % 2 == 0 {
-                    (255, 120, 96)
+                    Self::ink((255, 120, 96))
                 } else if urgent {
-                    (255, 196, 170)
+                    Self::ink((255, 196, 170))
                 } else {
-                    (226, 232, 244)
+                    pale
                 };
                 let cw = font.text_width(clock) as i16;
-                Self::shadowed(font, draw::HUD_CENTRE_X - cw / 2, 8, clock, tint);
+                Self::shadowed(
+                    font,
+                    draw::HUD_CENTRE_X - cw / 2,
+                    board.clock_y,
+                    clock,
+                    tint,
+                );
             }
             WinCondition::GoalLimit(target) => {
                 let prefix = "TO ";
                 let target = u32_dec(&mut dec, target as u32);
                 let x = draw::HUD_CENTRE_X
                     - (font.text_width(prefix) + font.text_width(target)) as i16 / 2;
-                Self::shadowed(font, x, 8, prefix, (226, 232, 244));
+                Self::shadowed(font, x, board.clock_y, prefix, pale);
                 Self::shadowed(
                     font,
                     x + font.text_width(prefix) as i16,
-                    8,
+                    board.clock_y,
                     target,
-                    (255, 220, 120),
+                    Self::ink((255, 220, 120)),
                 );
             }
         }
@@ -686,7 +730,7 @@ impl NitroXide {
             let w = font.text_width(text) as i16;
             let cx = draw::boost_gauge_x(vp);
             let cy = draw::boost_gauge_y(vp);
-            Self::shadowed(font, cx - w / 2, cy - 6, text, (255, 214, 120));
+            Self::shadowed(font, cx - w / 2, cy - 6, text, Self::ink((255, 214, 120)));
 
             if ball_cam {
                 Self::shadowed(
@@ -694,7 +738,7 @@ impl NitroXide {
                     vp.x + 8,
                     vp.y + vp.h - 22,
                     "BALL CAM",
-                    (146, 202, 255),
+                    Self::ink((146, 202, 255)),
                 );
             }
         }
@@ -1443,6 +1487,14 @@ impl Scene for NitroXide {
         // Outside the phase machine: the disc's music plays over the front
         // end and the match alike, and a pause holds the game, not the song.
         self.music.update(ctx.sim_tick.as_u32());
+        if self.phase == Phase::Play {
+            // Ahead of the phase machine, which returns early while paused.
+            self.scoreboard_open = if self.scoreboard_wanted_open() {
+                (self.scoreboard_open + 1).min(draw::SCOREBOARD_STEPS)
+            } else {
+                self.scoreboard_open.saturating_sub(1)
+            };
+        }
         match self.phase {
             Phase::Intro => {
                 self.intro_t += 1;
