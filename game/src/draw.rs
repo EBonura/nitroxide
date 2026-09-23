@@ -28,9 +28,10 @@ use psx_engine::{ActorTransform, DepthRange, OtFrame, PrimitiveArena, Vec3World}
 use psx_gpu::material::{TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{QuadGouraud, QuadTexturedGouraud, TriGouraud};
-use psx_gte::lighting::{project_lit, project_lit_triangle, Light, LightRig, ProjectedLit};
+use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene;
+use psx_gte::{mfc2, mtc2};
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
 #[cfg(feature = "profile")]
@@ -1854,9 +1855,17 @@ pub const PAINT_COUNT: usize = PAINTS.len();
 /// paints across three cars and two LODs would be ninety-odd KiB of tables to
 /// say what one scan says.
 /// One per seat, because both cars are now repainted from the same blob.
-static mut PAINTED_GAME: [[Rgb; CAR_MAX_VERTS]; SEATS] = [[(128, 128, 128); CAR_MAX_VERTS]; SEATS];
+/// Held as the GTE's RGBC word (`0x00BBGGRR`), which is what the projection
+/// loads: a colour is one aligned read there instead of three byte loads.
+static mut PAINTED_GAME: [[u32; CAR_MAX_VERTS]; SEATS] = [[RGBC_GREY; CAR_MAX_VERTS]; SEATS];
 /// The same seat paints applied to the LOD copy of each seat's car.
-static mut PAINTED_LOD: [[Rgb; CAR_MAX_VERTS]; SEATS] = [[(128, 128, 128); CAR_MAX_VERTS]; SEATS];
+static mut PAINTED_LOD: [[u32; CAR_MAX_VERTS]; SEATS] = [[RGBC_GREY; CAR_MAX_VERTS]; SEATS];
+const RGBC_GREY: u32 = rgbc((128, 128, 128));
+
+/// A colour as the GTE's RGBC data register takes it, code byte zero.
+const fn rgbc(c: Rgb) -> u32 {
+    (c.0 as u32) | ((c.1 as u32) << 8) | ((c.2 as u32) << 16)
+}
 /// Which (car, paint) each seat's working tables currently hold, so a frame
 /// that changes nothing does no work.
 static mut PAINTED_FOR: [Option<(usize, usize)>; SEATS] = [None; SEATS];
@@ -1873,15 +1882,15 @@ pub fn set_appearance(seat: usize, car: usize, paint: usize) {
     }
     let which = car.min(CAR_COUNT - 1);
     let (_, body, dark, _) = PAINTS[paint.min(PAINT_COUNT - 1)];
-    let repaint = |src: &[Rgb; CAR_MAX_VERTS], dst: &mut [Rgb; CAR_MAX_VERTS]| {
+    let repaint = |src: &[Rgb; CAR_MAX_VERTS], dst: &mut [u32; CAR_MAX_VERTS]| {
         for (out, &base) in dst.iter_mut().zip(src.iter()) {
-            *out = if base == BODY_KEY {
+            *out = rgbc(if base == BODY_KEY {
                 body
             } else if base == BODY_DARK_KEY {
                 dark
             } else {
                 base
-            };
+            });
         }
     };
     unsafe {
@@ -1963,14 +1972,38 @@ const CAR_FACE_CAP: usize = CAR_TRI_CAP;
 /// the car, so the cook tests check every committed blob against it.
 const CAR_VERT_CAP: usize = 1344;
 
-const EMPTY_LIT: ProjectedLit = ProjectedLit {
-    sx: 0,
-    sy: 0,
+/// One projected, lit car vertex, kept in the words the GTE hands back and
+/// the GPU packet takes: `SXY` (x low, y high), the lit `RGB` (code byte
+/// zero) and `SZ`. The SDK's `ProjectedLit` spreads the same values over ten
+/// bytes, so every face re-assembled them with unaligned and byte loads, each
+/// paying a main-RAM stall; here a packet corner is two aligned reads.
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct CarLit {
+    xy: u32,
+    rgb: u32,
+    sz: u32,
+}
+
+const EMPTY_LIT: CarLit = CarLit {
+    xy: 0,
+    rgb: 0,
     sz: 0,
-    r: 0,
-    g: 0,
-    b: 0,
 };
+
+impl CarLit {
+    #[inline(always)]
+    fn sx(&self) -> i32 {
+        self.xy as i16 as i32
+    }
+    #[inline(always)]
+    fn sy(&self) -> i32 {
+        (self.xy >> 16) as i16 as i32
+    }
+}
+
+/// `TriGouraud`'s command byte, taken from the SDK constructor itself.
+const TRI_GOURAUD_CMD: u32 = TriGouraud::new([(0, 0); 3], [(0, 0, 0); 3]).color0_cmd;
 
 /// Bounding half-extent for the whole-car frustum test, on every axis.
 ///
@@ -1982,7 +2015,7 @@ const CAR_BOUND_R: i32 = 128;
 static mut CAR_TRIS_SETS: [[TriGouraud; CAR_TRI_CAP]; 2] = [TRIS_INIT; 2];
 const TRIS_INIT: [TriGouraud; CAR_TRI_CAP] =
     [const { TriGouraud::new([(0, 0); 3], [(0, 0, 0); 3]) }; CAR_TRI_CAP];
-static mut CAR_PROJ: [ProjectedLit; CAR_VERT_CAP] = [EMPTY_LIT; CAR_VERT_CAP];
+static mut CAR_PROJ: [CarLit; CAR_VERT_CAP] = [EMPTY_LIT; CAR_VERT_CAP];
 /// Four authored wheel pivots per selectable gameplay car, derived once from
 /// the `.psxw` vertex groups while the loading screen is up.
 static mut CAR_WHEEL_CENTRES: [[Vec3I16; 4]; CAR_SLOTS] = [[Vec3I16::ZERO; 4]; CAR_SLOTS];
@@ -2090,10 +2123,14 @@ fn build_car_wheel_centres() {
 /// Cost is 95 KiB of `.bss` against a 54 KiB starting footprint and most of
 /// two megabytes free, which is the trade this hardware wants: the RAM is
 /// sitting there and the cycles are not.
-static mut CAR_VERTS: [[Vec3I16; CAR_VERT_CAP]; CAR_SLOTS] =
-    [[Vec3I16::ZERO; CAR_VERT_CAP]; CAR_SLOTS];
-static mut CAR_NORMALS: [[Vec3I16; CAR_VERT_CAP]; CAR_SLOTS] =
-    [[Vec3I16::ZERO; CAR_VERT_CAP]; CAR_SLOTS];
+/// Positions and normals as the GTE loads them: the packed `x | y << 16`
+/// word, and `z`, which a halfword load sign-extends for free. Same six bytes
+/// a vertex as `Vec3I16`, but one aligned word read instead of two halves and
+/// a shift-or per register.
+static mut CAR_VERT_XY: [[u32; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
+static mut CAR_VERT_Z: [[i16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
+static mut CAR_NORMAL_XY: [[u32; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
+static mut CAR_NORMAL_Z: [[i16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
 /// How many of those entries each model actually filled.
 static mut CAR_VERT_COUNT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
 /// Triangle indices, decoded the same way and for the same reason: `Mesh::face`
@@ -2113,8 +2150,12 @@ fn decode_car_geometry(blob: &[u8], which: usize) {
     let count = (mesh.vert_count() as usize).min(CAR_VERT_CAP);
     for i in 0..count {
         unsafe {
-            CAR_VERTS[which][i] = mesh.vertex(i as u16);
-            CAR_NORMALS[which][i] = mesh.vertex_normal(i as u16).unwrap_or(Vec3I16::ZERO);
+            let v = mesh.vertex(i as u16);
+            let n = mesh.vertex_normal(i as u16).unwrap_or(Vec3I16::ZERO);
+            CAR_VERT_XY[which][i] = v.xy_packed();
+            CAR_VERT_Z[which][i] = v.z;
+            CAR_NORMAL_XY[which][i] = n.xy_packed();
+            CAR_NORMAL_Z[which][i] = n.z;
         }
     }
     unsafe { CAR_VERT_COUNT[which] = count as u16 };
@@ -2139,6 +2180,7 @@ fn build_car_materials() {
         decode_car_geometry(blob, ci);
     }
     build_car_wheel_centres();
+    build_wheel_lists();
 }
 
 /// Local transforms shared by every vertex in a front or rear wheel group.
@@ -2149,57 +2191,109 @@ struct WheelPose {
     travel: [i16; 2],
 }
 
-/// Decode one mesh vertex and apply its wheel's local steering, roll, and
-/// suspension transform. Rigid body vertices take the fast identity branch.
-fn animated_car_vertex(
-    position: Vec3I16,
-    normal: Vec3I16,
-    slot: u8,
-    centres: &[Vec3I16; 4],
-    pose: &WheelPose,
-) -> (Vec3I16, Vec3I16) {
-    if slot == WHEEL_NONE || slot >= 4 {
-        return (position, normal);
-    }
+/// Wheel vertex indices per car, front axle (slots 2 and 3) first, then the
+/// rear; `WHEEL_LIST_SPLIT` is where the rear starts and `WHEEL_LIST_LEN` the
+/// total. Built at boot so the per-frame pass never scans the bodywork.
+static mut WHEEL_LIST: [[u16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
+static mut WHEEL_LIST_SPLIT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
+static mut WHEEL_LIST_LEN: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
+/// This frame's posed wheel vertices as GTE words (position xy, z, normal
+/// xy, z), indexed by vertex; only wheel entries are ever read.
+static mut POSED_WHEELS: [[u32; 4]; CAR_VERT_CAP] = [[0; 4]; CAR_VERT_CAP];
 
-    let slot = slot as usize;
-    let axle = if slot >= 2 { 0 } else { 1 };
-    let rotation = if axle == 0 { &pose.front } else { &pose.rear };
-    let centre = centres[slot];
-    let local = (
-        position.x as i32 - centre.x as i32,
-        position.y as i32 - centre.y as i32,
-        position.z as i32 - centre.z as i32,
-    );
-    let turned = apply(rotation, local);
-    let lit_normal = apply(
-        rotation,
-        (normal.x as i32, normal.y as i32, normal.z as i32),
-    );
+/// Vertices `project_car_animated` projects for `which`.
+fn car_projected_count(which: usize) -> usize {
+    (unsafe { CAR_VERT_COUNT[which] } as usize)
+        .min(CAR_VERT_CAP)
+        .min(CAR_MAX_VERTS)
+        .min(CAR_WHEELS[which].len())
+}
+
+fn build_wheel_lists() {
+    for which in 0..CAR_SLOTS {
+        let slots = CAR_WHEELS[which];
+        let count = car_projected_count(which);
+        let mut n = 0;
+        for front in [true, false] {
+            if !front {
+                unsafe { WHEEL_LIST_SPLIT[which] = n as u16 };
+            }
+            for (i, &slot) in slots.iter().enumerate().take(count) {
+                if slot != WHEEL_NONE && slot < 4 && (slot >= 2) == front {
+                    unsafe { WHEEL_LIST[which][n] = i as u16 };
+                    n += 1;
+                }
+            }
+        }
+        unsafe { WHEEL_LIST_LEN[which] = n as u16 };
+    }
+}
+
+/// Pose every wheel vertex of `which` into `POSED_WHEELS`: the steer and roll
+/// about the wheel's pivot, then the suspension travel.
+///
+/// The CPU version applied `Mat3I16::transform_i32` twice per vertex (pivot
+/// offset and normal); this moves both 3x3 products onto the GTE. MVMVA with a zero translation computes `(RT . V) >> 12` on the full
+/// 44-bit sum, which is the CPU's `transform_i32` exactly while that sum fits
+/// in 32 bits, as it does for a pivot-relative offset or a unit normal. Read
+/// back from MAC1-3, not the saturating IR registers, and narrowed the same
+/// way, so the words match the CPU path bit for bit. Eighteen CPU multiplies
+/// a vertex were most of the car projection's cost.
+fn pose_wheels(which: usize, centres: &[Vec3I16; 4], pose: &WheelPose) {
+    let slots = CAR_WHEELS[which];
+    let (vxy, vz) = unsafe { (&CAR_VERT_XY[which], &CAR_VERT_Z[which]) };
+    let (nxy, nz) = unsafe { (&CAR_NORMAL_XY[which], &CAR_NORMAL_Z[which]) };
+    let list = unsafe { &WHEEL_LIST[which] };
+    let (split, len) = unsafe {
+        (
+            WHEEL_LIST_SPLIT[which] as usize,
+            WHEEL_LIST_LEN[which] as usize,
+        )
+    };
+    let posed = unsafe { &mut POSED_WHEELS };
     let narrow = |value: i32| value.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-    (
-        Vec3I16::new(
-            narrow(centre.x as i32 + turned.0),
-            narrow(centre.y as i32 + turned.1 + pose.travel[axle] as i32),
-            narrow(centre.z as i32 + turned.2),
-        ),
-        Vec3I16::new(
-            narrow(lit_normal.0),
-            narrow(lit_normal.1),
-            narrow(lit_normal.2),
-        ),
-    )
+    scene::load_translation(Vec3I32::new(0, 0, 0));
+    for (axle, rotation, range) in [(0usize, &pose.front, 0..split), (1, &pose.rear, split..len)] {
+        scene::load_rotation(rotation);
+        let travel = pose.travel[axle] as i32;
+        for &i in &list[range] {
+            let i = i as usize;
+            let centre = centres[slots[i] as usize];
+            let local = Vec3I16::new(
+                (vxy[i] as i16).wrapping_sub(centre.x),
+                ((vxy[i] >> 16) as i16).wrapping_sub(centre.y),
+                vz[i].wrapping_sub(centre.z),
+            );
+            mtc2!(0, local.xy_packed());
+            mtc2!(1, local.z_packed());
+            // SAFETY: V0 loaded, RT/TR loaded above.
+            unsafe { psx_gte::ops::mvmva_rt_v0_tr_sf1() };
+            let turned = (mfc2!(25) as i32, mfc2!(26) as i32, mfc2!(27) as i32);
+            mtc2!(0, nxy[i]);
+            mtc2!(1, nz[i] as i32 as u32);
+            // SAFETY: as above, with the normal in V0.
+            unsafe { psx_gte::ops::mvmva_rt_v0_tr_sf1() };
+            let lit = (mfc2!(25) as i32, mfc2!(26) as i32, mfc2!(27) as i32);
+            let p = Vec3I16::new(
+                narrow(centre.x as i32 + turned.0),
+                narrow(centre.y as i32 + turned.1 + travel),
+                narrow(centre.z as i32 + turned.2),
+            );
+            let n = Vec3I16::new(narrow(lit.0), narrow(lit.1), narrow(lit.2));
+            posed[i] = [p.xy_packed(), p.z_packed(), n.xy_packed(), n.z_packed()];
+        }
+    }
 }
 
 /// Is a projected triangle wound clockwise on screen, and so facing away?
 ///
 /// The engine's own test is private, and this is one cross product.
 #[inline]
-fn car_back_facing(a: &ProjectedLit, b: &ProjectedLit, c: &ProjectedLit) -> bool {
-    let abx = b.sx as i32 - a.sx as i32;
-    let aby = b.sy as i32 - a.sy as i32;
-    let acx = c.sx as i32 - a.sx as i32;
-    let acy = c.sy as i32 - a.sy as i32;
+fn car_back_facing(a: &CarLit, b: &CarLit, c: &CarLit) -> bool {
+    let abx = b.sx() - a.sx();
+    let aby = b.sy() - a.sy();
+    let acx = c.sx() - a.sx();
+    let acy = c.sy() - a.sy();
     abx * acy - aby * acx <= 0
 }
 
@@ -2294,7 +2388,7 @@ fn radix_sort_u32_high16(keys: &mut [u32]) {
 
 fn submit_car_faces(
     faces: &[[u16; 3]],
-    projected: &[ProjectedLit],
+    projected: &[CarLit],
     tris: &mut PrimitiveArena<'_, TriGouraud>,
     ot: &mut OtFrame<'_, OT_DEPTH>,
 ) {
@@ -2316,7 +2410,7 @@ fn submit_car_faces(
         if car_back_facing(a, b, c) {
             continue;
         }
-        let depth = ((a.sz as i32 + b.sz as i32 + c.sz as i32) / 3).clamp(0, 0xffff) as u32;
+        let depth = ((a.sz + b.sz + c.sz) as i32 / 3).clamp(0, 0xffff) as u32;
         keys[n] = (depth << 16) | i as u32;
         n += 1;
     }
@@ -2330,10 +2424,18 @@ fn submit_car_faces(
         let b = &projected[face[1] as usize];
         let c = &projected[face[2] as usize];
         let depth = (key >> 16) as i32;
-        let prim = TriGouraud::new(
-            [(a.sx, a.sy), (b.sx, b.sy), (c.sx, c.sy)],
-            [(a.r, a.g, a.b), (b.r, b.g, b.b), (c.r, c.g, c.b)],
-        );
+        // Word for word what `TriGouraud::new` builds from the unpacked
+        // corners: the GTE's SXY is the GPU's vertex word and its RGB the
+        // colour word, both with nothing in the bits the packet leaves clear.
+        let prim = TriGouraud {
+            tag: 0,
+            color0_cmd: TRI_GOURAUD_CMD | a.rgb,
+            v0: a.xy,
+            color1: b.rgb,
+            v1: b.xy,
+            color2: c.rgb,
+            v2: c.xy,
+        };
         if let Some(t) = tris.push(prim) {
             ot.add_packet_depth(DEPTH_RANGE, depth, t);
         } else {
@@ -2347,41 +2449,101 @@ fn submit_car_faces(
 /// same one the engine uses, so this is the engine's `submit_lit_mesh` with
 /// the material scan replaced by a table lookup, and the authored wheel groups
 /// posed on the way through.
-fn project_car_animated(
-    which: usize,
-    materials: &[(u8, u8, u8); CAR_MAX_VERTS],
-    slots: &[u8],
-    centres: &[Vec3I16; 4],
-    pose: &WheelPose,
-) -> usize {
+fn project_car_animated(which: usize, materials: &[u32; CAR_MAX_VERTS], slots: &[u8]) -> usize {
     // Aligned tables decoded at boot by `decode_car_geometry`, not the mesh
     // blob: the byte-at-a-time decode was most of this stage's cost.
-    let verts = unsafe { &CAR_VERTS[which] };
-    let normals = unsafe { &CAR_NORMALS[which] };
+    let (vxy, vz) = unsafe { (&CAR_VERT_XY[which], &CAR_VERT_Z[which]) };
+    let (nxy, nz) = unsafe { (&CAR_NORMAL_XY[which], &CAR_NORMAL_Z[which]) };
     let count = (unsafe { CAR_VERT_COUNT[which] } as usize)
         .min(CAR_VERT_CAP)
         .min(CAR_MAX_VERTS)
         .min(slots.len());
     let proj = unsafe { &mut CAR_PROJ };
+    // Position and normal registers for one vertex: bodywork straight from
+    // the tables, a wheel from what `pose_wheels` left for this frame.
+    let posed = unsafe { &POSED_WHEELS };
+    let vertex = |i: usize| -> (u32, u32, u32, u32) {
+        let slot = slots[i];
+        if slot == WHEEL_NONE || slot >= 4 {
+            (vxy[i], vz[i] as i32 as u32, nxy[i], nz[i] as i32 as u32)
+        } else {
+            let w = posed[i];
+            (w[0], w[1], w[2], w[3])
+        }
+    };
+    // RTPT for three positions, then NCCT for their normals when the three
+    // share a material (NCCS each otherwise): `psx_gte::lighting`'s
+    // `project_lit_triangle`, reading and writing the packed words directly.
     let mut vi = 0;
     while vi + 2 < count {
-        let a = animated_car_vertex(verts[vi], normals[vi], slots[vi], centres, pose);
-        let b = animated_car_vertex(verts[vi + 1], normals[vi + 1], slots[vi + 1], centres, pose);
-        let c = animated_car_vertex(verts[vi + 2], normals[vi + 2], slots[vi + 2], centres, pose);
-        let out = project_lit_triangle(
-            [a.0, b.0, c.0],
-            [a.1, b.1, c.1],
-            [materials[vi], materials[vi + 1], materials[vi + 2]],
-        );
-        proj[vi] = out[0];
-        proj[vi + 1] = out[1];
-        proj[vi + 2] = out[2];
+        let a = vertex(vi);
+        let b = vertex(vi + 1);
+        let c = vertex(vi + 2);
+        mtc2!(0, a.0);
+        mtc2!(1, a.1);
+        mtc2!(2, b.0);
+        mtc2!(3, b.1);
+        mtc2!(4, c.0);
+        mtc2!(5, c.1);
+        // SAFETY: V0-V2 loaded; the car's rotation, translation and the
+        // projection were loaded by `draw_cars`.
+        unsafe { psx_gte::ops::rtpt() };
+        let sxy = [mfc2!(12), mfc2!(13), mfc2!(14)];
+        let sz = [mfc2!(17) & 0xffff, mfc2!(18) & 0xffff, mfc2!(19) & 0xffff];
+        let (ma, mb, mc) = (materials[vi], materials[vi + 1], materials[vi + 2]);
+        let rgb = if ma == mb && mb == mc {
+            mtc2!(0, a.2);
+            mtc2!(1, a.3);
+            mtc2!(2, b.2);
+            mtc2!(3, b.3);
+            mtc2!(4, c.2);
+            mtc2!(5, c.3);
+            mtc2!(6, ma);
+            // SAFETY: V0-V2 hold the normals, RGBC the shared material, and
+            // the light rig was loaded by `draw_cars`.
+            unsafe { psx_gte::ops::ncct() };
+            [mfc2!(20), mfc2!(21), mfc2!(22)]
+        } else {
+            let mut rgb = [0u32; 3];
+            for (k, (n, m)) in [((a.2, a.3), ma), ((b.2, b.3), mb), ((c.2, c.3), mc)]
+                .into_iter()
+                .enumerate()
+            {
+                mtc2!(0, n.0);
+                mtc2!(1, n.1);
+                mtc2!(6, m);
+                // SAFETY: as above, one normal at a time.
+                unsafe { psx_gte::ops::nccs() };
+                rgb[k] = mfc2!(22);
+            }
+            rgb
+        };
+        for k in 0..3 {
+            proj[vi + k] = CarLit {
+                xy: sxy[k],
+                rgb: rgb[k],
+                sz: sz[k],
+            };
+        }
         vi += 3;
     }
     while vi < count {
-        let (position, normal) =
-            animated_car_vertex(verts[vi], normals[vi], slots[vi], centres, pose);
-        proj[vi] = project_lit(position, normal, materials[vi]);
+        let a = vertex(vi);
+        mtc2!(0, a.0);
+        mtc2!(1, a.1);
+        // SAFETY: V0 loaded; scene state as above.
+        unsafe { psx_gte::ops::rtps() };
+        let (xy, sz) = (mfc2!(14), mfc2!(19) & 0xffff);
+        mtc2!(0, a.2);
+        mtc2!(1, a.3);
+        mtc2!(6, materials[vi]);
+        // SAFETY: V0 holds the normal, RGBC the material.
+        unsafe { psx_gte::ops::nccs() };
+        proj[vi] = CarLit {
+            xy,
+            rgb: mfc2!(22),
+            sz,
+        };
         vi += 1;
     }
     count
@@ -4565,19 +4727,6 @@ fn draw_cars(
                 .mul(&rot_x_q12(spin))
                 .mul(&rot_y_q12(body.dodge_dir.wrapping_neg()));
         }
-        let view_rot = view.v.mul(&world);
-        let t = view.camera_space(car_ground(body));
-        ActorTransform::at(Vec3World::from_raw(t.0, t.1, t.2))
-            .with_rotation(view_rot)
-            .load_gte();
-        lights.for_object(&view_rot).load();
-        let materials = unsafe {
-            if far {
-                &PAINTED_LOD[seat]
-            } else {
-                &PAINTED_GAME[seat]
-            }
-        };
         // `Car::steer` stores tan(angle), because that is what the bicycle
         // model consumes. Convert it back to a signed turn for the authored
         // front-wheel groups. Wheel roll is about their local axle before the
@@ -4593,10 +4742,24 @@ fn draw_cars(
             ],
         };
         let centres = unsafe { &CAR_WHEEL_CENTRES[which] };
+        // The wheels' own steer and roll go through the GTE's rotation slot,
+        // so this runs before the car's transform is loaded into it.
+        staged!(S_CAR_PROJECT, { pose_wheels(which, centres, &pose) });
+        let view_rot = view.v.mul(&world);
+        let t = view.camera_space(car_ground(body));
+        ActorTransform::at(Vec3World::from_raw(t.0, t.1, t.2))
+            .with_rotation(view_rot)
+            .load_gte();
+        lights.for_object(&view_rot).load();
+        let materials = unsafe {
+            if far {
+                &PAINTED_LOD[seat]
+            } else {
+                &PAINTED_GAME[seat]
+            }
+        };
         let n = staged!(S_CAR_PROJECT, {
-            on_scratchpad(|| {
-                project_car_animated(which, materials, CAR_WHEELS[which], centres, &pose)
-            })
+            on_scratchpad(|| project_car_animated(which, materials, CAR_WHEELS[which]))
         });
         let projected = unsafe { &mut CAR_PROJ[..n] };
         let faces = unsafe { &CAR_FACES[which][..CAR_FACE_COUNT[which] as usize] };
