@@ -47,6 +47,11 @@ boot-wheels = []
 # Dev: aim ball cam at a stationary ball near the roof so the enclosure's top
 # surface is visible in deterministic visual QA.
 boot-roof = []
+# Dev: render every second vblank. Not a shipping mode: a build whose frames
+# all fit two vblanks presents on the same ticks as any other such build, so
+# two builds' screenshots can be compared tick for tick to prove a speed-up
+# left the picture alone (at 60 fps the cadence itself moves the camera).
+pace-30 = []
 # Deterministic presentation presets for high-resolution capture. Night is the
 # shipping default; these two select the other authored looks at boot.
 arena-day = []
