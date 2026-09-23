@@ -30,7 +30,7 @@ use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{QuadGouraud, QuadTexturedGouraud, TriGouraud};
 use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
-use psx_gte::scene;
+use psx_gte::scene::{self, project_vertex_scheduled as project};
 use psx_gte::{mfc2, mtc2};
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
@@ -2683,7 +2683,7 @@ impl Builder<'_> {
         let mut sp = [(0i16, 0i16); 4];
         let mut z_sum = 0i32;
         for (k, &(x, y, z)) in corners.iter().enumerate() {
-            let p = scene::project_vertex(Vec3I16::new(x as i16, y as i16, z as i16));
+            let p = project(Vec3I16::new(x as i16, y as i16, z as i16));
             if p.sz == 0 {
                 return;
             }
@@ -2703,7 +2703,7 @@ impl Builder<'_> {
         let mut sp = [(0i16, 0i16); 4];
         let mut z_sum = 0i32;
         for (k, &(x, y, z)) in corners.iter().enumerate() {
-            let p = scene::project_vertex(Vec3I16::new(x as i16, y as i16, z as i16));
+            let p = project(Vec3I16::new(x as i16, y as i16, z as i16));
             if p.sz == 0 {
                 return;
             }
@@ -2736,7 +2736,7 @@ impl Builder<'_> {
         let mut sp = [(0i16, 0i16); 4];
         let mut z_sum = 0i32;
         for (k, &(x, y, z)) in corners.iter().enumerate() {
-            let p = scene::project_vertex(Vec3I16::new(x as i16, y as i16, z as i16));
+            let p = project(Vec3I16::new(x as i16, y as i16, z as i16));
             if p.sz == 0 {
                 return;
             }
@@ -3082,7 +3082,7 @@ impl Builder<'_> {
             .enumerate()
         {
             let (cx, cz) = Self::chamfer(wx, wz);
-            let p = scene::project_vertex(Vec3I16::new(cx as i16, 0, cz as i16));
+            let p = project(Vec3I16::new(cx as i16, 0, cz as i16));
             if p.sz == 0 {
                 return;
             }
@@ -3192,7 +3192,7 @@ impl Builder<'_> {
                 for (sx, column) in corners.iter_mut().enumerate().take(nu + 1) {
                     for (sz, corner) in column.iter_mut().enumerate().take(nu + 1) {
                         let (cx, cz) = Self::chamfer(px(sx as i32), pz(sz as i32));
-                        let p = scene::project_vertex(Vec3I16::new(cx as i16, 0, cz as i16));
+                        let p = project(Vec3I16::new(cx as i16, 0, cz as i16));
                         if p.sz != 0 {
                             *corner = Some((p.sx, p.sy, p.sz as i32));
                         }
@@ -3508,8 +3508,8 @@ impl Builder<'_> {
         hot: Rgb,
         cold: Rgb,
     ) {
-        let h = scene::project_vertex(Vec3I16::new(head.0 as i16, head.1 as i16, head.2 as i16));
-        let t = scene::project_vertex(Vec3I16::new(tail.0 as i16, tail.1 as i16, tail.2 as i16));
+        let h = project(Vec3I16::new(head.0 as i16, head.1 as i16, head.2 as i16));
+        let t = project(Vec3I16::new(tail.0 as i16, tail.1 as i16, tail.2 as i16));
         if h.sz == 0 || t.sz == 0 || !on_view(h.sx, h.sy) {
             return;
         }
@@ -3591,7 +3591,7 @@ impl Builder<'_> {
                 ),
                 ((FLASH_R * scale >> 12) * grow >> 13, (255, 250, 226)),
             ] {
-                let v = scene::project_vertex(Vec3I16::new(
+                let v = project(Vec3I16::new(
                     origin.0 as i16,
                     origin.1 as i16,
                     origin.2 as i16,
@@ -3710,7 +3710,7 @@ impl Builder<'_> {
                 origin.1 - ((SMOKE_RISE * scale) >> 12) * t / 8,
                 origin.2 + ((cos_q12(yaw) * travel) >> 12),
             );
-            let v = scene::project_vertex(Vec3I16::new(p.0 as i16, p.1 as i16, p.2 as i16));
+            let v = project(Vec3I16::new(p.0 as i16, p.1 as i16, p.2 as i16));
             if v.sz == 0 || !on_view(v.sx, v.sy) {
                 continue;
             }
@@ -3959,7 +3959,7 @@ impl Builder<'_> {
         let project_ring = |r: usize, out: &mut [Option<(i16, i16, i32)>; 4]| {
             for k in 0..=splits as usize {
                 let (wx, wy, wz) = ring(profile[r], (sx[k], sz[k]));
-                let p = scene::project_vertex(Vec3I16::new(wx as i16, wy as i16, wz as i16));
+                let p = project(Vec3I16::new(wx as i16, wy as i16, wz as i16));
                 out[k] = if p.sz != 0 {
                     Some((p.sx, p.sy, p.sz as i32))
                 } else {
@@ -4477,7 +4477,7 @@ impl Builder<'_> {
             );
             let px = x + ((ox * yc + oz * ys) >> 12);
             let pz = z + ((oz * yc - ox * ys) >> 12);
-            let v = scene::project_vertex(Vec3I16::new(px as i16, -2, pz as i16));
+            let v = project(Vec3I16::new(px as i16, -2, pz as i16));
             if v.sz == 0 {
                 return;
             }
@@ -4545,7 +4545,7 @@ impl Builder<'_> {
             // one, throwing half the GTE work away.
             for i in (0..BALL_LON).step_by(lon_step) {
                 let v = mesh[j][i];
-                let p = scene::project_vertex(Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16));
+                let p = project(Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16));
                 sp[i] = (p.sx, p.sy);
                 sz[i] = p.sz as i32;
             }
