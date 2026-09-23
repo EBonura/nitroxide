@@ -1845,8 +1845,9 @@ fn main() -> ! {
     //
     // The default renders as fast as it can, which gives an uneven frame time
     // as the camera moves through the arena. For a car that changing
-    // stick-to-picture delay feels worse than a steady rate. Queued submission
-    // brings a representative match frame to about 779,000 cycles. The
+    // stick-to-picture delay feels worse than a steady rate. The scene runs
+    // the engine's immediate submission (draw::submit_detached says why not
+    // queued). A representative match frame was about 779,000 cycles. The
     // detailed garage, including its denser foreground floor, is about
     // 1,043,000; two vblanks provide roughly 1,127,000, so both remain inside
     // the deadline while physics stays at the full 60 Hz.
