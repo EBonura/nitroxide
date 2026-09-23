@@ -725,9 +725,20 @@ const FLOOR_GZ: usize = (TILES_Z * FLOOR_SPLIT_MAX) as usize + 1;
 /// Two, because the mown stripes are a per-tile brightness step and a vertex
 /// shared between two tiles can only carry one colour. Giving each stripe its
 /// own table keeps the step hard where the tiles meet, which is what a mown
-/// stripe looks like, and costs 8 KB.
-static mut FLOOR_LIGHT: [[[Rgb; FLOOR_GZ]; FLOOR_GX]; 2] =
-    [[[(128, 128, 128); FLOOR_GZ]; FLOOR_GX]; 2];
+/// stripe looks like, and costs 11 KB.
+///
+/// Held as GPU colour words (`pack_color`, high byte clear): a floor quad's
+/// four tints are four aligned loads straight into the packet, where three
+/// byte loads and the packing each cost a main-RAM stall and a handful of
+/// shifts per corner.
+static mut FLOOR_LIGHT: [[[u32; FLOOR_GZ]; FLOOR_GX]; 2] =
+    [[[rgbc((128, 128, 128)); FLOOR_GZ]; FLOOR_GX]; 2];
+
+/// A colour word back to its channels.
+#[inline(always)]
+const fn rgb_of(w: u32) -> Rgb {
+    (w as u8, (w >> 8) as u8, (w >> 16) as u8)
+}
 
 /// A perimeter run of the swept wall profile.
 #[derive(Copy, Clone)]
@@ -752,8 +763,10 @@ const SLOT_TWELFTHS: [i32; 5] = [0, 4, 6, 8, 12];
 /// Slot index of vertex `k` of a span split `splits` ways.
 const SLOT_OF: [[usize; 4]; 4] = [[0, 0, 0, 0], [0, 4, 0, 0], [0, 2, 4, 0], [0, 1, 3, 4]];
 
-static mut WALL_LIGHT: [[[Rgb; 5]; PROFILE_LEN]; SPAN_COUNT] =
-    [[[(128, 128, 128); 5]; PROFILE_LEN]; SPAN_COUNT];
+/// Baked wall light per span, ring and split slot, as GPU colour words for
+/// the same reason as [`FLOOR_LIGHT`].
+static mut WALL_LIGHT: [[[u32; 5]; PROFILE_LEN]; SPAN_COUNT] =
+    [[[rgbc((128, 128, 128)); 5]; PROFILE_LEN]; SPAN_COUNT];
 
 /// The untinted light for the rings the barrier occupies, kept so the team
 /// colours can be laid over them again whenever a match changes them.
@@ -844,7 +857,7 @@ fn floor_tint(x: i32, z: i32) -> Rgb {
         .clamp(0, FLOOR_GX as i32 - 1) as usize;
     let gz = ((z + sim::HALF_Z) * (FLOOR_GZ as i32 - 1) / (sim::HALF_Z * 2))
         .clamp(0, FLOOR_GZ as i32 - 1) as usize;
-    unsafe { FLOOR_LIGHT[0][gx][gz] }
+    rgb_of(unsafe { FLOOR_LIGHT[0][gx][gz] })
 }
 
 /// Bake every static light table. Runs once, at boot.
@@ -875,11 +888,11 @@ fn build_lighting() {
                 };
                 let c = mix(c, team, w);
                 unsafe {
-                    FLOOR_LIGHT[stripe][gx][gz] = (
+                    FLOOR_LIGHT[stripe][gx][gz] = rgbc((
                         ((c.0 as i32 * k) >> 8).clamp(0, 255) as u8,
                         ((c.1 as i32 * k) >> 8).clamp(0, 255) as u8,
                         ((c.2 as i32 * k) >> 8).clamp(0, 255) as u8,
-                    );
+                    ));
                 }
             }
         }
@@ -921,7 +934,7 @@ fn build_lighting() {
                     )
                 };
                 unsafe {
-                    WALL_LIGHT[si][ri][slot] = c;
+                    WALL_LIGHT[si][ri][slot] = rgbc(c);
                     if ri <= RAIL_LO_RING {
                         CURB_BASE[si][ri][slot] = c;
                         CURB_Z[si][slot] = at.1;
@@ -1184,7 +1197,8 @@ fn paint_curb() {
         for ri in 0..=RAIL_LO_RING {
             for slot in 0..5 {
                 unsafe {
-                    WALL_LIGHT[si][ri][slot] = curb(CURB_BASE[si][ri][slot], CURB_Z[si][slot]);
+                    WALL_LIGHT[si][ri][slot] =
+                        rgbc(curb(CURB_BASE[si][ri][slot], CURB_Z[si][slot]));
                 }
             }
         }
@@ -2763,6 +2777,40 @@ impl Builder<'_> {
         }
     }
 
+    /// [`Self::quad_tex_projected`] for tints already in GPU colour words:
+    /// the same packet, with the words dropped in unpacked.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn quad_tex_words(
+        &mut self,
+        sp: [(i16, i16); 4],
+        z_sum: i32,
+        uvs: [u16; 4],
+        tints: [u32; 4],
+        bias: i32,
+        packet: TexturedGouraudPacketMaterial,
+        blended: bool,
+    ) {
+        let mut prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
+            sp,
+            uvs,
+            [(0, 0, 0); 4],
+            packet,
+        );
+        prim.color0_cmd |= tints[0];
+        prim.color1 = tints[1];
+        prim.color2 = tints[2];
+        prim.color3 = tints[3];
+        if blended {
+            prim.color0_cmd |= SEMI_TRANSPARENT;
+        }
+        if let Some(q) = self.textured.push(prim) {
+            self.ot.add_packet_depth(DEPTH_RANGE, z_sum / 4 + bias, q);
+        } else {
+            count_overflow!();
+        }
+    }
+
     fn emit(&mut self, sp: [(i16, i16); 4], depth: i32, colors: [Rgb; 4]) {
         if let Some(q) = self.arena.push(QuadGouraud::new(sp, colors)) {
             self.ot.add_packet_depth(DEPTH_RANGE, depth, q);
@@ -3019,7 +3067,7 @@ impl Builder<'_> {
         z0: i32,
         x1: i32,
         z1: i32,
-        light: &[[Rgb; FLOOR_GZ]; FLOOR_GX],
+        light: &[[u32; FLOOR_GZ]; FLOOR_GX],
         gx: usize,
         gz: usize,
         tex_u0: i32,
@@ -3059,7 +3107,7 @@ impl Builder<'_> {
         let (u0, v0, last) = (tex_u0 as u8, tex_v0 as u8, (tex_w - 1) as u8);
         let (u1, v1) = (u0 + last, v0 + last);
         let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
-        self.quad_tex_projected(sp, z_sum, uvs, tints, FLOOR_BIAS, packet, false);
+        self.quad_tex_words(sp, z_sum, uvs, tints, FLOOR_BIAS, packet, false);
     }
 
     fn floor(&mut self, cull: &Cull) {
@@ -3172,7 +3220,7 @@ impl Builder<'_> {
                         // pair in `underdraw_edge`.
                         let m = FLOOR_SPLIT_MAX as usize;
                         let t = |a: usize, b: usize| unsafe {
-                            *light.get_unchecked(gx + a).get_unchecked(gz + b)
+                            rgb_of(*light.get_unchecked(gx + a).get_unchecked(gz + b))
                         };
                         let tints = [
                             (t(0, 0), t(0, m)),
@@ -3227,7 +3275,7 @@ impl Builder<'_> {
                                 *r1.get_unchecked(j1),
                             ]
                         };
-                        self.quad_tex_projected(
+                        self.quad_tex_words(
                             sp,
                             a.2 + b.2 + c.2 + d.2,
                             uvs,
@@ -3975,7 +4023,7 @@ impl Builder<'_> {
                         *lhi.get_unchecked(s1),
                     ]
                 };
-                self.quad_tex_projected(
+                self.quad_tex_words(
                     sp,
                     a.2 + b.2 + c.2 + d.2,
                     uvs,
@@ -4084,7 +4132,7 @@ impl Builder<'_> {
             // lighting seam without another per-frame light calculation.
             let left_light = unsafe { &WALL_LIGHT[SPAN_COUNT - 4 + i * 2] };
             let right_light = unsafe { &WALL_LIGHT[SPAN_COUNT - 3 + i * 2] };
-            let ring_light = |ri: usize| [left_light[ri][4], right_light[ri][0]];
+            let ring_light = |ri: usize| [rgb_of(left_light[ri][4]), rgb_of(right_light[ri][0])];
             let across = cover_texels(2 * gw);
             // Phase the honeycomb from the left end-wall span. Its eight-texel
             // horizontal period then reaches the right span without a doubled
