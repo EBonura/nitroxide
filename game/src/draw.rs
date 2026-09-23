@@ -324,16 +324,137 @@ pub fn set_camera_tick(tick: u32) {
 }
 const DEPTH_RANGE: DepthRange = DepthRange::new(120, 14000);
 const SKY_SLOT: usize = OT_DEPTH - 1;
-/// The scoreboard fascia. In front of the world, behind the boost dial on
-/// slot 1, with the team blocks cutting the plate they sit on.
-const HUD_PLATE_SLOT: usize = 3;
-const HUD_BLOCK_SLOT: usize = 2;
-const HUD_RULE_SLOT: usize = 1;
-
 /// Horizontal centre of the scoreboard's dark middle panel, which is what the
 /// clock is centred on. Exported so the HUD text and the plate under it cannot
 /// drift apart.
 pub const HUD_CENTRE_X: i16 = 160;
+
+/// Ticks the scoreboard takes to open from the in-play tab to the full
+/// scoreboard, and to close again.
+pub const SCOREBOARD_STEPS: u8 = 8;
+
+/// Where the scoreboard's text goes at one point of its open/close animation.
+/// Returned by [`scoreboard`], which drew the plates it has to sit on.
+pub struct ScoreText {
+    /// Horizontal centres of the blue and orange scores.
+    pub score_x: [i16; 2],
+    /// Top of the score digits.
+    pub score_y: i16,
+    /// Scores at 2x. They change size just past half way through the animation.
+    pub big: bool,
+    /// Top of the clock, which is centred on [`HUD_CENTRE_X`].
+    pub clock_y: i16,
+}
+
+/// The scoreboard fascia: a dark plate for the clock with a team block either
+/// side for the scores, drawn straight into the back buffer.
+///
+/// `open` runs from 0 to [`SCOREBOARD_STEPS`]. Closed is a 10-line tab, 56
+/// pixels wide, with every digit at 1x: what a player driving needs, and
+/// almost nothing of the picture. Open is the Rocket League pill: 18-line team
+/// blocks with the scores at 2x and a 13-line clock plate between them, for
+/// the moments the score is the news (kickoff, a goal, the final minute, the
+/// pause menu). Every edge moves in a straight line between the two, so the
+/// bottom slides down and the blocks spread out as it opens.
+///
+/// Drawn from the overlay rather than an ordering table. The tables of a split
+/// game are built per view, so a fascia there was built twice and half of it
+/// scissored away; and a single-player table goes to the GPU a frame after it
+/// is built, which would leave the plates of a moving scoreboard a frame
+/// behind the text on them. Each quad goes as the two triangles the GPU would
+/// have split it into: the SDK has no immediate Gouraud quad.
+///
+/// The old HUD was bare text on the sky. It survived only because the top
+/// of the screen happens to be dark, and put the ball over the crossbar and
+/// it sat on grey wall instead. Nothing shipped on this hardware with a HUD
+/// that thin: Gran Turismo 2, Colin McRae 2 and Crash Team Racing all give
+/// their readouts a plate to live on, and the plate is what makes type read
+/// at any brightness behind it.
+///
+/// The shear matches the front end's panels, so the two look like one game,
+/// and the team blocks do the job the BLU and ORG labels used to: colour tells
+/// you whose score is whose faster than three letters can.
+pub fn scoreboard(open: u8) -> ScoreText {
+    const PLATE: Rgb = (18, 22, 34);
+    const PLATE_LO: Rgb = (28, 34, 50);
+    const RULE: Rgb = (150, 178, 230);
+    let k = open.min(SCOREBOARD_STEPS) as i32;
+    let at = |tab: i16, pill: i16| {
+        (tab as i32 + (pill as i32 - tab as i32) * k / SCOREBOARD_STEPS as i32) as i16
+    };
+    // Past half way, so a 2x digit never sits on a block still tab-sized.
+    let big = 2 * k > SCOREBOARD_STEPS as i32;
+    let (plate_l, plate_r, plate_h) = (at(146, 140), at(174, 180), at(10, 13));
+    let (block_l, block_r, block_h) = (at(132, 114), at(188, 206), at(10, 18));
+    let shear = at(2, 4);
+
+    // The rasteriser's dither, which the arena draws with. Without it the
+    // plate's gradient steps in visible bands.
+    ARENA_MATERIAL.apply_draw_mode();
+    hud_quad(
+        [
+            (plate_l, 0),
+            (plate_r, 0),
+            (plate_l, plate_h),
+            (plate_r, plate_h),
+        ],
+        [PLATE, PLATE, PLATE_LO, PLATE_LO],
+    );
+    // The far colour is derived rather than authored: five eighths lands
+    // between the two darker halves the fixed blue and orange used, and a
+    // second authored colour per paint is one more thing to keep in step.
+    // Only the outer edge is sheared; the inner one stays vertical so the two
+    // blocks and the centre read as one bar.
+    let blue = seat_signal(0);
+    let blue_far = shade(blue, 5, 8);
+    hud_quad(
+        [
+            (block_l + shear, 0),
+            (plate_l, 0),
+            (block_l, block_h),
+            (plate_l, block_h),
+        ],
+        [blue_far, blue_far, blue, blue],
+    );
+    let orange = seat_signal(1);
+    let orange_far = shade(orange, 5, 8);
+    hud_quad(
+        [
+            (plate_r, 0),
+            (block_r - shear, 0),
+            (plate_r, block_h),
+            (block_r, block_h),
+        ],
+        [orange_far, orange_far, orange, orange],
+    );
+    // A bright rule along the foot of the clock plate, so the fascia has an
+    // edge rather than fading into whatever is behind it. It arrives with the
+    // big scores; the tab is too small to carry one.
+    if big {
+        hud_quad(
+            [
+                (plate_l, plate_h - 1),
+                (plate_r, plate_h - 1),
+                (plate_l, plate_h),
+                (plate_r, plate_h),
+            ],
+            [RULE; 4],
+        );
+    }
+    ScoreText {
+        score_x: [at(140, 128), at(181, 193)],
+        score_y: if big { 1 } else { 0 },
+        big,
+        clock_y: at(0, 3),
+    }
+}
+
+/// One screen-space Gouraud quad in PS1 vertex order (top left, top right,
+/// bottom left, bottom right), drawn now.
+fn hud_quad(v: [(i16, i16); 4], c: [Rgb; 4]) {
+    psx_gpu::draw_tri_gouraud([v[0], v[1], v[2]], [c[0], c[1], c[2]]);
+    psx_gpu::draw_tri_gouraud([v[1], v[2], v[3]], [c[1], c[2], c[3]]);
+}
 // ---- depth layering --------------------------------------------------------
 //
 // The ordering table *prepends* within a slot, so of two packets sharing one
@@ -3442,78 +3563,7 @@ impl Builder<'_> {
     /// The boost gauge: an arc that fills as the tank does, with the number in
     /// the middle. A flat row of pips reads as a debug bar; a dial reads as an
     /// instrument, and it is what the original uses.
-    /// The scoreboard fascia: a sheared dark plate with a team block at each
-    /// end, for the score digits to sit on.
     ///
-    /// The old HUD was bare text on the sky. It survived only because the top
-    /// of the screen happens to be dark, and put the ball over the crossbar and
-    /// it sat on grey wall instead. Nothing shipped on this hardware with a HUD
-    /// that thin: Gran Turismo 2, Colin McRae 2 and Crash Team Racing all give
-    /// their readouts a plate to live on, and the plate is what makes type read
-    /// at any brightness behind it.
-    ///
-    /// The shear matches the front end's panels, so the two look like one game.
-    /// The team blocks do the job the BLU and ORG labels used to: colour tells
-    /// you whose score is whose faster than three letters can.
-    pub fn scoreboard(&mut self) {
-        const TOP: i16 = 0;
-        const BOT: i16 = 26;
-        const L: i16 = 82;
-        const R: i16 = 238;
-        const SHEAR: i16 = 7;
-        /// Where the team block ends and the clock's darker centre begins.
-        const BLOCK: i16 = 44;
-
-        let plate = (18, 22, 34);
-        let plate_lo = (28, 34, 50);
-        // Centre panel, carrying the clock.
-        self.screen_quad(
-            HUD_PLATE_SLOT,
-            [(L + SHEAR, TOP), (R - SHEAR, TOP), (L, BOT), (R, BOT)],
-            [plate, plate, plate_lo, plate_lo],
-        );
-        // Team blocks. Drawn in front of the plate so their edges cut it.
-        // The far edge is derived rather than authored: five eighths lands
-        // between the two darker halves the fixed blue and orange used, and a
-        // second authored colour per paint is one more thing to keep in step.
-        for block in [true, false] {
-            let near = seat_signal(if block { 0 } else { 1 });
-            let far = shade(near, 5, 8);
-            let (x0, x1) = if block {
-                (L, L + BLOCK)
-            } else {
-                (R - BLOCK, R)
-            };
-            let t0 = if block {
-                L + SHEAR
-            } else {
-                R - BLOCK - SHEAR + SHEAR
-            };
-            let _ = t0;
-            // Only the outer edge is sheared; the inner one stays vertical so
-            // the two blocks and the centre read as one bar.
-            let (tx0, tx1) = if block {
-                (x0 + SHEAR, x1)
-            } else {
-                (x0, x1 - SHEAR)
-            };
-            self.screen_quad(
-                HUD_BLOCK_SLOT,
-                [(tx0, TOP), (tx1, TOP), (x0, BOT), (x1, BOT)],
-                [far, far, near, near],
-            );
-        }
-        // A bright rule along the bottom, so the fascia has an edge rather
-        // than fading into whatever is behind it. In front of the blocks: the
-        // table prepends within a slot, so drawing it after them at the same
-        // depth put it behind, and it only showed across the dark centre.
-        self.screen_quad(
-            HUD_RULE_SLOT,
-            [(L, BOT - 2), (R, BOT - 2), (L - 1, BOT), (R + 1, BOT)],
-            [(150, 178, 230); 4],
-        );
-    }
-
     /// The boost dial, centred `cx` across. One player's screen puts it near
     /// the right edge; a split game gives each half its own.
     fn boost_gauge(&mut self, cx: i16, cy: i16, boost_pips: i32) {
@@ -5466,10 +5516,9 @@ fn build_view(
                     }
                 } else {
                     b.boost_gauge(boost_gauge_x(vp), boost_gauge_y(vp), boost);
-                    // Score and clock stay whole-screen and straddle the seam, the
-                    // way a split-screen game shares one scoreline. Each pass draws
-                    // the part of it the scissor lets through.
-                    b.scoreboard();
+                    // The scoreboard is not here: it belongs to the match rather
+                    // than to a view, so the overlay draws it once over the whole
+                    // screen (see `scoreboard`).
                     b.goal_burst(s);
                     b.demo_burst(s);
                 }

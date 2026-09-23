@@ -1558,6 +1558,12 @@ impl Sim {
         self.ai_handling()
     }
 
+    /// Ticks of live play since the cars were last placed for kickoff,
+    /// saturating at 255. The goal celebration does not count.
+    pub fn kickoff_ticks(&self) -> u8 {
+        self.kickoff_ticks
+    }
+
     /// True once this match's selected condition has been reached.
     pub fn finished(&self) -> bool {
         match self.win_condition {
