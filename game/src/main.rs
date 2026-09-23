@@ -781,15 +781,21 @@ impl NitroXide {
         // announcing.
         const Y: i16 = 34;
         let after = x + (font.text_width(text) as i32 * grow as i32 / 256) as i16;
-        // A black outline, one pixel each way. The team colour is its true
-        // shade now rather than washed out by saturation, and the cobalt is
-        // too dark to hold its edges against the stands' grey lattice alone.
+        // Outlined: the team colour is its true shade now rather than washed
+        // out by saturation, and the cobalt is too dark to hold its edges
+        // against the stands' grey lattice alone.
+        Self::outlined(font, x, Y, text, grow, color);
+        Self::outlined(font, after, Y, " SCORED", grow, (240, 240, 220));
+    }
+
+    /// Display text at a Q8 scale with a black outline, one pixel each way
+    /// plus a drop to the lower right: for headlines drawn straight over the
+    /// arena, where a one-pixel shadow is lost in busy stands or bright grass.
+    fn outlined(font: &FontAtlas, x: i16, y: i16, text: &str, q8: u16, tint: (u8, u8, u8)) {
         for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)] {
-            font.draw_text_scaled_q8(x + dx, Y + dy, text, grow, grow, (0, 0, 0));
-            font.draw_text_scaled_q8(after + dx, Y + dy, " SCORED", grow, grow, (0, 0, 0));
+            font.draw_text_scaled_q8(x + dx, y + dy, text, q8, q8, (0, 0, 0));
         }
-        font.draw_text_scaled_q8(x, Y, text, grow, grow, Self::ink(color));
-        font.draw_text_scaled_q8(after, Y, " SCORED", grow, grow, Self::ink((240, 240, 220)));
+        font.draw_text_scaled_q8(x, y, text, q8, q8, Self::ink(tint));
     }
 
     /// What to call a seat on screen.
@@ -1294,23 +1300,28 @@ impl NitroXide {
         } else {
             ("DRAW", (230, 230, 150))
         };
-        font.draw_text_scaled_q8(96, 48, verdict, 448, 448, Self::ink(color));
+        // Over the last match frame, which is often bright grass: the
+        // headline gets the goal banner's outline and the rest the HUD's
+        // shadow, or the true (dimmer) colours wash out.
+        Self::outlined(font, 96, 48, verdict, 448, color);
         let mut dec = [0u8; U32_DEC_MAX];
-        small.draw_text(84, 120, "GOALS", Self::ink((160, 175, 205)));
-        small.draw_text(
+        Self::shadowed(small, 84, 120, "GOALS", (160, 175, 205));
+        Self::shadowed(
+            small,
             200,
             120,
             u32_dec(&mut dec, s.score_blue as u32),
-            Self::ink((245, 245, 190)),
+            (245, 245, 190),
         );
-        small.draw_text(84, 144, "CONCEDED", Self::ink((160, 175, 205)));
-        small.draw_text(
+        Self::shadowed(small, 84, 144, "CONCEDED", (160, 175, 205));
+        Self::shadowed(
+            small,
             200,
             144,
             u32_dec(&mut dec, s.score_orange as u32),
-            Self::ink((245, 245, 190)),
+            (245, 245, 190),
         );
-        small.draw_text(92, 206, "PRESS START", Self::ink((230, 230, 160)));
+        Self::shadowed(small, 92, 206, "PRESS START", (230, 230, 160));
     }
 }
 
