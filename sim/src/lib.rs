@@ -866,16 +866,63 @@ impl Car {
     /// vectors. Yaw turns the nose within the surface plane, so this reduces
     /// to the old XZ heading whenever `up` is straight up.
     pub fn basis(&self) -> (V3, V3, V3) {
-        let up = self.up;
-        let (a, b) = plane_axes(up);
-        let (s, c) = heading(self.yaw);
-        let forward = V3::new(
-            (a.x * s + b.x * c) >> 12,
-            (a.y * s + b.y * c) >> 12,
-            (a.z * s + b.z * c) >> 12,
-        )
-        .unit_q12();
-        (cross_q12(up, forward).unit_q12(), up, forward)
+        #[cfg(target_arch = "mips")]
+        {
+            basis_memo::basis(self.up, self.yaw)
+        }
+        #[cfg(not(target_arch = "mips"))]
+        {
+            basis_of(self.up, self.yaw)
+        }
+    }
+}
+
+/// [`Car::basis`] for an orientation: four `unit_q12` normalisations, each an
+/// integer square root and three divides.
+fn basis_of(up: V3, yaw: u16) -> (V3, V3, V3) {
+    let (a, b) = plane_axes(up);
+    let (s, c) = heading(yaw);
+    let forward = V3::new(
+        (a.x * s + b.x * c) >> 12,
+        (a.y * s + b.y * c) >> 12,
+        (a.z * s + b.z * c) >> 12,
+    )
+    .unit_q12();
+    (cross_q12(up, forward).unit_q12(), up, forward)
+}
+
+/// The last few bases the console computed, keyed by the whole orientation.
+///
+/// A basis is a pure function of `(up, yaw)`, and a tick asks for the same
+/// car's several times (driving, the ball and car contacts, then the renderer
+/// for the chase camera and the mesh) between changes to either. Recomputing
+/// was a dozen divides and four square roots a call. Console only: the game is
+/// one thread, and host tests run in parallel, so they keep the direct path.
+#[cfg(target_arch = "mips")]
+mod basis_memo {
+    use super::{basis_of, V3};
+
+    type Entry = (V3, u16, (V3, V3, V3));
+    const SLOTS: usize = 4;
+    static mut MEMO: [Option<Entry>; SLOTS] = [None; SLOTS];
+    static mut NEXT: usize = 0;
+
+    pub(super) fn basis(up: V3, yaw: u16) -> (V3, V3, V3) {
+        // SAFETY: the sim runs on the one game thread and no interrupt
+        // handler calls into it.
+        unsafe {
+            let memo = &mut *core::ptr::addr_of_mut!(MEMO);
+            for (key_up, key_yaw, value) in memo.iter().flatten() {
+                if *key_yaw == yaw && *key_up == up {
+                    return *value;
+                }
+            }
+            let value = basis_of(up, yaw);
+            let next = &mut *core::ptr::addr_of_mut!(NEXT);
+            memo[*next] = Some((up, yaw, value));
+            *next = (*next + 1) % SLOTS;
+            value
+        }
     }
 }
 
