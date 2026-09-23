@@ -3721,30 +3721,39 @@ impl Builder<'_> {
         let ring = |p: (i32, i32), at: (i32, i32)| {
             (at.0 + ((n.0 * p.0) >> 12), -p.1, at.1 + ((n.1 * p.0) >> 12))
         };
-        let mut grid = [[None; 4]; PROFILE_LEN];
-        for (row, &r) in rings.iter().enumerate().take(ring_count) {
+        // Two rings of the grid at a time: the lower edge of the band being
+        // drawn and its upper edge, projected just before the band needs it.
+        // Keeping every ring made the frame too big for the scratchpad stack
+        // `build_view` runs this on.
+        let project_ring = |r: usize, out: &mut [Option<(i16, i16, i32)>; 4]| {
             for k in 0..=splits as usize {
                 let (wx, wy, wz) = ring(profile[r], (sx[k], sz[k]));
                 let p = scene::project_vertex(Vec3I16::new(wx as i16, wy as i16, wz as i16));
-                if p.sz != 0 {
-                    grid[row][k] = Some((p.sx, p.sy, p.sz as i32));
-                }
+                out[k] = if p.sz != 0 {
+                    Some((p.sx, p.sy, p.sz as i32))
+                } else {
+                    None
+                };
             }
-        }
+        };
+        let mut lower = [None; 4];
+        let mut upper = [None; 4];
+        project_ring(rings[0], &mut lower);
 
         for row in 0..ring_count - 1 {
             let (ri, top) = (rings[row], rings[row + 1]);
+            if row > 0 {
+                lower = upper;
+            }
+            project_ring(top, &mut upper);
             // Unchecked for the same reason the floor is: the ring index
             // walks a window over a table sized from `PROFILE_LEN`.
             let (llo, lhi) = unsafe { (light.get_unchecked(ri), light.get_unchecked(top)) };
             for k in 0..splits as usize {
                 count_offered!();
-                let (Some(a), Some(b), Some(c), Some(d)) = (
-                    grid[row][k],
-                    grid[row][k + 1],
-                    grid[row + 1][k],
-                    grid[row + 1][k + 1],
-                ) else {
+                let (Some(a), Some(b), Some(c), Some(d)) =
+                    (lower[k], lower[k + 1], upper[k], upper[k + 1])
+                else {
                     continue;
                 };
                 let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
@@ -4295,23 +4304,28 @@ impl Builder<'_> {
         // twice, eight is past the point where anybody counts them.
         let lon_step = if split_view() { 2 } else { 1 };
         let mesh = unsafe { &BALL_MESH };
-        let mut sp = [[(0i16, 0i16); BALL_LON]; BALL_LAT + 1];
-        let mut sz = [[0i32; BALL_LON]; BALL_LAT + 1];
-        for j in 0..=BALL_LAT {
+        // Two latitude rows at a time, the band's top and bottom edge, so the
+        // frame fits the scratchpad stack `build_view` runs this on.
+        let mut sp = [[(0i16, 0i16); BALL_LON]; 2];
+        let mut sz = [[0i32; BALL_LON]; 2];
+        let project_row = |j: usize, sp: &mut [(i16, i16); BALL_LON], sz: &mut [i32; BALL_LON]| {
             // Project only the columns the quad loop below reads: a split
             // view was projecting all sixteen and then drawing every other
             // one, throwing half the GTE work away.
             for i in (0..BALL_LON).step_by(lon_step) {
                 let v = mesh[j][i];
                 let p = scene::project_vertex(Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16));
-                sp[j][i] = (p.sx, p.sy);
-                sz[j][i] = p.sz as i32;
+                sp[i] = (p.sx, p.sy);
+                sz[i] = p.sz as i32;
             }
-        }
+        };
+        project_row(0, &mut sp[0], &mut sz[0]);
         for j in 0..BALL_LAT {
+            let (lo, hi) = (j & 1, (j + 1) & 1);
+            project_row(j + 1, &mut sp[hi], &mut sz[hi]);
             for i in (0..BALL_LON).step_by(lon_step) {
                 let i2 = (i + lon_step) % BALL_LON;
-                if sz[j][i] == 0 || sz[j][i2] == 0 || sz[j + 1][i] == 0 || sz[j + 1][i2] == 0 {
+                if sz[lo][i] == 0 || sz[lo][i2] == 0 || sz[hi][i] == 0 || sz[hi][i2] == 0 {
                     continue;
                 }
                 // A quad's four corners already sit on the sphere, so their sum
@@ -4345,8 +4359,8 @@ impl Builder<'_> {
                 let base: Rgb = if dark { (34, 34, 46) } else { (242, 242, 248) };
                 let col = shade(base, lit, 4096);
                 self.emit(
-                    [sp[j][i], sp[j][i2], sp[j + 1][i], sp[j + 1][i2]],
-                    (sz[j][i] + sz[j][i2] + sz[j + 1][i] + sz[j + 1][i2]) / 4,
+                    [sp[lo][i], sp[lo][i2], sp[hi][i], sp[hi][i2]],
+                    (sz[lo][i] + sz[lo][i2] + sz[hi][i] + sz[hi][i2]) / 4,
                     [col; 4],
                 );
             }
@@ -4558,12 +4572,14 @@ fn draw_cars(
         };
         let centres = unsafe { &CAR_WHEEL_CENTRES[which] };
         let n = staged!(S_CAR_PROJECT, {
-            project_car_animated(which, materials, CAR_WHEELS[which], centres, &pose)
+            on_scratchpad(|| {
+                project_car_animated(which, materials, CAR_WHEELS[which], centres, &pose)
+            })
         });
         let projected = unsafe { &mut CAR_PROJ[..n] };
         let faces = unsafe { &CAR_FACES[which][..CAR_FACE_COUNT[which] as usize] };
         staged!(S_CAR_FACES, {
-            submit_car_faces(faces, projected, &mut tris, ot)
+            on_scratchpad(|| submit_car_faces(faces, projected, &mut tris, ot))
         });
     }
 }
@@ -5036,6 +5052,19 @@ fn render_view(
     build_view(s, cars, view, vp, None, subject.boost / sim::BOOST_SCALE);
 }
 
+/// The whole scratchpad, as a call stack for `build_view`'s phases.
+type PhaseStack = psx_rt::scratchpad::ScratchpadStack<0, { psx_rt::scratchpad::SIZE }>;
+
+/// Run one `build_view` phase with its frames in the scratchpad.
+#[inline(always)]
+fn on_scratchpad<R>(f: impl FnOnce() -> R) -> R {
+    // SAFETY: nothing else in this game keeps data in the scratchpad, the
+    // phases install no exception handler (psx-rt's vblank handler leaves
+    // $sp alone), and tools/stack_guard.py proves each phase's call tree
+    // fits PhaseStack::BUDGET after every link.
+    unsafe { PhaseStack::run(f) }
+}
+
 /// Build the ordering table for one view from an already-chosen camera.
 ///
 /// `front` selects title or player-choice fascia on the front end. Either
@@ -5094,64 +5123,70 @@ fn build_view(
             b
         });
         let cull = view.cull();
-        staged!(S_FLOOR, { b.floor(&cull) });
-        staged!(S_PADS, { b.pads(s, &cull) });
+        staged!(S_FLOOR, { on_scratchpad(|| b.floor(&cull)) });
+        staged!(S_PADS, { on_scratchpad(|| b.pads(s, &cull)) });
         staged!(S_WALLS, {
-            b.walls(&cull);
-            b.lamps(&cull);
+            on_scratchpad(|| {
+                b.walls(&cull);
+                b.lamps(&cull);
+            })
         });
         staged!(S_TRIM, {
-            // The dial belongs to whoever is looking through this view, and
-            // sits the same distance in from that view's right edge.
-            if let Some(panels) = &front {
-                match panels {
-                    FrontPanels::Title(menu) => menu_panels(&mut b, menu),
-                    FrontPanels::Select(select) => select_panels(&mut b, select),
+            on_scratchpad(|| {
+                // The dial belongs to whoever is looking through this view, and
+                // sits the same distance in from that view's right edge.
+                if let Some(panels) = &front {
+                    match panels {
+                        FrontPanels::Title(menu) => menu_panels(&mut b, menu),
+                        FrontPanels::Select(select) => select_panels(&mut b, select),
+                    }
+                } else {
+                    b.boost_gauge(boost_gauge_x(vp), boost_gauge_y(vp), boost);
+                    // Score and clock stay whole-screen and straddle the seam, the
+                    // way a split-screen game shares one scoreline. Each pass draws
+                    // the part of it the scissor lets through.
+                    b.scoreboard();
+                    b.goal_burst(s);
+                    b.demo_burst(s);
                 }
-            } else {
-                b.boost_gauge(boost_gauge_x(vp), boost_gauge_y(vp), boost);
-                // Score and clock stay whole-screen and straddle the seam, the
-                // way a split-screen game shares one scoreline. Each pass draws
-                // the part of it the scissor lets through.
-                b.scoreboard();
-                b.goal_burst(s);
-                b.demo_burst(s);
-            }
-            b.ceiling(&cull);
-            b.goals(&view);
-            b.shadow(
-                r(s.ball.p.x),
-                r(s.ball.p.y) - sim::BALL_R,
-                r(s.ball.p.z),
-                sim::BALL_R,
-                sim::BALL_R,
-                0,
-            );
-            // The car's own footprint, not half of it. It used to be half,
-            // which from any camera above the bumper line put the entire
-            // shadow underneath the car that cast it: the only way to see one
-            // was to tint it, and the car read as floating on the grass.
-            for body in [&s.car, &s.opponent] {
-                if body.wrecked() {
-                    continue;
-                }
+                b.ceiling(&cull);
+                b.goals(&view);
                 b.shadow(
-                    r(body.p.x),
-                    r(body.p.y) - sim::CAR_REST_Y,
-                    r(body.p.z),
-                    sim::CAR_HALF_W,
-                    sim::CAR_HALF_L,
-                    body.yaw,
+                    r(s.ball.p.x),
+                    r(s.ball.p.y) - sim::BALL_R,
+                    r(s.ball.p.z),
+                    sim::BALL_R,
+                    sim::BALL_R,
+                    0,
                 );
-            }
+                // The car's own footprint, not half of it. It used to be half,
+                // which from any camera above the bumper line put the entire
+                // shadow underneath the car that cast it: the only way to see one
+                // was to tint it, and the car read as floating on the grass.
+                for body in [&s.car, &s.opponent] {
+                    if body.wrecked() {
+                        continue;
+                    }
+                    b.shadow(
+                        r(body.p.x),
+                        r(body.p.y) - sim::CAR_REST_Y,
+                        r(body.p.z),
+                        sim::CAR_HALF_W,
+                        sim::CAR_HALF_L,
+                        body.yaw,
+                    );
+                }
+            })
         });
 
-        staged!(S_BALL, { b.ball(s, &view) });
-        for body in [&s.car, &s.opponent] {
-            if !body.wrecked() {
-                b.car_flame(body, &view);
+        staged!(S_BALL, { on_scratchpad(|| b.ball(s, &view)) });
+        on_scratchpad(|| {
+            for body in [&s.car, &s.opponent] {
+                if !body.wrecked() {
+                    b.car_flame(body, &view);
+                }
             }
-        }
+        });
     }
 
     // Phase 2: the car mesh, appended into the same frame.
