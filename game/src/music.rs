@@ -69,6 +69,16 @@ const SPINS: u32 = 0x10_0000;
 /// deadline, so it is paced rather than issued every tick.
 const POLL_TICKS: u32 = 30;
 
+/// GetStat's first (and only) response is an acknowledge.
+const IRQ_ACK: u8 = 3;
+/// The drive answered with an error instead.
+const IRQ_ERROR: u8 = 5;
+/// Status register: the response FIFO holds at least one byte.
+const RESPONSE_NOT_EMPTY: u8 = 1 << 5;
+/// Status/index register and, at index 0, the response FIFO.
+const REG_INDEX: u32 = cdrom::BASE;
+const REG_RESPONSE: u32 = cdrom::BASE + 1;
+
 /// Consecutive quiet polls that mean the song is over rather than dipping.
 const IDLE_POLLS_TO_ADVANCE: u8 = 8;
 
@@ -93,6 +103,14 @@ pub struct Music {
     starter: CddaStarter,
     end: CddaEndDetector,
     next_poll: u32,
+    /// A GetStat sent on an earlier tick whose answer has not been read:
+    /// the CD-ROM IRQ enable it saved, and the tick it went out on.
+    ///
+    /// The status poll used to spin on the drive's acknowledge inside the
+    /// tick that sent it, once every 30 ticks, and at 60 fps that spin alone
+    /// made the frame it landed in miss its vblank (MEASURED). The drive
+    /// answers well inside a tick, so the answer is read on the next one.
+    pending_stat: Option<(u8, u32)>,
 }
 
 impl Music {
@@ -106,6 +124,7 @@ impl Music {
             starter: CddaStarter::new().with_spins(SPINS),
             end: CddaEndDetector::new(IDLE_POLLS_TO_ADVANCE),
             next_poll: 0,
+            pending_stat: None,
         }
     }
 
@@ -161,6 +180,7 @@ impl Music {
         if on {
             self.begin_track(tick);
         } else {
+            self.cancel_stat();
             cdrom::try_pause(SPINS);
             self.starter = CddaStarter::new().with_spins(SPINS);
         }
@@ -168,6 +188,7 @@ impl Music {
 
     /// Arm the start handshake for the current track.
     fn begin_track(&mut self, tick: u32) {
+        self.cancel_stat();
         self.starter = CddaStarter::new().with_spins(SPINS);
         self.starter.begin(tick);
         self.end.rearm();
@@ -203,13 +224,73 @@ impl Music {
             absolute.wrapping_sub(psx_io::disc_base::cdda_track_base()),
         );
 
-        if self.starter.started() && tick.wrapping_sub(self.next_poll) < u32::MAX / 2 {
-            self.next_poll = tick.wrapping_add(POLL_TICKS);
-            let status = cdrom::try_get_stat(SPINS).and_then(|r| r.bytes().first().copied());
+        if let Some(status) = self.collect_stat(tick) {
             if self.end.poll(status) {
                 self.index = (self.index + 1) % TRACK_COUNT;
                 self.begin_track(tick);
+                return;
             }
+        }
+        if self.starter.started()
+            && self.pending_stat.is_none()
+            && tick.wrapping_sub(self.next_poll) < u32::MAX / 2
+        {
+            self.next_poll = tick.wrapping_add(POLL_TICKS);
+            match cdrom::dispatch_command(cdrom::CMD_GETSTAT, &[], SPINS) {
+                Some(saved) => self.pending_stat = Some((saved, tick)),
+                // The parameter FIFO never made room: the same verdict the
+                // blocking poll reached, and on the same tick.
+                None => {
+                    if self.end.poll(None) {
+                        self.index = (self.index + 1) % TRACK_COUNT;
+                        self.begin_track(tick);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Read the answer to a GetStat sent on an earlier tick. `None` while
+    /// there is nothing to report yet; `Some(None)` for a drive that answered
+    /// with an error or not at all within a poll interval, which is what the
+    /// blocking poll reported for those.
+    fn collect_stat(&mut self, tick: u32) -> Option<Option<u8>> {
+        let (saved, sent) = self.pending_stat?;
+        let irq = cdrom::irq_flag_value();
+        let status = match irq {
+            IRQ_ACK => {
+                // SAFETY: fixed CD-ROM MMIO registers; `irq_flag_value`
+                // leaves index 0 selected, where register 1 is the response
+                // FIFO.
+                unsafe {
+                    (psx_io::read8(REG_INDEX) & RESPONSE_NOT_EMPTY != 0)
+                        .then(|| psx_io::read8(REG_RESPONSE))
+                }
+            }
+            IRQ_ERROR => None,
+            _ => {
+                // Anything else is not this command's answer: drop it and
+                // keep waiting, as the blocking poll's loop did.
+                if irq != 0 {
+                    cdrom::discard_response();
+                    cdrom::acknowledge_irq(irq);
+                }
+                if tick.wrapping_sub(sent) < POLL_TICKS {
+                    return None;
+                }
+                None
+            }
+        };
+        cdrom::restore_irq_output(saved);
+        self.pending_stat = None;
+        Some(status)
+    }
+
+    /// Give up on an unanswered GetStat before the drive is sent anything
+    /// else, restoring the IRQ enable it saved.
+    fn cancel_stat(&mut self) {
+        if let Some((saved, _)) = self.pending_stat.take() {
+            cdrom::restore_irq_output(saved);
         }
     }
 }
