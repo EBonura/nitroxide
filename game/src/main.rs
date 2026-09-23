@@ -9,6 +9,9 @@
 #![no_std]
 #![no_main]
 #![allow(static_mut_refs)]
+// The GTE register macros (psx_gte::mtc2!/mfc2!) are inline assembly, which is
+// still feature-gated on MIPS; draw.rs drives the car projection with them.
+#![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
 
 extern crate psx_rt;
 
