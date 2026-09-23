@@ -1724,6 +1724,7 @@ impl Scene for NitroXide {
 
     fn render(&mut self, ctx: &mut Ctx) {
         let tick = ctx.sim_tick.as_u32();
+        draw::set_camera_tick(tick);
         // Where the back buffer starts in VRAM, which is what turns a
         // display-space viewport into the GPU's scissor rectangle.
         let buffer_y = ctx.fb.buffer_y(ctx.fb.drawing);
@@ -1853,7 +1854,7 @@ fn main() -> ! {
     // the deadline while physics stays at the full 60 Hz.
     let config = Config {
         clear_color: (6, 8, 16),
-        visual_pacing: VisualPacing::EveryNVBlanks(2),
+        visual_pacing: VisualPacing::EveryVBlank,
         ..Config::default()
     };
     let mut game = NitroXide::new();
