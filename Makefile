@@ -191,9 +191,9 @@ PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools
 PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
 # The I-cache layout profile `+order` places functions from (see the
 # psoxide-pgo README, "order"): per-word counts and direct calls over the
-# train tape's gameplay polls. It binds by portable name and code hash, so
-# a feature build binds it as well, but any change to the code the gameplay
-# runs makes it stale (`apply` stops below 98% bound): regenerate it with
+# train tape's gameplay polls. It binds by portable name and code hash, and
+# any change to the code the gameplay runs makes it stale (`apply` stops
+# below 98% bound): regenerate it with
 # `make pgo-order FRONTEND=x CDDA_DIR=...` and commit it with the change.
 PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # `off` since 60 fps: hot=500+profi wins on average work per frame (the
@@ -202,7 +202,10 @@ PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # share of frames at 60, not by the average. `+order` because this game is
 # at the mercy of its link order: the commit that added the stands measured
 # 84.8% of the train tape's frames at 60 linked plain and 95.3% placed.
-PGO_VARIANT ?= off+order
+# Dev feature builds link plain: a boot shortcut such as boot-goal changes
+# code the gameplay runs, the layout then binds only part of itself and
+# `apply` refuses it (boot-play binds 100%, boot-goal 75%).
+PGO_VARIANT ?= $(if $(strip $(FEATURES)),off,off+order)
 
 compile: psoxide
 	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
