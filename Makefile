@@ -61,7 +61,7 @@ PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
 .PHONY: help test assets textures bake compile build pack disc run shot clean psoxide \
-	pgo-collect pgo-choose
+	pgo-collect pgo-choose pgo-order
 
 help:
 	@echo "NitroXide targets:"
@@ -73,6 +73,7 @@ help:
 	@echo "  make run       - disc + boot it in the PSoXide frontend"
 	@echo "  make shot      - headless capture to $(SHOT) (no window)"
 	@echo "  make pgo-collect FRONTEND=x - regenerate the committed PGO profile"
+	@echo "  make pgo-order FRONTEND=x   - regenerate the committed I-cache layout profile"
 	@echo "  make pgo-choose  FRONTEND=x - build and gate every PGO variant"
 	@echo "  make clean     - cargo clean both crates"
 
@@ -188,15 +189,24 @@ FEATURES    ?=
 GAME_CARGO   = build --release$(if $(strip $(FEATURES)), --features "$(FEATURES)") $(DELAY_SLOT_CONFIG)
 PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-pgo/Cargo.toml" --
 PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
+# The I-cache layout profile `+order` places functions from (see the
+# psoxide-pgo README, "order"): per-word counts and direct calls over the
+# train tape's gameplay polls. It binds by portable name and code hash, so
+# a feature build binds it as well, but any change to the code the gameplay
+# runs makes it stale (`apply` stops below 98% bound): regenerate it with
+# `make pgo-order FRONTEND=x CDDA_DIR=...` and commit it with the change.
+PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # `off` since 60 fps: hot=500+profi wins on average work per frame (the
 # number `pgo-choose` ranks by) but loses on the heavy frames with both cars
 # on screen, which are the ones that miss a vblank. Judge a variant by the
-# share of frames at 60, not by the average.
-PGO_VARIANT ?= off
+# share of frames at 60, not by the average. `+order` because this game is
+# at the mercy of its link order: the commit that added the stands measured
+# 84.8% of the train tape's frames at 60 linked plain and 95.3% placed.
+PGO_VARIANT ?= off+order
 
 compile: psoxide
 	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
-		--variant "$(PGO_VARIANT)" -- $(GAME_CARGO)
+		--layout "$(PGO_LAYOUT)" --variant "$(PGO_VARIANT)" -- $(GAME_CARGO)
 	@echo "EXE -> $(EXE)"
 
 build: compile
@@ -246,6 +256,14 @@ pgo-collect: psoxide
 		--pack $(PGO_PACK) --launch-arg --embedded-playtest $(PGO_LAUNCH_ARGS) \
 		--out "$(PGO_PROFILE)" -- $(GAME_CARGO)
 	@$(MAKE) --no-print-directory compile
+
+# The layout profile for PGO_VARIANT's `+order`, collected on the variant
+# without it.
+pgo-order: psoxide
+	PSOXIDE="$(PSOXIDE)" $(PGO) order --crate "$(GAME)" --frontend "$(FRONTEND)" \
+		--tape "$(TRAIN_TAPE)" --polls $(TRAIN_POLLS) --pack $(PGO_PACK) \
+		--launch-arg --embedded-playtest $(PGO_LAUNCH_ARGS) --profile "$(PGO_PROFILE)" \
+		--variant "$(patsubst %+order,%,$(PGO_VARIANT))" --out "$(PGO_LAYOUT)" -- $(GAME_CARGO)
 
 # NitroXide renders every second vblank and waits out the rest, so `choose`
 # ranks the variants by the work cycles `measure` counts outside the wait loops.
