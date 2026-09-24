@@ -903,14 +903,16 @@ const SLOT_OF: [[usize; 4]; 4] = [[0, 0, 0, 0], [0, 4, 0, 0], [0, 2, 4, 0], [0, 
 static mut WALL_LIGHT: [[[u32; 5]; PROFILE_LEN]; SPAN_COUNT] =
     [[[rgbc((128, 128, 128)); 5]; PROFILE_LEN]; SPAN_COUNT];
 
-/// The untinted light for the rings the barrier occupies, kept so the team
-/// colours can be laid over them again whenever a match changes them.
+/// The untinted wall light for every ring, kept so the team colours can be
+/// laid over it again whenever a match changes them: the barrier below the
+/// rail and the enclosure strands above it both take the colour of the half
+/// they stand on.
 ///
 /// Doing that per vertex per frame instead cost a mix and a multiply on every
 /// corner of every lower-wall quad, which measured as eleven dropped frames in
-/// nine hundred. The barrier's colour changes twice a match at the very most.
-static mut CURB_BASE: [[[Rgb; 5]; RAIL_LO_RING + 1]; SPAN_COUNT] =
-    [[[(128, 128, 128); 5]; RAIL_LO_RING + 1]; SPAN_COUNT];
+/// nine hundred. The colours change twice a match at the very most.
+static mut WALL_BASE: [[[Rgb; 5]; PROFILE_LEN]; SPAN_COUNT] =
+    [[[(128, 128, 128); 5]; PROFILE_LEN]; SPAN_COUNT];
 /// Where each span's split positions sit in Z, for the barrier's blend.
 static mut CURB_Z: [[i32; 5]; SPAN_COUNT] = [[0; 5]; SPAN_COUNT];
 
@@ -935,6 +937,9 @@ const ROOF_ROWS: usize = ((2 * ROOF_HALF_Z + ROOF_STEP_Z - 1) / ROOF_STEP_Z) as 
 /// every frame (twelve mixes a patch, about a hundred patches a view), which
 /// was the single largest cost of a split frame; the roof never moves.
 static mut ROOF_CORNER_LIGHT: [[Rgb; ROOF_ROWS + 1]; ROOF_COLS + 1] =
+    [[(128, 128, 128); ROOF_ROWS + 1]; ROOF_COLS + 1];
+/// The same corners before the team colours go over them.
+static mut ROOF_BASE: [[Rgb; ROOF_ROWS + 1]; ROOF_COLS + 1] =
     [[(128, 128, 128); ROOF_ROWS + 1]; ROOF_COLS + 1];
 /// World X of roof corner column `ix` (the last column is clipped to the
 /// roof edge, as the patch walk always did).
@@ -1070,10 +1075,8 @@ fn build_lighting() {
                 };
                 unsafe {
                     WALL_LIGHT[si][ri][slot] = rgbc(c);
-                    if ri <= RAIL_LO_RING {
-                        CURB_BASE[si][ri][slot] = c;
-                        CURB_Z[si][slot] = at.1;
-                    }
+                    WALL_BASE[si][ri][slot] = c;
+                    CURB_Z[si][slot] = at.1;
                 }
             }
         }
@@ -1095,8 +1098,10 @@ fn build_lighting() {
             let (px, pz) = (roof_corner_x(ix), roof_corner_z(iz));
             let tx = ((px + x) * 16 / (2 * x)).clamp(0, 16);
             let tz = ((pz + z) * 16 / (2 * z)).clamp(0, 16);
+            let c = mix(mix(l[0], l[1], tx), mix(l[2], l[3], tx), tz);
             unsafe {
-                ROOF_CORNER_LIGHT[ix][iz] = mix(mix(l[0], l[1], tx), mix(l[2], l[3], tx), tz);
+                ROOF_CORNER_LIGHT[ix][iz] = c;
+                ROOF_BASE[ix][iz] = c;
             }
         }
     }
@@ -1325,17 +1330,53 @@ fn curb(light: Rgb, z: i32) -> Rgb {
     tinted(light, mix(a, b, t))
 }
 
-/// Lay the seats' colours back over the barrier's baked light. Runs when a
-/// match sets its paints, not when it draws a frame.
+/// Tint the enclosure above the rail, and the roof, by the half it covers.
+///
+/// Stronger than the barrier's: the strand texel is near white and drawn
+/// half-transparent, so a hue pulled toward neutral the way the barrier's is
+/// reads as grey from any distance. At full strength each end of the arena
+/// reads as its team from every camera, which is what Rocket League's halves
+/// do, for no primitives and no VRAM: the colour rides on vertex tints the
+/// quads already carry.
+///
+/// The hue is carried at a brightest channel of 128, the GPU's 1.0, and the
+/// baked light only sets how bright it is, never its colour. A tint much past
+/// 128 clips the near-white strand's strongest channels first, and an orange
+/// tint clipped that way comes out yellow; the light's own colour carries
+/// the pitch's green bounce, which turned the orange end olive.
+fn glow(light: Rgb, z: i32) -> Rgb {
+    const BLEND: i32 = 1400;
+    let t = ((z + BLEND) * 16 / (2 * BLEND)).clamp(0, 16);
+    let (a, b) = unsafe { (SEAT_GLOW[0], SEAT_GLOW[1]) };
+    let hue = mix(a, b, t);
+    let lum = (light.0.max(light.1).max(light.2) as i32).clamp(64, 176);
+    let k = |c: u8| (c as i32 * lum / 128).min(255) as u8;
+    (k(hue.0), k(hue.1), k(hue.2))
+}
+
+/// Lay the seats' colours back over the barrier's, the enclosure's and the
+/// roof's baked light. Runs when a match sets its paints, not when it draws a
+/// frame.
 fn paint_curb() {
     for si in 0..SPAN_COUNT {
-        for ri in 0..=RAIL_LO_RING {
+        for ri in 0..PROFILE_LEN {
             for slot in 0..5 {
                 unsafe {
-                    WALL_LIGHT[si][ri][slot] =
-                        rgbc(curb(CURB_BASE[si][ri][slot], CURB_Z[si][slot]));
+                    let (base, z) = (WALL_BASE[si][ri][slot], CURB_Z[si][slot]);
+                    WALL_LIGHT[si][ri][slot] = rgbc(if ri <= RAIL_LO_RING {
+                        curb(base, z)
+                    } else if ri >= RAIL_HI_RING {
+                        glow(base, z)
+                    } else {
+                        base
+                    });
                 }
             }
+        }
+    }
+    for ix in 0..=ROOF_COLS {
+        for iz in 0..=ROOF_ROWS {
+            unsafe { ROOF_CORNER_LIGHT[ix][iz] = glow(ROOF_BASE[ix][iz], roof_corner_z(iz)) };
         }
     }
 }
@@ -2005,6 +2046,9 @@ static mut SEAT_PAINT: [usize; SEATS] = [0, 5];
 /// is tinted by this at every corner of every quad, and working it out there
 /// cost six integer divides a vertex and thirty-eight dropped frames.
 static mut SEAT_HUE: [Rgb; SEATS] = [(128, 128, 128); SEATS];
+/// The seat's signal hue with its brightest channel at 128, for the
+/// enclosure and the roof (see [`glow`]).
+static mut SEAT_GLOW: [Rgb; SEATS] = [(128, 128, 128); SEATS];
 /// Whether the barrier has had a colour laid over it yet. The defaults in
 /// `SEAT_PAINT` are a real selection, so without this the first call matching
 /// them would decide there was nothing to do and leave the barrier grey.
@@ -2036,7 +2080,16 @@ pub fn set_seat_paints(paints: [usize; SEATS]) {
             (c.1 as i32 * 384 / sum).min(255) as u8,
             (c.2 as i32 * 384 / sum).min(255) as u8,
         );
-        unsafe { SEAT_HUE[seat] = mix((128, 128, 128), full, 10) };
+        let top = (c.0.max(c.1).max(c.2) as i32).max(1);
+        let glow = (
+            (c.0 as i32 * 128 / top) as u8,
+            (c.1 as i32 * 128 / top) as u8,
+            (c.2 as i32 * 128 / top) as u8,
+        );
+        unsafe {
+            SEAT_HUE[seat] = mix((128, 128, 128), full, 10);
+            SEAT_GLOW[seat] = glow;
+        }
     }
     paint_curb();
 }
