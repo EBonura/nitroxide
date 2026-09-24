@@ -35,6 +35,17 @@ const NET_CELL: usize = 8;
 const CLUT_ENTRIES: usize = 16;
 const COVER_CLUT_ROW: usize = 2;
 const MARKED_CLUT_ROW: usize = 3;
+const PAD_CLUT_ROW: usize = 4;
+const SPENT_CLUT_ROW: usize = 5;
+const GLOW_CLUT_ROW: usize = 6;
+const CLUT_ROWS: usize = 7;
+/// A 32x32 radial glow below the goal net: index 15 at the centre falling to
+/// 1 at the rim, 0 (a hole) outside it. Every light in the arena that is not
+/// baked into a vertex tint (boost pads, orbs, halos, goal glow, the ball's
+/// ground ring) is this one tile drawn through one of three palettes.
+const GLOW_U0: usize = 0;
+const GLOW_V0: usize = NET_V0 + NET_H;
+const GLOW_W: usize = 32;
 const CHALK_INDEX: u8 = 15;
 const CHALK: [u8; 3] = [205, 220, 210];
 
@@ -76,6 +87,53 @@ const COVER_PALETTE: [[u8; 3]; CLUT_ENTRIES] = [
     [0, 0, 0],
 ];
 
+/// Brightness of each ring of the glow tile, centre last. Greyscale: the
+/// vertex tint gives it its colour. Drawn additively, so this is light added
+/// to whatever is behind it and entry 0 is the hole around the disc.
+fn glow_palette() -> Vec<[u8; 3]> {
+    (0..CLUT_ENTRIES)
+        .map(|i| {
+            let t = i as i32 * 255 / 15;
+            let v = (t * t / 255) as u8;
+            [v, v, v]
+        })
+        .collect()
+}
+
+/// A live boost pad at rest: a bright rim a ring in from the edge, a dimmer
+/// bowl inside it and a hot centre. The game rewrites this row every frame to
+/// run a ripple outward through it (`draw::pad_clut`); this is the frame the
+/// atlas starts with.
+fn pad_palette() -> Vec<[u8; 3]> {
+    const RINGS: [u8; CLUT_ENTRIES] = [
+        0, 110, 230, 190, 90, 60, 52, 52, 60, 76, 96, 120, 146, 172, 200, 224,
+    ];
+    RINGS.iter().map(|&v| [v, v, v]).collect()
+}
+
+/// A spent pad: an opaque dark kerb and a darker floor, the plate the pad
+/// sits on while it is recharging. No STP bits, so it draws solid even
+/// through the additive packet the live pad uses.
+fn spent_palette() -> Vec<[u8; 3]> {
+    (0..CLUT_ENTRIES)
+        .map(|i| match i {
+            0 => [0, 0, 0],
+            1..=3 => [72, 76, 92],
+            _ => [44, 48, 62],
+        })
+        .collect()
+}
+
+fn glow_index(px: usize, py: usize) -> u8 {
+    let (dx, dy) = (px as i32 * 2 + 1 - GLOW_W as i32, py as i32 * 2 + 1 - GLOW_W as i32);
+    let r2 = dx * dx + dy * dy;
+    let rim = GLOW_W as i32;
+    if r2 >= rim * rim {
+        return 0;
+    }
+    (15 - isqrt(r2) * 15 / rim).clamp(1, 15) as u8
+}
+
 fn main() {
     let mut args = std::env::args_os().skip(1);
     let grass_path = args.next().unwrap_or_else(|| usage());
@@ -104,11 +162,12 @@ fn main() {
     }
     std::fs::write(output_path, &psxt).expect("write arena PSXT");
     println!(
-        "ARENA {}: {} bytes, {}x{} 4bpp, 4 CLUT rows",
+        "ARENA {}: {} bytes, {}x{} 4bpp, {} CLUT rows",
         output_path.display(),
         psxt.len(),
         TEX_W,
-        TEX_H
+        TEX_H,
+        CLUT_ROWS
     );
 }
 
@@ -147,6 +206,10 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
                 } else {
                     0
                 }
+            } else if (GLOW_U0..GLOW_U0 + GLOW_W).contains(&x)
+                && (GLOW_V0..GLOW_V0 + GLOW_W).contains(&y)
+            {
+                glow_index(x - GLOW_U0, y - GLOW_V0)
             } else if x >= COVER_U0 {
                 0
             } else if x >= GRASS_W && y < GRASS_W {
@@ -162,7 +225,11 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
         grass_palette,
         COVER_PALETTE.to_vec(),
         marked_palette,
+        pad_palette(),
+        spent_palette(),
+        glow_palette(),
     ];
+    assert_eq!(palette_rows.len(), CLUT_ROWS);
     let mut blob = encode_indexed_psxt_with_clut_rows(
         TEX_W as u16,
         TEX_H as u16,
@@ -181,6 +248,12 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
     // net strand colours after the common encoder has built the blob.
     set_clut_mask_bit(&mut blob, COVER_CLUT_ROW, 1);
     set_clut_mask_bit(&mut blob, COVER_CLUT_ROW, 2);
+    // The glow rows are drawn additively, and a texel only blends if its
+    // CLUT entry carries STP: every visible ring gets it.
+    for entry in 1..CLUT_ENTRIES {
+        set_clut_mask_bit(&mut blob, PAD_CLUT_ROW, entry);
+        set_clut_mask_bit(&mut blob, GLOW_CLUT_ROW, entry);
+    }
     validate(&blob);
     blob
 }
@@ -301,7 +374,7 @@ fn validate(blob: &[u8]) {
     assert_eq!(texture.width(), TEX_W as u16);
     assert_eq!(texture.height(), TEX_H as u16);
     assert_eq!(texture.halfwords_per_row(), (TEX_W / 4) as u16);
-    assert_eq!(texture.clut_entries(), (4 * CLUT_ENTRIES) as u16);
+    assert_eq!(texture.clut_entries(), (CLUT_ROWS * CLUT_ENTRIES) as u16);
     let clut = texture.clut_bytes();
     let cover_zero = COVER_CLUT_ROW * CLUT_ENTRIES * 2;
     assert_eq!(
@@ -321,6 +394,17 @@ fn validate(blob: &[u8]) {
         let offset = (COVER_CLUT_ROW * CLUT_ENTRIES + entry) * 2;
         let value = u16::from_le_bytes([clut[offset], clut[offset + 1]]);
         assert_ne!(value & 0x8000, 0, "cover strand must carry STP");
+    }
+    let spent = (SPENT_CLUT_ROW * CLUT_ENTRIES + 1) * 2;
+    assert_eq!(
+        u16::from_le_bytes([clut[spent], clut[spent + 1]]) & 0x8000,
+        0,
+        "a spent pad is an opaque plate"
+    );
+    for row in [PAD_CLUT_ROW, GLOW_CLUT_ROW] {
+        let offset = (row * CLUT_ENTRIES + 15) * 2;
+        let value = u16::from_le_bytes([clut[offset], clut[offset + 1]]);
+        assert_ne!(value & 0x8000, 0, "glow rings must carry STP");
     }
     let chalk_offset = (MARKED_CLUT_ROW * CLUT_ENTRIES + CHALK_INDEX as usize) * 2;
     let chalk = u16::from_le_bytes([clut[chalk_offset], clut[chalk_offset + 1]]);
@@ -342,6 +426,13 @@ mod tests {
         }
         let blob = cook(&pixels);
         validate(&blob);
+    }
+
+    #[test]
+    fn glow_tile_is_a_disc_with_a_hole_around_it() {
+        assert_eq!(glow_index(0, 0), 0);
+        assert_eq!(glow_index(15, 15), 15);
+        assert_eq!(glow_index(0, 15), 1);
     }
 
     #[test]
