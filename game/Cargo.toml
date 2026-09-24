@@ -65,7 +65,7 @@ path = "src/main.rs"
 nitroxide-sim = { path = "../sim" }
 
 psx-asset  = { path = "../.psoxide/sdk/crates/psx-asset" }
-psx-rt     = { path = "../.psoxide/sdk/crates/psx-rt", features = ["boot-trace"] }
+psx-rt     = { path = "../.psoxide/sdk/crates/psx-rt", features = ["boot-trace", "hazard-trampolines-256"] }
 psx-engine = { path = "../.psoxide/engine/crates/psx-engine", features = ["boot-trace"] }
 psx-gpu    = { path = "../.psoxide/sdk/crates/psx-gpu" }
 psx-sfx    = { path = "../.psoxide/sdk/crates/psx-sfx" }
