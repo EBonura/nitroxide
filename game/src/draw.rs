@@ -4022,9 +4022,13 @@ impl Builder<'_> {
 
                 // Sub-tiles carry a slice of the same UV rectangle, so the
                 // texture keeps its scale and only the vertex count goes up.
-                let px = |i: i32| x0 + (x1 - x0) * i / n;
-                let pz = |i: i32| z0 + (z1 - z0) * i / n;
-                let step = |i: i32| (tex_w * i / n).min(tex_w - 1);
+                // `n` is a power of two (`floor_split`), and every operand
+                // here is non-negative, so a shift is the same division
+                // without the R3000's 36-cycle DIV on every grid point.
+                let shift = n.trailing_zeros();
+                let px = |i: i32| x0 + ((x1 - x0) * i >> shift);
+                let pz = |i: i32| z0 + ((z1 - z0) * i >> shift);
+                let step = |i: i32| (tex_w * i >> shift).min(tex_w - 1);
                 let u = |i: i32| (if flip_u { tex_u0 - step(i) } else { tex_u0 + step(i) }) as u8;
                 let v = |i: i32| (if flip_v { tex_v0 - step(i) } else { tex_v0 + step(i) }) as u8;
 
