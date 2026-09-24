@@ -891,6 +891,9 @@ const FLOOR_GZ: usize = (TILES_Z * FLOOR_SPLIT_MAX) as usize + 1;
 /// shifts per corner.
 static mut FLOOR_LIGHT: [[[u32; FLOOR_GZ]; FLOOR_GX]; 2] =
     [[[rgbc((128, 128, 128)); FLOOR_GZ]; FLOOR_GX]; 2];
+/// The pitch light before the goal mouths' team pools go over it.
+static mut FLOOR_BASE: [[[u32; FLOOR_GZ]; FLOOR_GX]; 2] =
+    [[[rgbc((128, 128, 128)); FLOOR_GZ]; FLOOR_GX]; 2];
 
 /// A colour word back to its channels.
 #[inline(always)]
@@ -1061,12 +1064,14 @@ fn build_lighting() {
                         c = (add(c.0, 70), add(c.1, 44), add(c.2, 8));
                     }
                 }
+                let w = rgbc((
+                    ((c.0 as i32 * k) >> 8).clamp(0, 255) as u8,
+                    ((c.1 as i32 * k) >> 8).clamp(0, 255) as u8,
+                    ((c.2 as i32 * k) >> 8).clamp(0, 255) as u8,
+                ));
                 unsafe {
-                    FLOOR_LIGHT[stripe][gx][gz] = rgbc((
-                        ((c.0 as i32 * k) >> 8).clamp(0, 255) as u8,
-                        ((c.1 as i32 * k) >> 8).clamp(0, 255) as u8,
-                        ((c.2 as i32 * k) >> 8).clamp(0, 255) as u8,
-                    ));
+                    FLOOR_LIGHT[stripe][gx][gz] = w;
+                    FLOOR_BASE[stripe][gx][gz] = w;
                 }
             }
         }
@@ -1442,11 +1447,62 @@ fn paint_curb() {
             unsafe { ROOF_CORNER_LIGHT[ix][iz] = glow(ROOF_BASE[ix][iz], roof_corner_z(iz)) };
         }
     }
+    paint_goal_pools();
 }
 
-/// The dark inside the goal box, at the floor and up at the crossbar.
-const GOAL_VOID: Rgb = (18, 20, 30);
-const GOAL_VOID_HI: Rgb = (34, 38, 52);
+/// Throw each goal's colour onto the pitch in front of its mouth: the lit
+/// goal box is a light, and a light with no pool under it is a sticker.
+/// Baked into the pitch light, so it costs nothing a frame.
+fn paint_goal_pools() {
+    let step_x = sim::HALF_X * 2 / TILES_X;
+    let step_z = sim::HALF_Z * 2 / TILES_Z;
+    let (blue, orange) = unsafe { (SEAT_GLOW[0], SEAT_GLOW[1]) };
+    for stripe in 0..2 {
+        for gx in 0..FLOOR_GX {
+            for gz in 0..FLOOR_GZ {
+                let x = -sim::HALF_X + gx as i32 * step_x / FLOOR_SPLIT_MAX;
+                let z = -sim::HALF_Z + gz as i32 * step_z / FLOOR_SPLIT_MAX;
+                let (cx, cz) = Builder::chamfer(x, z);
+                let base = rgb_of(unsafe { FLOOR_BASE[stripe][gx][gz] });
+                // Elliptical falloff, Q8: wide along the goal line, short
+                // out into the pitch.
+                let d = sim::HALF_Z - cz.abs();
+                let e = (cx * cx / (GOAL_POOL_X * GOAL_POOL_X / 256))
+                    + (d * d / (GOAL_POOL_Z * GOAL_POOL_Z / 256));
+                let lit = if e < 256 {
+                    let f = (256 - e) * (256 - e) >> 8; // 0..256
+                    let hue = if cz < 0 { blue } else { orange };
+                    let add = |b: u8, h: u8| (b as i32 + h as i32 * f * GOAL_POOL_GAIN / (256 * 16)).min(255) as u8;
+                    (add(base.0, hue.0), add(base.1, hue.1), add(base.2, hue.2))
+                } else {
+                    base
+                };
+                unsafe { FLOOR_LIGHT[stripe][gx][gz] = rgbc(lit) };
+            }
+        }
+    }
+}
+
+/// The goal pools: half-extents across the mouth and out into the pitch, and
+/// strength in sixteenths of the team hue (whose brightest channel is 128).
+const GOAL_POOL_X: i32 = 1700;
+const GOAL_POOL_Z: i32 = 1300;
+const GOAL_POOL_GAIN: i32 = 18;
+/// The lit goal box, as sixteenths of the team's signal colour: brightest at
+/// the back wall's floor, falling toward the roof and the mouth, so the box
+/// reads as lit from inside rather than painted.
+const GOAL_BACK_LO: i32 = 13;
+const GOAL_BACK_HI: i32 = 7;
+const GOAL_SIDE: i32 = 8;
+const GOAL_FLOOR: i32 = 10;
+/// The white-hot core the posts and bar take on, and how much of it.
+const GOAL_FRAME_HOT: Rgb = (255, 248, 232);
+const GOAL_FRAME_MIX: i32 = 7;
+/// Halo sizes: how far past the post and bar the glow reaches, and the
+/// goal-line strip's half-depth.
+const GOAL_POST_HALO: i32 = 190;
+const GOAL_BAR_HALO: i32 = 170;
+const GOAL_LINE_HALO: i32 = 110;
 
 /// Turn dithering on for the untextured primitives in this frame's ordering
 /// table. Immediate GP0 state, so it has to be re-applied every frame: the
@@ -4711,11 +4767,14 @@ impl Builder<'_> {
             // it feared cannot happen now anyway, since `quad_biased` clips
             // the near plane.
             let (gw, gh) = (sim::GOAL_HALF_W, -sim::GOAL_H);
-            // The box behind the net, dark rather than team-bright. It used to
-            // be the net: a flat coloured slab with the team colour on it, which
-            // read as a painted wall at the end of a tunnel because that is what
-            // it was. Now it is only what shows through the mesh, so it wants to
-            // be the inside of a goal, which is nearly black.
+            // The box behind the net, lit in the team's colour from inside.
+            // It used to be near black: the team colour lived only on the
+            // frame, and at the far end of the pitch the goal was the
+            // darkest thing on screen. Rocket League's goal is the brightest
+            // thing at its end of the arena. A fraction of orange is brown,
+            // so the box is never less than a third of the signal colour and
+            // the white net and the hot frame are in front of it.
+            let glow = |n: i32| shade(color, n, 16);
             self.quad(
                 [
                     (-gw, 0, back),
@@ -4723,20 +4782,23 @@ impl Builder<'_> {
                     (-gw, gh, back),
                     (gw, gh, back),
                 ],
-                // Neutral, not a fraction of the team colour: a sixth of orange
-                // is brown, and the inside of a goal behind white netting wants
-                // to look like shadow with a wash of the team in it.
-                // Neutral, and deliberately not `tinted` by the team: a
-                // fraction of orange is brown, and multiplying a dark grey by
-                // orange is the same brown again. The team colour lives on the
-                // posts and the frame, where it can be bright.
-                [GOAL_VOID, GOAL_VOID, GOAL_VOID_HI, GOAL_VOID_HI],
+                [
+                    glow(GOAL_BACK_LO),
+                    glow(GOAL_BACK_LO),
+                    glow(GOAL_BACK_HI),
+                    glow(GOAL_BACK_HI),
+                ],
             );
             for &sx in &[-1i32, 1] {
                 let x = sx * gw;
-                self.quad_flat(
+                self.quad(
                     [(x, 0, z_line), (x, 0, back), (x, gh, z_line), (x, gh, back)],
-                    shade(color, 1, 5),
+                    [
+                        glow(GOAL_SIDE - 2),
+                        glow(GOAL_SIDE),
+                        glow(GOAL_BACK_HI - 2),
+                        glow(GOAL_BACK_HI),
+                    ],
                 );
             }
             self.quad_flat(
@@ -4746,19 +4808,21 @@ impl Builder<'_> {
                     (-gw, gh, back),
                     (gw, gh, back),
                 ],
-                shade(color, 1, 5),
+                glow(GOAL_BACK_HI - 1),
             );
-            // Floor of the box. Dark for the same reason as the back panel: it
-            // is most of what shows under the net from a chase camera, and in
-            // team colour it read as a brown carpet.
-            self.quad_flat(
+            self.quad(
                 [
                     (-gw, 0, z_line),
                     (gw, 0, z_line),
                     (-gw, 0, back),
                     (gw, 0, back),
                 ],
-                GOAL_VOID,
+                [
+                    glow(GOAL_FLOOR - 2),
+                    glow(GOAL_FLOOR - 2),
+                    glow(GOAL_FLOOR),
+                    glow(GOAL_FLOOR),
+                ],
             );
             // The netting itself: back wall, both sides and the roof, hung well
             // inside the box so the dark panels read as depth behind it rather
@@ -4840,7 +4904,16 @@ impl Builder<'_> {
                 true,
             );
 
-            // Bright posts and crossbar, so the mouth pops out of the wall.
+            // Hot posts and crossbar, each inside a halo of the team's
+            // light, and a glowing strip along the goal line.
+            let frame = mix(color, GOAL_FRAME_HOT, GOAL_FRAME_MIX);
+            // Half again the team hue: past 128 the strongest channel starts
+            // to clip, which on a black sky reads as the light burning hot.
+            let halo = {
+                let g = unsafe { SEAT_GLOW[if z_line > 0 { 1 } else { 0 }] };
+                let k = |c: u8| (c as i32 * 3 / 2).min(255) as u8;
+                (k(g.0), k(g.1), k(g.2))
+            };
             let post = 34;
             for &sx in &[-1i32, 1] {
                 let x = sx * gw;
@@ -4851,7 +4924,19 @@ impl Builder<'_> {
                         (x - post, gh, z_line),
                         (x + post, gh, z_line),
                     ],
-                    shade(color, 3, 2),
+                    frame,
+                );
+                let h = GOAL_POST_HALO;
+                self.glow_quad(
+                    [
+                        (x - h, gh - h, z_line),
+                        (x + h, gh - h, z_line),
+                        (x - h, h / 2, z_line),
+                        (x + h, h / 2, z_line),
+                    ],
+                    halo,
+                    -40,
+                    GLOW_PACKET,
                 );
             }
             self.quad_flat(
@@ -4861,7 +4946,31 @@ impl Builder<'_> {
                     (-gw, gh - post, z_line),
                     (gw, gh - post, z_line),
                 ],
-                shade(color, 3, 2),
+                frame,
+            );
+            let h = GOAL_BAR_HALO;
+            self.glow_quad(
+                [
+                    (-gw - h, gh - h, z_line),
+                    (gw + h, gh - h, z_line),
+                    (-gw - h, gh + h, z_line),
+                    (gw + h, gh + h, z_line),
+                ],
+                halo,
+                -40,
+                GLOW_PACKET,
+            );
+            let (zl, h) = (z_line.signum(), GOAL_LINE_HALO);
+            self.glow_quad(
+                [
+                    (-gw, -2, z_line - zl * h),
+                    (gw, -2, z_line - zl * h),
+                    (-gw, -2, z_line + zl * h),
+                    (gw, -2, z_line + zl * h),
+                ],
+                halo,
+                PAD_BIAS,
+                GLOW_PACKET,
             );
         }
     }
