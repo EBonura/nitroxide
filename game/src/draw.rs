@@ -2415,12 +2415,24 @@ const CAR_LOD_DISTANCE: i32 = 500;
 /// decides whether the extra faces can be seen; the gap between the two is
 /// hysteresis, so a car hovering at the threshold does not flicker between
 /// meshes every frame.
-const CAR_LOD_ENTER_PX: i32 = 24;
-const CAR_LOD_EXIT_PX: i32 = 28;
+///
+/// Per seat. A full-screen view is always seat 0's, so seat 0 is the car the
+/// chase camera trails, which the player studies and which keeps the full
+/// mesh down to 24 pixels. Seat 1 is the opponent: 60 faces hold up to about
+/// 56 pixels, and the heavy frames are the ones with both cars close, where
+/// the opponent's full mesh was most of what tipped them past a vblank.
+const CAR_LOD_ENTER_PX: [i32; SEATS] = [24, 56];
+const CAR_LOD_EXIT_PX: [i32; SEATS] = [28, 64];
 /// Camera-space depths those sizes fall at: car length on screen is
 /// `2 * CAR_HALF_L * PROJ_H / depth`.
-const CAR_LOD_ENTER_DEPTH: i32 = 2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_ENTER_PX;
-const CAR_LOD_EXIT_DEPTH: i32 = 2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_EXIT_PX;
+const CAR_LOD_ENTER_DEPTH: [i32; SEATS] = [
+    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_ENTER_PX[0],
+    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_ENTER_PX[1],
+];
+const CAR_LOD_EXIT_DEPTH: [i32; SEATS] = [
+    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_EXIT_PX[0],
+    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_EXIT_PX[1],
+];
 /// Which seats a full-screen view is currently drawing from the LOD.
 static mut CAR_FAR_LOD: [bool; SEATS] = [false; SEATS];
 
@@ -5684,8 +5696,8 @@ fn draw_cars(
             lod_far(
                 unsafe { &mut CAR_FAR_LOD[seat] },
                 depth,
-                CAR_LOD_ENTER_DEPTH,
-                CAR_LOD_EXIT_DEPTH,
+                CAR_LOD_ENTER_DEPTH[seat],
+                CAR_LOD_EXIT_DEPTH[seat],
             )
         };
         let which = if far { which + CAR_COUNT } else { which };
