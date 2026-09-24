@@ -1297,10 +1297,39 @@ fn build_lighting() {
 
 /// Lay out the wall perimeter. Same order the old `walls` loop drew it in;
 /// pulling it into a table is what lets the light bake index a span.
+/// Where a span splits into one, two or three columns, and the slice of the
+/// panel and cover U ranges each column carries.
+#[derive(Copy, Clone)]
+struct SpanSplit {
+    x: [i32; 4],
+    z: [i32; 4],
+    panel_u: [u8; 4],
+    cover_u: [u8; 4],
+}
+const EMPTY_SPLIT: SpanSplit = SpanSplit {
+    x: [0; 4],
+    z: [0; 4],
+    panel_u: [0; 4],
+    cover_u: [0; 4],
+};
+static mut SPAN_SPLITS: [[SpanSplit; 3]; SPAN_COUNT] = [[EMPTY_SPLIT; 3]; SPAN_COUNT];
+
 fn build_spans() {
     let mut i = 0;
     let mut put = |a: (i32, i32), b: (i32, i32), n: (i32, i32)| {
         unsafe { SPANS[i] = Span { a, b, n } };
+        let span_len = isqrt_i32((b.0 - a.0) * (b.0 - a.0) + (b.1 - a.1) * (b.1 - a.1));
+        let cover_u = cover_texels(span_len) as i32;
+        for splits in 1..=3i32 {
+            let mut out = EMPTY_SPLIT;
+            for k in 0..=splits as usize {
+                out.x[k] = a.0 + (b.0 - a.0) * k as i32 / splits;
+                out.z[k] = a.1 + (b.1 - a.1) * k as i32 / splits;
+                out.panel_u[k] = (64 + 32 * k as i32 / splits).min(95) as u8;
+                out.cover_u[k] = (COVER_U0 as i32 + cover_u * k as i32 / splits) as u8;
+            }
+            unsafe { SPAN_SPLITS[i][splits as usize - 1] = out };
+        }
         i += 1;
     };
     let step = CORNER_Z * 2 / WALL_SEGS;
@@ -4685,16 +4714,14 @@ impl Builder<'_> {
         // U range it carries. Once per span: this used to be recomputed for
         // every quad of every ring, which on a three-way split is a hundred
         // integer divides for four distinct answers.
-        let span_len = isqrt_i32((b.0 - a.0) * (b.0 - a.0) + (b.1 - a.1) * (b.1 - a.1));
-        let cover_u = cover_texels(span_len) as i32;
-        let (mut sx, mut sz, mut panel_u, mut cover_us) =
-            ([0i32; 4], [0i32; 4], [0u8; 4], [0u8; 4]);
-        for i in 0..=splits as usize {
-            sx[i] = a.0 + (b.0 - a.0) * i as i32 / splits;
-            sz[i] = a.1 + (b.1 - a.1) * i as i32 / splits;
-            panel_u[i] = (64 + 32 * i as i32 / splits).min(95) as u8;
-            cover_us[i] = (COVER_U0 as i32 + cover_u * i as i32 / splits) as u8;
-        }
+        // Now once per span at boot (`build_spans`): per frame, the divides
+        // and the square root were 25 DIVs a visible span.
+        let SpanSplit {
+            x: sx,
+            z: sz,
+            panel_u,
+            cover_u: cover_us,
+        } = unsafe { SPAN_SPLITS[si][splits as usize - 1] };
         // Rings of the sweep. Keep every ring in split-screen as well as full
         // screen: skipping alternate samples did not merely reduce detail. It
         // jumped over the floor curve's vertical tangent and joined a point on
