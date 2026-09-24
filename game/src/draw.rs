@@ -924,6 +924,7 @@ struct Span {
 }
 
 const SPAN_COUNT: usize = WALL_SEGS as usize * 2 + 8;
+
 static mut SPANS: [Span; SPAN_COUNT] = [Span {
     a: (0, 0),
     b: (0, 0),
@@ -1293,6 +1294,18 @@ const MARKED_RIGHT_PACKET: TexturedGouraudPacketMaterial = TextureMaterial::new(
 )
 .with_dither(true)
 .textured_gouraud_packet_material();
+/// The end markings' six unique tiles live in the base page, drawn through
+/// the marked-grass palette.
+const END_PACKET: TexturedGouraudPacketMaterial =
+    TextureMaterial::new(MARKED_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+        .with_dither(true)
+        .textured_gouraud_packet_material();
+/// Base-page origin of each unique end tile (tools/cook-arena
+/// `END_TILE_ORIGINS`), indexed `row * 3 + column - 1` for pitch columns
+/// 1..=3 of the two rows nearest the -Z goal. The other three columns and
+/// the +Z end are the same tiles mirrored through their UVs.
+const END_TILE_ORIGINS: [(i32, i32); 6] = [(128, 128), (192, 128), (0, 144), (128, 192), (192, 192), (64, 144)];
+const END_ROWS: i32 = 2;
 /// Additive (B + F): light added to the frame rather than averaged into it. A
 /// lit object can only ever brighten what it covers. The blend lives in the
 /// material, which owns the tpage word's blend bits.
@@ -3624,7 +3637,8 @@ impl Builder<'_> {
         gz: usize,
         tex_u0: i32,
         tex_v0: i32,
-        tex_w: i32,
+        du: i32,
+        dv: i32,
         packet: TexturedGouraudPacketMaterial,
     ) {
         count_offered!();
@@ -3656,8 +3670,8 @@ impl Builder<'_> {
                 *r1.get_unchecked(gz + stride),
             ]
         };
-        let (u0, v0, last) = (tex_u0 as u8, tex_v0 as u8, (tex_w - 1) as u8);
-        let (u1, v1) = (u0 + last, v0 + last);
+        let (u0, v0) = (tex_u0 as u8, tex_v0 as u8);
+        let (u1, v1) = ((tex_u0 + du) as u8, (tex_v0 + dv) as u8);
         let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
         self.quad_tex_words(sp, z_sum, uvs, tints, FLOOR_BIAS, packet, false);
     }
@@ -3714,6 +3728,29 @@ impl Builder<'_> {
                 } else {
                     (0, 0, GRASS_TILE_W, GRASS_PACKET)
                 };
+                // The two rows at each end carry the goal boxes. Mirrored
+                // columns and the far end run their UVs backwards from the
+                // tile's last texel.
+                let end_row = if iz < END_ROWS {
+                    iz
+                } else {
+                    TILES_Z - 1 - iz
+                };
+                let end_col = if ix < TILES_X / 2 { ix } else { TILES_X - 1 - ix };
+                let (tex_u0, tex_v0, packet, flip_u, flip_v) =
+                    if end_row < END_ROWS && (1..=3).contains(&end_col) {
+                        let (u0, v0) = END_TILE_ORIGINS[(end_row * 3 + end_col - 1) as usize];
+                        let (fu, fv) = (ix >= TILES_X / 2, iz >= TILES_Z / 2);
+                        (
+                            if fu { u0 + tex_w - 1 } else { u0 },
+                            if fv { v0 + tex_w - 1 } else { v0 },
+                            END_PACKET,
+                            fu,
+                            fv,
+                        )
+                    } else {
+                        (tex_u0, tex_v0, packet, false, false)
+                    };
 
                 // Most of the pitch is one-quad tiles, and the general path
                 // below charges each of them the full grid machinery (a 5x5
@@ -3722,8 +3759,20 @@ impl Builder<'_> {
                 // four projections, one emit. Pixel-identical, and an n == 1
                 // tile never conforms, so nothing else changes.
                 if n == 1 {
+                    let last = tex_w - 1;
                     self.floor_tile_far(
-                        x0, z0, x1, z1, light, gx, gz, tex_u0, tex_v0, tex_w, packet,
+                        x0,
+                        z0,
+                        x1,
+                        z1,
+                        light,
+                        gx,
+                        gz,
+                        tex_u0,
+                        tex_v0,
+                        if flip_u { -last } else { last },
+                        if flip_v { -last } else { last },
+                        packet,
                     );
                     continue;
                 }
@@ -3732,7 +3781,9 @@ impl Builder<'_> {
                 // texture keeps its scale and only the vertex count goes up.
                 let px = |i: i32| x0 + (x1 - x0) * i / n;
                 let pz = |i: i32| z0 + (z1 - z0) * i / n;
-                let u = |base: i32, i: i32| (base + (tex_w * i / n).min(tex_w - 1)) as u8;
+                let step = |i: i32| (tex_w * i / n).min(tex_w - 1);
+                let u = |i: i32| (if flip_u { tex_u0 - step(i) } else { tex_u0 + step(i) }) as u8;
+                let v = |i: i32| (if flip_v { tex_v0 - step(i) } else { tex_v0 + step(i) }) as u8;
 
                 // Project the tile's corner grid once. Every interior corner
                 // is shared by four sub-quads, so projecting per quad ran the
@@ -3789,7 +3840,7 @@ impl Builder<'_> {
                 }
 
                 for sx in 0..nu {
-                    let (ua, ub) = (u(tex_u0, sx as i32), u(tex_u0, sx as i32 + 1));
+                    let (ua, ub) = (u(sx as i32), u(sx as i32 + 1));
                     // Rows of the light table, resolved once per column of
                     // sub-tiles. Unchecked because the grid is sized from the
                     // same constants the loop bounds are, and a bounds check
@@ -3816,7 +3867,7 @@ impl Builder<'_> {
                             continue;
                         }
                         count_kept!();
-                        let (va, vb) = (u(tex_v0, sz as i32), u(tex_v0, sz as i32 + 1));
+                        let (va, vb) = (v(sz as i32), v(sz as i32 + 1));
                         let uvs = [uvw(ua, va), uvw(ub, va), uvw(ua, vb), uvw(ub, vb)];
                         let (j0, j1) = (gz + sz * stride, gz + (sz + 1) * stride);
                         let tints = unsafe {

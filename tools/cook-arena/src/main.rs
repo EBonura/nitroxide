@@ -48,6 +48,36 @@ const GLOW_U0: usize = 0;
 const GLOW_V0: usize = NET_V0 + NET_H;
 const GLOW_W: usize = 32;
 const CHALK_INDEX: u8 = 15;
+/// The markings at each end: a goal box, a larger box and the arc on its
+/// front edge, the way Mannfield's pitch reads from the chase camera. Both
+/// ends and both halves of each end are mirror images, and the floor draws
+/// them from six unique tiles by flipping UVs, so they fit in the base page's
+/// free space instead of two more 64 KB marked pages.
+const END_TILE_W: usize = 64;
+/// Base-page texel origin of each unique end tile, indexed `row * 3 + col - 1`
+/// for pitch columns 1..=3 of rows 0..=1 at the -Z end.
+const END_TILE_ORIGINS: [(usize, usize); 6] = [
+    (128, 128),
+    (192, 128),
+    (0, 144),
+    (128, 192),
+    (192, 192),
+    (64, 144),
+];
+const GOAL_BOX_HALF_W: i32 = 1300;
+const GOAL_BOX_DEPTH: i32 = 700;
+const BIG_BOX_HALF_W: i32 = 2300;
+const BIG_BOX_DEPTH: i32 = 1650;
+const ARC_CENTRE: i32 = 1100;
+const ARC_R: i32 = 860;
+const END_LINE_HALF_W: i32 = 40;
+/// The floor's own geometry, which the texels have to land on: the pitch
+/// stops a ramp radius in from the walls except across a goal mouth, and the
+/// corners are chamfered (draw.rs `Builder::chamfer`).
+const GOAL_HALF_W: i32 = 893;
+const RAMP_R: i32 = 260;
+const CORNER: i32 = 8064;
+const FLOOR_CELL_UU: i32 = 256;
 const CHALK: [u8; 3] = [205, 220, 210];
 
 const ARENA_PALETTE: [[u8; 3]; CLUT_ENTRIES] = [
@@ -224,6 +254,8 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
                 && (GLOW_V0..GLOW_V0 + GLOW_W).contains(&y)
             {
                 glow_index(x - GLOW_U0, y - GLOW_V0)
+            } else if let Some(index) = end_marked_index(x, y, &marked_grass_indices) {
+                index
             } else if x >= COVER_U0 {
                 0
             } else if x >= GRASS_W && y < GRASS_W {
@@ -308,6 +340,72 @@ fn marked_pitch_index(px: usize, py: usize, grass: &[u8]) -> u8 {
     } else {
         grass_index
     }
+}
+
+/// A texel of one of the six unique end tiles, or `None` outside them.
+fn end_marked_index(px: usize, py: usize, grass: &[u8]) -> Option<u8> {
+    let (slot, &(u0, v0)) = END_TILE_ORIGINS.iter().enumerate().find(|(_, &(u0, v0))| {
+        (u0..u0 + END_TILE_W).contains(&px) && (v0..v0 + END_TILE_W).contains(&py)
+    })?;
+    let (lx, lz) = (px - u0, py - v0);
+    let (col, row) = (slot % 3 + 1, slot / 3);
+    let (x, z) = end_texel_world(col as i32, row as i32, lx as i32, lz as i32);
+    Some(if end_chalk(x, z + PITCH_HALF_Z) {
+        CHALK_INDEX
+    } else {
+        grass[lz * GRASS_W + lx]
+    })
+}
+
+/// Where the floor draws a texel of tile (`col`, `row`): the renderer
+/// splits a near tile into 256-uu cells whose corners it pulls onto the
+/// chamfered pitch outline and maps the texture across each cell affinely,
+/// so interpolate the texel's position between its cell's pulled corners.
+fn end_texel_world(col: i32, row: i32, lx: i32, lz: i32) -> (i32, i32) {
+    let per_cell = END_TILE_W as i32 * FLOOR_CELL_UU / PITCH_TILE_UU;
+    let x0 = -PITCH_HALF_X + col * PITCH_TILE_UU + lx / per_cell * FLOOR_CELL_UU;
+    let z0 = -PITCH_HALF_Z + row * PITCH_TILE_UU + lz / per_cell * FLOOR_CELL_UU;
+    // Texel centre within the cell, in 1/(2 * per_cell) steps.
+    let (fx, fz) = ((lx % per_cell) * 2 + 1, (lz % per_cell) * 2 + 1);
+    let den = 2 * per_cell;
+    let c = |dx: i32, dz: i32| floor_chamfer(x0 + dx * FLOOR_CELL_UU, z0 + dz * FLOOR_CELL_UU);
+    let (a, b, cc, d) = (c(0, 0), c(1, 0), c(0, 1), c(1, 1));
+    let lerp = |p: i32, q: i32, t: i32| p + (q - p) * t / den;
+    let top = (lerp(a.0, b.0, fx), lerp(a.1, b.1, fx));
+    let bottom = (lerp(cc.0, d.0, fx), lerp(cc.1, d.1, fx));
+    (lerp(top.0, bottom.0, fz), lerp(top.1, bottom.1, fz))
+}
+
+/// draw.rs `Builder::chamfer`, point for point.
+fn floor_chamfer(x: i32, z: i32) -> (i32, i32) {
+    let foot_x = PITCH_HALF_X - RAMP_R;
+    let foot_z = if x.abs() < GOAL_HALF_W {
+        PITCH_HALF_Z
+    } else {
+        PITCH_HALF_Z - RAMP_R
+    };
+    let (x, z) = (x.clamp(-foot_x, foot_x), z.clamp(-foot_z, foot_z));
+    let limit = CORNER - (RAMP_R * 5793 >> 12);
+    let sum = x.abs() + z.abs();
+    if sum <= limit {
+        (x, z)
+    } else {
+        (x * limit / sum, z * limit / sum)
+    }
+}
+
+/// Chalk at `x` across the pitch and `d` in from the -Z goal line.
+fn end_chalk(x: i32, d: i32) -> bool {
+    let ax = x.abs();
+    let w = END_LINE_HALF_W;
+    let rect = |half_w: i32, depth: i32| {
+        let side = (ax - half_w).abs() <= w && (0..=depth + w).contains(&d);
+        let front = (d - depth).abs() <= w && ax <= half_w + w;
+        side || front
+    };
+    let r = isqrt(x * x + (d - ARC_CENTRE) * (d - ARC_CENTRE));
+    let arc = (r - ARC_R).abs() <= w && d > BIG_BOX_DEPTH + w;
+    rect(GOAL_BOX_HALF_W, GOAL_BOX_DEPTH) || rect(BIG_BOX_HALF_W, BIG_BOX_DEPTH) || arc
 }
 
 fn honeycomb_index(px: i32, py: i32) -> u8 {
@@ -462,5 +560,25 @@ mod tests {
         assert_eq!(marked_pitch_index(71, 640, &grass), CHALK_INDEX);
         // A point between the stripe and ring remains ordinary grass.
         assert_eq!(marked_pitch_index(0, 620, &grass), 3);
+    }
+
+    #[test]
+    fn end_tiles_carry_the_boxes_and_arc() {
+        // Every chalk texel an end needs lies in the six unique tiles:
+        // columns 1..=3, rows 0..=1, and nothing reaches row 2.
+        for x in -PITCH_HALF_X..0 {
+            for d in 0..3 * PITCH_TILE_UU {
+                if end_chalk(x, d) {
+                    let (col, row) = ((x + PITCH_HALF_X) / PITCH_TILE_UU, d / PITCH_TILE_UU);
+                    assert!((1..=3).contains(&col) && row <= 1, "chalk at x {x} d {d}");
+                }
+            }
+        }
+        let grass = vec![3u8; GRASS_W * GRASS_W];
+        // The goal box's front line crosses tile (3, 0) at d = 700, texel 43.
+        let (u0, v0) = END_TILE_ORIGINS[2];
+        assert_eq!(end_marked_index(u0 + 32, v0 + 43, &grass), Some(CHALK_INDEX));
+        assert_eq!(end_marked_index(u0 + 32, v0 + 30, &grass), Some(3));
+        assert_eq!(end_marked_index(0, 0, &grass), None);
     }
 }
