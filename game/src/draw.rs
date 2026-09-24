@@ -930,10 +930,10 @@ const SPAN_COUNT: usize = WALL_SEGS as usize * 2 + 8;
 /// back edge high and far out, and it runs all the way round the octagon,
 /// over both goals, as one ring of pieces: eight along each side, one per
 /// corner and three along each end (the middle one over the goal).
-const STAND_IN: i32 = 160;
-const STAND_OUT: i32 = 1900;
-const STAND_Y_IN: i32 = 420;
-const STAND_Y_OUT: i32 = 1700;
+const STAND_IN: i32 = 600;
+const STAND_OUT: i32 = 2300;
+const STAND_Y_IN: i32 = 560;
+const STAND_Y_OUT: i32 = 1850;
 /// Crowd texels per uu along the front edge: 16 uu a texel, the pitch's.
 const STAND_UU_PER_TEXEL: i32 = 16;
 const STAND_COUNT: usize = 2 * WALL_SEGS as usize + 4 + 2 * 3;
