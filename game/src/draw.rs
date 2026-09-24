@@ -5470,6 +5470,15 @@ impl Builder<'_> {
         let mut sp = [[(0i16, 0i16); BALL_LON]; 2];
         let mut sz = [[0i32; BALL_LON]; 2];
         let project_row = |j: usize, sp: &mut [(i16, i16); BALL_LON], sz: &mut [i32; BALL_LON]| {
+            // The first and last rows are the poles: sixteen copies of one
+            // point. Project it once.
+            if j == 0 || j == BALL_LAT {
+                let v = mesh[j][0];
+                let p = project(Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16));
+                *sp = [(p.sx, p.sy); BALL_LON];
+                *sz = [p.sz as i32; BALL_LON];
+                return;
+            }
             // Project only the columns the quad loop below reads: a split
             // view was projecting all sixteen and then drawing every other
             // one, throwing half the GTE work away.
@@ -5480,6 +5489,17 @@ impl Builder<'_> {
                 sz[i] = p.sz as i32;
             }
         };
+        // The eye direction in the ball's own frame, once (the rotation's
+        // transpose is its inverse), so the cull below is one dot product
+        // against a facet's object-space normal. Rotating every facet's
+        // normal into the world first cost nine multiplies a facet, and half
+        // the facets are then thrown away.
+        let wm = &world.m;
+        let to_cam_local = (
+            (wm[0][0] as i32 * to_cam.0 + wm[1][0] as i32 * to_cam.1 + wm[2][0] as i32 * to_cam.2) >> 12,
+            (wm[0][1] as i32 * to_cam.0 + wm[1][1] as i32 * to_cam.1 + wm[2][1] as i32 * to_cam.2) >> 12,
+            (wm[0][2] as i32 * to_cam.0 + wm[1][2] as i32 * to_cam.1 + wm[2][2] as i32 * to_cam.2) >> 12,
+        );
         project_row(0, &mut sp[0], &mut sz[0]);
         for j in 0..BALL_LAT {
             let (lo, hi) = (j & 1, (j + 1) & 1);
@@ -5494,20 +5514,18 @@ impl Builder<'_> {
                 let (a, b) = (mesh[j][i], mesh[j][i2]);
                 let (c, d) = (mesh[j + 1][i], mesh[j + 1][i2]);
                 let k = 1024 / sim::BALL_R.max(1);
-                let n = apply(
-                    &world,
-                    (
-                        (a.0 + b.0 + c.0 + d.0) * k,
-                        (a.1 + b.1 + c.1 + d.1) * k,
-                        (a.2 + b.2 + c.2 + d.2) * k,
-                    ),
+                let local = (
+                    (a.0 + b.0 + c.0 + d.0) * k,
+                    (a.1 + b.1 + c.1 + d.1) * k,
+                    (a.2 + b.2 + c.2 + d.2) * k,
                 );
                 // Facing away: behind the front of the ball, always. Tested
                 // before the lighting and the packet, so a culled facet costs
                 // one dot product and nothing else.
-                if n.0 * to_cam.0 + n.1 * to_cam.1 + n.2 * to_cam.2 <= 0 {
+                if local.0 * to_cam_local.0 + local.1 * to_cam_local.1 + local.2 * to_cam_local.2 <= 0 {
                     continue;
                 }
+                let n = apply(&world, local);
                 let dot = (n.0 * BALL_LIGHT.0 + n.1 * BALL_LIGHT.1 + n.2 * BALL_LIGHT.2) >> 12;
                 let lit = (2500 + dot / 2).clamp(1100, 4096);
                 // Panels: two facets wide, staggered a third of the way round
