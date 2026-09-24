@@ -64,6 +64,15 @@ const END_TILE_ORIGINS: [(usize, usize); 6] = [
     (192, 192),
     (64, 144),
 ];
+/// The crowd behind the enclosure (draw.rs `Builder::stands`): tiers of
+/// fans below the honeycomb's rows, drawn through one of two per-frame
+/// palettes whose entries 12..=14 are the team's colour and 15 the lit fascia
+/// along the front tier. Four texel rows a tier: heads, two of shirts, the
+/// step behind them. No entry is black, so nothing in it is a hole.
+const CROWD_U0: usize = 128;
+const CROWD_V0: usize = 88;
+const CROWD_W: usize = 128;
+const CROWD_H: usize = 40;
 const GOAL_BOX_HALF_W: i32 = 1300;
 const GOAL_BOX_DEPTH: i32 = 700;
 const BIG_BOX_HALF_W: i32 = 2300;
@@ -254,6 +263,10 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
                 && (GLOW_V0..GLOW_V0 + GLOW_W).contains(&y)
             {
                 glow_index(x - GLOW_U0, y - GLOW_V0)
+            } else if (CROWD_U0..CROWD_U0 + CROWD_W).contains(&x)
+                && (CROWD_V0..CROWD_V0 + CROWD_H).contains(&y)
+            {
+                crowd_index(x - CROWD_U0, y - CROWD_V0)
             } else if let Some(index) = end_marked_index(x, y, &marked_grass_indices) {
                 index
             } else if x >= COVER_U0 {
@@ -339,6 +352,31 @@ fn marked_pitch_index(px: usize, py: usize, grass: &[u8]) -> u8 {
         CHALK_INDEX
     } else {
         grass_index
+    }
+}
+
+/// A texel of the crowd tile. A fixed hash picks each seat's fan, so the cook
+/// is reproducible.
+fn crowd_index(px: usize, py: usize) -> u8 {
+    if py >= CROWD_H - 2 {
+        return 15;
+    }
+    let (tier, sub) = (py / 4, py % 4);
+    let seat = px / 2;
+    let hash = |salt: usize| {
+        let mut h = (seat as u32 ^ (tier as u32) << 8 ^ (salt as u32) << 16).wrapping_mul(0x9E37_79B9);
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x85EB_CA6B);
+        (h ^ (h >> 13)) % 100
+    };
+    let empty = hash(1) < 12;
+    match sub {
+        3 => 1,
+        _ if empty => [0, 1, 0][sub],
+        // The two texels of a seat's head differ a little: a face and hair.
+        0 => [4, 5, 3][(hash(2) as usize + px % 2) % 3],
+        _ if hash(3) < 48 => 12 + (hash(4) % 3) as u8,
+        _ => [2, 6, 7, 8, 9, 10, 11, 3][(hash(5) % 8) as usize],
     }
 }
 

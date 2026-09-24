@@ -925,6 +925,141 @@ struct Span {
 
 const SPAN_COUNT: usize = WALL_SEGS as usize * 2 + 8;
 
+/// The stands: a tiered slope outside the enclosure, seen through the
+/// honeycomb. Its front edge stands just behind the wall above the rail, its
+/// back edge high and far out, and it runs all the way round the octagon,
+/// over both goals, as one ring of pieces: eight along each side, one per
+/// corner and three along each end (the middle one over the goal).
+const STAND_IN: i32 = 160;
+const STAND_OUT: i32 = 1900;
+const STAND_Y_IN: i32 = 420;
+const STAND_Y_OUT: i32 = 1700;
+/// Crowd texels per uu along the front edge: 16 uu a texel, the pitch's.
+const STAND_UU_PER_TEXEL: i32 = 16;
+const STAND_COUNT: usize = 2 * WALL_SEGS as usize + 4 + 2 * 3;
+/// The deepest slot but the sky's. The stands are the inside of a convex
+/// bowl seen from within it, so no piece hides another and they need no
+/// sorting; everything in the arena is in front of them.
+const STAND_SLOT: usize = SKY_SLOT - 1;
+const STAND_TINT_IN: Rgb = (118, 118, 126);
+const STAND_TINT_OUT: Rgb = (72, 72, 88);
+
+#[derive(Copy, Clone)]
+struct Stand {
+    /// The piece's vertex grid at its finest: three rows from the front edge
+    /// (at `STAND_IN`, low) to the back edge (`STAND_OUT`, high), four
+    /// columns along it. A far piece draws the grid's corners only.
+    grid: [[Vec3I16; 4]; 3],
+    /// Box centre and half extents for the cull.
+    centre: (i32, i32, i32),
+    half: (i32, i32, i32),
+    /// U at each grid column, and which end's palette the piece uses.
+    u: [u8; 4],
+    team: u8,
+}
+static mut STANDS: [Stand; STAND_COUNT] = [Stand {
+    grid: [[Vec3I16::ZERO; 4]; 3],
+    centre: (0, 0, 0),
+    half: (0, 0, 0),
+    u: [0; 4],
+    team: 0,
+}; STAND_COUNT];
+
+/// Lay the stand ring out once at boot. Each octagon vertex moves out along
+/// its mitre, so neighbouring pieces meet with no gap at the corners.
+fn build_stands() {
+    const D: i32 = 2896; // 4096 / sqrt(2)
+    let (hx, hz, cx, cz) = (sim::HALF_X, sim::HALF_Z, CORNER_X, CORNER_Z);
+    // Octagon vertices, and the outward normal of the edge leaving each.
+    let verts = [
+        (-hx, -cz),
+        (-hx, cz),
+        (-cx, hz),
+        (cx, hz),
+        (hx, cz),
+        (hx, -cz),
+        (cx, -hz),
+        (-cx, -hz),
+    ];
+    let normals = [
+        (-4096, 0),
+        (-D, D),
+        (0, 4096),
+        (D, D),
+        (4096, 0),
+        (D, -D),
+        (0, -4096),
+        (-D, -D),
+    ];
+    let mitre = |i: usize, o: i32| {
+        let (n1, n2) = (normals[(i + 7) % 8], normals[i]);
+        let dot = (n1.0 * n2.0 + n1.1 * n2.1) >> 12;
+        let den = 4096 + dot;
+        let v = verts[i];
+        (
+            v.0 + (n1.0 + n2.0) * o / den,
+            v.1 + (n1.1 + n2.1) * o / den,
+        )
+    };
+    let lerp = |a: (i32, i32), b: (i32, i32), t: i32, den: i32| {
+        (a.0 + (b.0 - a.0) * t / den, a.1 + (b.1 - a.1) * t / den)
+    };
+    let mut k = 0;
+    for e in 0..8 {
+        let (f0, f1) = (mitre(e, STAND_IN), mitre((e + 1) % 8, STAND_IN));
+        let (b0, b1) = (mitre(e, STAND_OUT), mitre((e + 1) % 8, STAND_OUT));
+        // Split points along the edge, as fractions of 4096.
+        let side = [0, 512, 1024, 1536, 2048, 2560, 3072, 3584, 4096];
+        let goal_t = (cx - sim::GOAL_HALF_W) * 4096 / (2 * cx);
+        let end = [0, goal_t, 4096 - goal_t, 4096];
+        let cuts: &[i32] = match e {
+            0 | 4 => &side,
+            2 | 6 => &end,
+            _ => &[0, 4096],
+        };
+        for w in cuts.windows(2) {
+            let front = [lerp(f0, f1, w[0], 4096), lerp(f0, f1, w[1], 4096)];
+            let back = [lerp(b0, b1, w[0], 4096), lerp(b0, b1, w[1], 4096)];
+            let pts = [front[0], front[1], back[0], back[1]];
+            let (mut x0, mut x1, mut z0, mut z1) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+            for p in pts {
+                x0 = x0.min(p.0);
+                x1 = x1.max(p.0);
+                z0 = z0.min(p.1);
+                z1 = z1.max(p.1);
+            }
+            let (dx, dz) = (front[1].0 - front[0].0, front[1].1 - front[0].1);
+            let len = isqrt_i32(dx * dx + dz * dz);
+            let texels = (len / STAND_UU_PER_TEXEL).clamp(1, 127);
+            let mut grid = [[Vec3I16::ZERO; 4]; 3];
+            for (j, row) in grid.iter_mut().enumerate() {
+                let j = j as i32;
+                let a = lerp(front[0], back[0], j, 2);
+                let b = lerp(front[1], back[1], j, 2);
+                let y = -(STAND_Y_IN + (STAND_Y_OUT - STAND_Y_IN) * j / 2);
+                for (i, p) in row.iter_mut().enumerate() {
+                    let (x, z) = lerp(a, b, i as i32, 3);
+                    *p = Vec3I16::new(x as i16, y as i16, z as i16);
+                }
+            }
+            let u = core::array::from_fn(|i| (CROWD_U0 + texels * i as i32 / 3) as u8);
+            unsafe {
+                STANDS[k] = Stand {
+                    grid,
+                    centre: ((x0 + x1) / 2, -(STAND_Y_IN + STAND_Y_OUT) / 2, (z0 + z1) / 2),
+                    half: (
+                        (x1 - x0) / 2,
+                        (STAND_Y_OUT - STAND_Y_IN) / 2,
+                        (z1 - z0) / 2,
+                    ),
+                    u,
+                    team: ((z0 + z1) > 0) as u8,
+                };
+            }
+            k += 1;
+        }
+    }
+}
 static mut SPANS: [Span; SPAN_COUNT] = [Span {
     a: (0, 0),
     b: (0, 0),
@@ -1306,6 +1441,20 @@ const END_PACKET: TexturedGouraudPacketMaterial =
 /// the +Z end are the same tiles mirrored through their UVs.
 const END_TILE_ORIGINS: [(i32, i32); 6] = [(128, 128), (192, 128), (0, 144), (128, 192), (192, 192), (64, 144)];
 const END_ROWS: i32 = 2;
+/// The crowd tile (tools/cook-arena `CROWD_*`): tiers of fans under the
+/// honeycomb's rows in the base page, the front tier's fascia at the bottom.
+const CROWD_U0: i32 = 128;
+const CROWD_V0: u8 = 88;
+const CROWD_H: u8 = 40;
+const CROWD_CLUTS: [Clut; 2] = [Clut::new(384, 265), Clut::new(384, 266)];
+const CROWD_PACKETS: [TexturedGouraudPacketMaterial; 2] = [
+    TextureMaterial::new(CROWD_CLUTS[0].uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+        .with_dither(true)
+        .textured_gouraud_packet_material(),
+    TextureMaterial::new(CROWD_CLUTS[1].uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+        .with_dither(true)
+        .textured_gouraud_packet_material(),
+];
 /// Additive (B + F): light added to the frame rather than averaged into it. A
 /// lit object can only ever brighten what it covers. The blend lives in the
 /// material, which owns the tpage word's blend bits.
@@ -1679,6 +1828,58 @@ impl ClutLoad {
 }
 /// One per packet set: the other set's table may still be in flight.
 static mut PAD_CLUT_LOAD: [ClutLoad; 2] = [ClutLoad::EMPTY; 2];
+/// The crowd's two palettes, one per end, loaded every frame the same way:
+/// they carry the teams' colours and a shimmer through the fans.
+static mut CROWD_CLUT_LOAD: [[ClutLoad; 2]; 2] = [const { [ClutLoad::EMPTY, ClutLoad::EMPTY] }; 2];
+
+/// Crowd palette entries that are not team colour (tools/cook-arena's crowd
+/// tile indexes them): seat shadow, tier step, clothes and faces.
+const CROWD_BASE: [Rgb; 12] = [
+    (18, 18, 26),
+    (30, 30, 40),
+    (52, 46, 44),
+    (90, 70, 60),
+    (150, 120, 100),
+    (200, 170, 140),
+    (60, 60, 80),
+    (110, 110, 130),
+    (180, 180, 190),
+    (140, 40, 40),
+    (40, 90, 60),
+    (210, 200, 80),
+];
+
+/// One end's crowd palette this frame: entries 12..14 are fans in the team's
+/// colour at three strengths, rotated every few frames so the stand
+/// shimmers, and 15 is the lit fascia along the front tier.
+fn crowd_clut(seat: usize, tick: u32) -> [u32; 8] {
+    let c = seat_signal(seat);
+    let half = |c: Rgb| -> u16 {
+        let (r, g, b) = ((c.0 as u16 >> 3).max(1), c.1 as u16 >> 3, c.2 as u16 >> 3);
+        r | (g << 5) | (b << 10)
+    };
+    let scale = |k: i32| {
+        (
+            (c.0 as i32 * k >> 4) as u8,
+            (c.1 as i32 * k >> 4) as u8,
+            (c.2 as i32 * k >> 4) as u8,
+        )
+    };
+    let phase = (tick / 6 % 3) as usize;
+    const SHADES: [i32; 3] = [16, 11, 7];
+    let mut words = [0u32; 8];
+    for (k, w) in words.iter_mut().enumerate() {
+        let entry = |i: usize| -> u16 {
+            match i {
+                0..=11 => half(CROWD_BASE[i]),
+                12..=14 => half(scale(SHADES[(i - 12 + phase) % 3])),
+                _ => half(mix(c, (255, 255, 255), 5)),
+            }
+        };
+        *w = entry(2 * k) as u32 | ((entry(2 * k + 1) as u32) << 16);
+    }
+    words
+}
 
 /// The pad rings at rest (mirrors `tools/cook-arena`'s `pad_palette`), index
 /// 15 the centre and 1 the rim.
@@ -1909,6 +2110,7 @@ pub fn setup() {
     scene::set_projection_plane(PROJ_H);
     build_meshes();
     build_spans();
+    build_stands();
     build_lighting();
     build_car_materials();
 }
@@ -4594,6 +4796,69 @@ impl Builder<'_> {
         }
     }
 
+    /// The stands behind the enclosure. A near piece is drawn from its full
+    /// three-by-two grid, the way near wall spans are split, so a piece
+    /// beside the camera keeps the part in front of the near plane and the
+    /// crowd does not swim; a far one is a single quad on the grid corners.
+    fn stands(&mut self, cull: &Cull) {
+        // Front row on the tile's last row, the fascia; back on its first.
+        const V: [u8; 3] = [CROWD_V0 + CROWD_H - 1, CROWD_V0 + (CROWD_H - 1) / 2, CROWD_V0];
+        const TINT: [Rgb; 3] = [
+            STAND_TINT_IN,
+            (
+                ((STAND_TINT_IN.0 as u16 + STAND_TINT_OUT.0 as u16) / 2) as u8,
+                ((STAND_TINT_IN.1 as u16 + STAND_TINT_OUT.1 as u16) / 2) as u8,
+                ((STAND_TINT_IN.2 as u16 + STAND_TINT_OUT.2 as u16) / 2) as u8,
+            ),
+            STAND_TINT_OUT,
+        ];
+        for st in unsafe { STANDS.iter() } {
+            if !cull.visible(st.centre, st.half) || !cull.visible_vertically(st.centre, st.half) {
+                continue;
+            }
+            let near = Self::floor_split(cull.flat_distance(st.centre.0, st.centre.2)) > 2;
+            let (cols, rows): (&[usize], &[usize]) =
+                if near { (&[0, 1, 2, 3], &[0, 1, 2]) } else { (&[0, 3], &[0, 2]) };
+            let packet = CROWD_PACKETS[st.team as usize];
+            let mut g = [[None; 4]; 3];
+            for &j in rows {
+                for &i in cols {
+                    let v = project(st.grid[j][i]);
+                    if v.sz != 0 {
+                        g[j][i] = Some((v.sx, v.sy));
+                    }
+                }
+            }
+            for r in rows.windows(2) {
+                let (j0, j1) = (r[0], r[1]);
+                for c in cols.windows(2) {
+                    let (i0, i1) = (c[0], c[1]);
+                    let (Some(p0), Some(p1), Some(p2), Some(p3)) =
+                        (g[j0][i0], g[j0][i1], g[j1][i0], g[j1][i1])
+                    else {
+                        continue;
+                    };
+                    let sp = [p0, p1, p2, p3];
+                    if !quad_overlaps_view(&sp) {
+                        continue;
+                    }
+                    let (u0, u1) = (st.u[i0], st.u[i1]);
+                    let prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
+                        sp,
+                        [uvw(u0, V[j0]), uvw(u1, V[j0]), uvw(u0, V[j1]), uvw(u1, V[j1])],
+                        [TINT[j0], TINT[j0], TINT[j1], TINT[j1]],
+                        packet,
+                    );
+                    if let Some(q) = self.textured.push(prim) {
+                        self.ot.add_packet(STAND_SLOT, q);
+                    } else {
+                        count_overflow!();
+                    }
+                }
+            }
+        }
+    }
+
     /// The floodlights themselves.
     ///
     /// A lighting term with no fixture to point at is just a gradient. Each
@@ -6005,6 +6270,12 @@ fn build_view(
                 load.xy = ((PAD_CLUT.y() as u32) << 16) | PAD_CLUT.x() as u32;
                 load.data = pad_clut(CAMERA_TICK);
                 b.ot.add(SKY_SLOT, load, CLUT_LOAD_WORDS);
+                for (seat, clut) in CROWD_CLUTS.iter().enumerate() {
+                    let load = &mut CROWD_CLUT_LOAD[SET][seat];
+                    load.xy = ((clut.y() as u32) << 16) | clut.x() as u32;
+                    load.data = crowd_clut(seat, CAMERA_TICK);
+                    b.ot.add(SKY_SLOT, load, CLUT_LOAD_WORDS);
+                }
             }
 
             // Sky behind everything: screen-space, no geometry. Sized to the
@@ -6042,6 +6313,7 @@ fn build_view(
         staged!(S_WALLS, {
             on_scratchpad(|| {
                 b.walls(&cull);
+                b.stands(&cull);
                 b.lamps(&cull);
             })
         });
