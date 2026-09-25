@@ -482,28 +482,6 @@ const SHADOW_DEPTH_BIAS: i32 = 60;
 /// forward of the markings.
 const PAD_BIAS: i32 = 30;
 
-/// Boost pad sizes in uu: the small pad's disc (a touch under its 144-uu
-/// pickup radius), and the big pad's plinth half-diagonal, height, orb
-/// height, orb radius and halo radius.
-const SMALL_PAD_R: i32 = 130;
-/// Radius of the light pool baked around each big pad.
-const PAD_POOL_R: i32 = 520;
-const BIG_PAD_R: i32 = 190;
-const BIG_PAD_H: i32 = 44;
-const BIG_PAD_ORB_Y: i32 = 190;
-const BIG_PAD_ORB: i32 = 70;
-const BIG_PAD_HALO: i32 = 190;
-/// Tints for the additive pads. The glow tile is greyscale and the GPU
-/// scales it by these with 128 as 1.0, so they stay under 128 in the channel
-/// that has to keep its ratio or the gold clips to yellow.
-const PAD_GOLD: Rgb = (132, 84, 22);
-const ORB_HOT: Rgb = (150, 118, 60);
-const ORB_HALO: Rgb = (84, 50, 10);
-/// The plinth: dark sides, one pair a little lighter so its corners read,
-/// and a dark top.
-const PLINTH_SIDE: Rgb = (40, 44, 58);
-const PLINTH_SIDE_LIT: Rgb = (58, 62, 78);
-const PLINTH_TOP: Rgb = (50, 52, 64);
 /// Pulls the boost plume in front of the car's own shadow, which otherwise wins
 /// the slot and hides it.
 ///
@@ -1202,17 +1180,6 @@ fn build_lighting() {
                     (226, 152, 74)
                 };
                 let c = mix(c, team, w);
-                // A pool of gold light around each big pad's plinth.
-                let mut c = c;
-                for pad in sim::PADS.iter().filter(|p| p.big) {
-                    let (dx, dz) = (cx - pad.x, cz - pad.z);
-                    let d = isqrt_i32(dx * dx + dz * dz);
-                    if d < PAD_POOL_R {
-                        let w = (PAD_POOL_R - d) * 16 / PAD_POOL_R;
-                        let add = |v: u8, g: i32| (v as i32 + g * w * w / 256).min(255) as u8;
-                        c = (add(c.0, 70), add(c.1, 44), add(c.2, 8));
-                    }
-                }
                 let w = rgbc((
                     ((c.0 as i32 * k) >> 8).clamp(0, 255) as u8,
                     ((c.1 as i32 * k) >> 8).clamp(0, 255) as u8,
@@ -1381,9 +1348,9 @@ const GRASS_CLUT: Clut = Clut::new(384, 258);
 const COVER_CLUT: Clut = Clut::new(384, 259);
 /// Fifteen grass colours plus chalk for the two marked-pitch pages.
 const MARKED_CLUT: Clut = Clut::new(384, 260);
-/// The live boost pad's rings. Rewritten every frame by an upload packet at
-/// the back of the ordering table (see [`pad_clut`]), which is what runs the
-/// ripple through every pad at once without touching a vertex.
+/// The atlas's boost-pad palettes. The pads are untextured orbs again, so
+/// nothing samples these two rows; they are uploaded because the atlas
+/// carries them.
 const PAD_CLUT: Clut = Clut::new(384, 261);
 /// A spent pad: opaque dark plate, no STP.
 const SPENT_CLUT: Clut = Clut::new(384, 262);
@@ -1487,11 +1454,6 @@ const CROWD_PACKETS: [TexturedGouraudPacketMaterial; 2] = [
 /// Additive (B + F): light added to the frame rather than averaged into it. A
 /// lit object can only ever brighten what it covers. The blend lives in the
 /// material, which owns the tpage word's blend bits.
-const PAD_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(PAD_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
-        .with_blend_mode(BlendMode::Add)
-        .with_dither(true)
-        .textured_gouraud_packet_material();
 const GLOW_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(GLOW_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_blend_mode(BlendMode::Add)
@@ -1500,10 +1462,6 @@ const GLOW_PACKET: TexturedGouraudPacketMaterial =
 const RING_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(RING_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_blend_mode(BlendMode::Add)
-        .with_dither(true)
-        .textured_gouraud_packet_material();
-const SPENT_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(SPENT_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
 
@@ -1799,8 +1757,7 @@ const QUADS_INIT: [QuadGouraud; MAX_QUADS] =
 // The roof cover adds at most 96 regular patches to the former worst case.
 // Keep another thirty-two packets of headroom for a near-plane split rather
 // than allowing a high aerial to lose random cells from the enclosure.
-// Spent boost pads are textured plates now: thirty-two more.
-const MAX_TEX_QUADS: usize = 736;
+const MAX_TEX_QUADS: usize = 704;
 static mut TEX_QUADS_SETS: [[QuadTexturedGouraud; MAX_TEX_QUADS]; 2] = [TEX_INIT; 2];
 const TEX_INIT: [QuadTexturedGouraud; MAX_TEX_QUADS] =
     [const { QuadTexturedGouraud::EMPTY }; MAX_TEX_QUADS];
@@ -1822,8 +1779,8 @@ struct GlowQuad {
 /// Data words after the tag: the quad's thirteen and the restore.
 const GLOW_WORDS: u8 = 14;
 const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
-/// Pads (34, plus three a big pad), goal halos and the ball's ring, with room.
-const MAX_GLOWS: usize = 128;
+/// Goal halos (four a goal) and the ball's hoop and disc, with room.
+const MAX_GLOWS: usize = 64;
 static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; 2] = [GLOW_INIT; 2];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
     GlowQuad {
@@ -1855,9 +1812,8 @@ impl ClutLoad {
         flush: 0x0100_0000,
     };
 }
-/// One per packet set: the other set's table may still be in flight.
-static mut PAD_CLUT_LOAD: [ClutLoad; 2] = [ClutLoad::EMPTY; 2];
-/// The crowd's two palettes, one per end, loaded every frame the same way:
+/// The crowd's two palettes, one per end, loaded every frame from inside the
+/// table (one per packet set: the other set's table may still be in flight):
 /// they carry the teams' colours and a shimmer through the fans.
 static mut CROWD_CLUT_LOAD: [[ClutLoad; 2]; 2] = [const { [ClutLoad::EMPTY, ClutLoad::EMPTY] }; 2];
 
@@ -1906,30 +1862,6 @@ fn crowd_clut(seat: usize, tick: u32) -> [u32; 8] {
             }
         };
         *w = entry(2 * k) as u32 | ((entry(2 * k + 1) as u32) << 16);
-    }
-    words
-}
-
-/// The pad rings at rest (mirrors `tools/cook-arena`'s `pad_palette`), index
-/// 15 the centre and 1 the rim.
-const PAD_RINGS: [u8; 16] = [
-    0, 110, 230, 190, 90, 60, 52, 52, 60, 76, 96, 120, 146, 172, 200, 224,
-];
-
-/// This frame's live-pad palette: the resting rings with a ripple running
-/// out from the centre to the rim about twice a second.
-fn pad_clut(tick: u32) -> [u32; 8] {
-    let phase = ((tick / 2) % 18) as i32;
-    let mut half = [0u16; 16];
-    for (i, h) in half.iter_mut().enumerate().skip(1) {
-        let d = 15 - i as i32; // rings out from the centre
-        let lift = (2 - (d - phase).abs()).max(0) * 44;
-        let v = (PAD_RINGS[i] as i32 + lift).min(255) as u16 >> 3;
-        *h = 0x8000 | v | (v << 5) | (v << 10);
-    }
-    let mut words = [0u32; 8];
-    for (k, w) in words.iter_mut().enumerate() {
-        *w = half[2 * k] as u32 | ((half[2 * k + 1] as u32) << 16);
     }
     words
 }
@@ -3589,36 +3521,6 @@ impl Builder<'_> {
         self.emit_glow(sp, z_sum / 4 + bias, Self::GLOW_UVS, tint, packet);
     }
 
-    /// A glow that always faces the camera: a lamp, an orb, a halo. Sized in
-    /// uu at its own depth and held under `max_px` on screen, the way the
-    /// explosion's soft layers are, so one in front of the lens cannot take
-    /// the whole frame.
-    fn glow_sprite(
-        &mut self,
-        c: (i32, i32, i32),
-        r: i32,
-        tint: Rgb,
-        bias: i32,
-        max_px: i16,
-    ) -> bool {
-        let v = project(Vec3I16::new(c.0 as i16, c.1 as i16, c.2 as i16));
-        if v.sz == 0 {
-            return false;
-        }
-        let h = ((r * PROJ_H as i32 / v.sz.max(1) as i32).max(1) as i16).min(max_px);
-        let sp = [
-            (v.sx - h, v.sy - h),
-            (v.sx + h, v.sy - h),
-            (v.sx - h, v.sy + h),
-            (v.sx + h, v.sy + h),
-        ];
-        if !quad_overlaps_view(&sp) {
-            return false;
-        }
-        self.emit_glow(sp, v.sz as i32 + bias, Self::GLOW_UVS, tint, GLOW_PACKET);
-        true
-    }
-
     fn emit(&mut self, sp: [(i16, i16); 4], depth: i32, colors: [Rgb; 4]) {
         if let Some(q) = self.arena.push(QuadGouraud::new(sp, colors)) {
             self.ot.add_packet_depth(DEPTH_RANGE, depth, q);
@@ -4140,112 +4042,86 @@ impl Builder<'_> {
         }
     }
 
-    /// Boost pads, as light on the pitch.
+    /// Boost pads, as orbs floating over the pitch.
     ///
-    /// A small pad is one additive quad lying on the grass, the glow tile
-    /// through the live-pad palette: a lit rim, a bowl and a hot centre, with
-    /// a ripple the palette upload runs through every pad at once. Four
-    /// polygons a pad (two plates and two crossed orb diamonds) became one.
-    /// A big pad stands on a dark pedestal with a glowing top and floats an
-    /// additive orb inside a wider halo, over a pool of light baked into the
-    /// pitch at boot. A spent pad keeps its plate, dark, so the layout stays
-    /// learnable and a taken pad reads as taken rather than absent.
+    /// Flat diamonds painted on the grass were invisible in play: at this
+    /// camera height the pitch is nearly edge-on, so anything lying on it is
+    /// a few pixels of a slightly different green. Rocket League floats a lit
+    /// orb instead, and that is why you can see them. Two crossed vertical
+    /// quads give one from any angle for the price of two polygons.
     fn pads(&mut self, s: &Sim, cull: &Cull) {
         for (i, pad) in sim::PADS.iter().enumerate() {
-            let (px, pz) = (pad.x, pad.z);
-            let (reach, top) = if pad.big {
-                (BIG_PAD_R, BIG_PAD_ORB_Y + BIG_PAD_HALO)
-            } else {
-                (SMALL_PAD_R, 8)
-            };
-            let box_c = (px, -top / 2, pz);
-            let box_h = (reach, top / 2, reach);
-            if !cull.visible(box_c, box_h) || !cull.visible_vertically(box_c, box_h) {
+            let r = if pad.big { 62 } else { 42 };
+            let lift = if pad.big { 78 } else { 58 };
+            // Orb and pool together: the orb tops out at `lift + r` and the
+            // pool lies on the pitch, so the box runs the whole way down.
+            let top = lift + r;
+            if !cull.visible((pad.x, -top / 2, pad.z), (r, top / 2, r))
+                || !cull.visible_vertically((pad.x, -top / 2, pad.z), (r, top / 2, r))
+            {
                 continue;
             }
-            let far = cull.flat_distance(px, pz);
-            // Past 3000 in a half-width view a pad is a pixel or two;
+            // Past 3000 in a half-width view the orb is a pixel or two;
             // nothing a player steers by survives at that size.
-            if split_view() && far > 3000 {
+            if split_view() && cull.flat_distance(pad.x, pad.z) > 3000 {
                 continue;
             }
             let live = s.pad_timers[i] == 0;
-            if !pad.big {
-                // A spent pad's plate is smaller than the glow was: a dark
-                // disc the size of the light reads as a hole in the pitch.
-                let r = if live { SMALL_PAD_R } else { SMALL_PAD_R * 5 / 16 };
-                let y = -3;
-                let corners = [
-                    (px - r, y, pz - r),
-                    (px + r, y, pz - r),
-                    (px - r, y, pz + r),
-                    (px + r, y, pz + r),
-                ];
-                if live {
-                    self.glow_quad(corners, PAD_GOLD, PAD_BIAS, PAD_PACKET);
-                } else {
-                    self.quad_tex(
-                        corners,
-                        Self::GLOW_UVS,
-                        [floor_tint(px, pz); 4],
-                        PAD_BIAS,
-                        SPENT_PACKET,
-                        false,
-                    );
-                }
-                continue;
-            }
-
-            // The pedestal: a diamond plinth, only the sides that face the
-            // camera, and its top.
-            let (pr, ph) = (BIG_PAD_R, -BIG_PAD_H);
-            let light = floor_tint(px, pz);
-            let corner = [(px - pr, pz), (px, pz - pr), (px + pr, pz), (px, pz + pr)];
-            for k in 0..4 {
-                let (a, b) = (corner[k], corner[(k + 1) & 3]);
-                let mid = ((a.0 + b.0) / 2, (a.1 + b.1) / 2);
-                // Outward along the side's midpoint; faces the camera when
-                // the eye is on that side of the face's plane.
-                let (nx, nz) = (mid.0 - px, mid.1 - pz);
-                if (cull.pos.0 - mid.0) * nx + (cull.pos.2 - mid.1) * nz <= 0 {
-                    continue;
-                }
-                let side = tinted(if k & 1 == 0 { PLINTH_SIDE } else { PLINTH_SIDE_LIT }, light);
-                self.quad_biased(
-                    [(a.0, ph, a.1), (b.0, ph, b.1), (a.0, 0, a.1), (b.0, 0, b.1)],
-                    [side, side, shade(side, 3, 4), shade(side, 3, 4)],
-                    PAD_BIAS,
+            let (bright, dim) = ((255, 214, 84), (196, 132, 30));
+            let (px, pz) = (pad.x, pad.z);
+            // The plate stays whether the pad is up or not: it is the thing that
+            // says a pad belongs here, so the layout is learnable and a spent one
+            // reads as spent rather than as absent. Two rings, the outer a dark
+            // kerb and the inner lit only while there is something to collect.
+            let g = r * 3 / 4;
+            let plate = |b: &mut Self, reach: i32, y: i32, colour: Rgb, bias: i32| {
+                b.quad_biased(
+                    [
+                        (px - reach, y, pz),
+                        (px, y, pz - reach),
+                        (px, y, pz + reach),
+                        (px + reach, y, pz),
+                    ],
+                    [colour; 4],
+                    bias,
+                );
+            };
+            // A half-width view keeps only the orb once a pad is distant: the
+            // plate rings are a couple of pixels there, and the split kickoff
+            // sees every pad on the pitch from both views at once.
+            if !(split_view() && cull.flat_distance(px, pz) > 2000) {
+                plate(self, g, -4, (52, 56, 70), PAD_BIAS + 20);
+                plate(
+                    self,
+                    g / 2,
+                    -6,
+                    if live { dim } else { (34, 38, 50) },
+                    PAD_BIAS + 10,
                 );
             }
-            let top_c = tinted(PLINTH_TOP, light);
-            self.quad_biased(
-                [
-                    (px - pr, ph, pz),
-                    (px, ph, pz - pr),
-                    (px, ph, pz + pr),
-                    (px + pr, ph, pz),
-                ],
-                [top_c; 4],
-                PAD_BIAS + 20,
-            );
-            // The lit disc inset in the top, then the orb and its halo.
-            let g = pr * 5 / 8;
-            let disc = [
-                (px - g, ph - 2, pz - g),
-                (px + g, ph - 2, pz - g),
-                (px - g, ph - 2, pz + g),
-                (px + g, ph - 2, pz + g),
-            ];
+
+            // The orb only exists while the pad does. It used to linger as a
+            // ghost, which made a taken pad look collectable from any distance
+            // where the colour was hard to judge.
             if !live {
-                self.quad_tex(disc, Self::GLOW_UVS, [light; 4], PAD_BIAS, SPENT_PACKET, false);
                 continue;
             }
-            self.glow_quad(disc, PAD_GOLD, PAD_BIAS, PAD_PACKET);
-            let orb = (px, -BIG_PAD_ORB_Y, pz);
-            if self.glow_sprite(orb, BIG_PAD_ORB, ORB_HOT, -4, 48)
-                && !(split_view() && far > 2000)
-            {
-                self.glow_sprite(orb, BIG_PAD_HALO, ORB_HALO, 4, 96);
+            let top = -(lift + r);
+            let mid = -lift;
+            let bot = -(lift - r);
+            // Two diamonds in perpendicular vertical planes.
+            for axis in 0..2 {
+                let (ax, az) = if axis == 0 { (r, 0) } else { (0, r) };
+                self.quad_biased(
+                    [
+                        (px, top, pz),
+                        (px - ax, mid, pz - az),
+                        (px + ax, mid, pz + az),
+                        (px, bot, pz),
+                    ],
+                    [bright, dim, dim, bright],
+                    PAD_BIAS,
+                );
             }
         }
     }
@@ -6324,13 +6200,9 @@ fn build_view(
                 textured: unsafe { PrimitiveArena::new(&mut TEX_QUADS_SETS[SET]) },
                 glow: unsafe { PrimitiveArena::new(&mut GLOW_SETS[SET]) },
             };
-            // The live pads' palette for this frame, loaded before anything
-            // in the table samples it.
+            // The crowd's palettes for this frame, loaded before anything in
+            // the table samples them.
             unsafe {
-                let load = &mut PAD_CLUT_LOAD[SET];
-                load.xy = ((PAD_CLUT.y() as u32) << 16) | PAD_CLUT.x() as u32;
-                load.data = pad_clut(CAMERA_TICK);
-                b.ot.add(SKY_SLOT, load, CLUT_LOAD_WORDS);
                 for (seat, clut) in CROWD_CLUTS.iter().enumerate() {
                     let load = &mut CROWD_CLUT_LOAD[SET][seat];
                     load.xy = ((clut.y() as u32) << 16) | clut.x() as u32;
