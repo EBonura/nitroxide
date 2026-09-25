@@ -4226,11 +4226,17 @@ impl Builder<'_> {
         let curve_near = if split_view() { 900 } else { 2200 };
         let (vx0, vx1, vy0, vy1) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
         let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
+        // Far away a marking seen edge-on is under a pixel thick, and the
+        // rasteriser then skips most of its columns: a solid line breaks
+        // into dashes. So a cut is never closer than two pixels across.
         let cut = |s: &LineSection| {
-            (
-                project(Vec3I16::new(s.a.0, 0, s.a.1)),
-                project(Vec3I16::new(s.b.0, 0, s.b.1)),
-            )
+            let a = project(Vec3I16::new(s.a.0, 0, s.a.1));
+            let mut b = project(Vec3I16::new(s.b.0, 0, s.b.1));
+            let dy = b.sy - a.sy;
+            if (b.sx - a.sx).abs() < 2 && dy.abs() < 2 {
+                b.sy = a.sy + if dy < 0 { -2 } else { 2 };
+            }
+            (a, b)
         };
         for k in 0..unsafe { LINE_STRIP_COUNT } {
             let strip = unsafe { LINE_STRIPS[k] };
@@ -4291,14 +4297,10 @@ impl Builder<'_> {
                     } else {
                         count_overflow!();
                     }
+                } else if let Some(quad) = self.flats.push(QuadFlat::new(sp, c0.0, c0.1, c0.2)) {
+                    self.ot.add_packet(LINE_SLOT, quad);
                 } else {
-                    let avg = |u: u8, v: u8| ((u as u16 + v as u16) / 2) as u8;
-                    let col = (avg(c0.0, c1.0), avg(c0.1, c1.1), avg(c0.2, c1.2));
-                    if let Some(quad) = self.flats.push(QuadFlat::new(sp, col.0, col.1, col.2)) {
-                        self.ot.add_packet(LINE_SLOT, quad);
-                    } else {
-                        count_overflow!();
-                    }
+                    count_overflow!();
                 }
             }
         }
@@ -4345,8 +4347,8 @@ impl Builder<'_> {
             // A half-width view keeps only the orb once a pad is distant: the
             // plate rings are a couple of pixels there, and the split kickoff
             // sees every pad on the pitch from both views at once.
-            // Past 4500 in a full view the plates are a sliver a pixel tall.
-            if far <= if split_view() { 2000 } else { 4500 } {
+            // Past 3500 in a full view the plates are a sliver a pixel tall.
+            if far <= if split_view() { 2000 } else { 3500 } {
                 let g = r * 3 / 4;
                 let c = proj(px, -4, pz);
                 let o = [
