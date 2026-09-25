@@ -27,7 +27,7 @@ use psx_asset::{Mesh, Texture};
 use psx_engine::{ActorTransform, DepthRange, OtFrame, PrimitiveArena, Vec3World};
 use psx_gpu::material::{BlendMode, TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::{QuadGouraud, QuadTexturedGouraud, TriGouraud};
+use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedGouraud, TriGouraud};
 use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, project_vertex_scheduled as project};
@@ -469,13 +469,22 @@ fn hud_quad(v: [(i16, i16); 4], c: [Rgb; 4]) {
 // the depth tie is wide, and by less than the length of a car so nothing ever
 // jumps in front of something genuinely closer.
 
-/// The pitch itself, pushed back so nothing standing on it can tie with it.
-const FLOOR_BIAS: i32 = 150;
-/// Crack-underlay strips along subdivision-band edges: behind the pitch by
-/// more than half a tile of depth, because the neighbouring quads sort by
-/// their centres, not by the shared edge. They show only through the
-/// single-pixel holes the band boundary can still open.
-const UNDERDRAW_BIAS: i32 = FLOOR_BIAS + 1000;
+/// The pitch is not depth-sorted at all: it has its own slots at the back of
+/// the table, behind every depth-sorted slot, and draws before anything else
+/// in the arena. With the camera above it, a plane cannot cover anything that
+/// stands on it, so there is nothing to sort, and the markings lie on it in
+/// the next slot forward without a bias to tune. Sorted by depth, a marking
+/// near the far edge of a big pitch quad would sort behind that quad's
+/// centre and vanish under the grass.
+///
+/// Depth-sorted packets reach these slots only past about 13,900 uu, further
+/// than the arena's diagonal.
+///
+/// Crack-underlay strips along subdivision-band edges come first. They show
+/// only through the single-pixel holes the band boundary can still open.
+const UNDERDRAW_SLOT: usize = STAND_SLOT - 1;
+const FLOOR_SLOT: usize = UNDERDRAW_SLOT - 1;
+const LINE_SLOT: usize = FLOOR_SLOT - 1;
 /// Shadows sit between the pitch and the thing casting them.
 const SHADOW_DEPTH_BIAS: i32 = 60;
 /// Boost pads read as objects on the ground rather than paint, so they come
@@ -648,10 +657,10 @@ const SEMI_TRANSPARENT: u32 = 1 << 25;
 /// The ball indicator: shown once the ball's underside is this high, its
 /// hoop radius, the height at which its inner disc is smallest, and tints.
 const BALL_RING_MIN_H: i32 = 150;
-/// Filed well in front of the pitch under it. At the pads' bias the far half
-/// of the hoop lost the ordering-table slot to the grass it lies on; the hoop
-/// is additive, so where this lets it over the underside of a low ball it
-/// only brightens it, and it is not drawn for a ball that low.
+/// Filed well in front of what else lies on the pitch (the pitch itself has
+/// its own slots, see [`FLOOR_SLOT`]). The hoop is additive, so where this
+/// lets it over the underside of a low ball it only brightens it, and it is
+/// not drawn for a ball that low.
 const BALL_RING_BIAS: i32 = -200;
 const BALL_RING_R: i32 = 190;
 const BALL_RING_FULL_H: i32 = 1400;
@@ -1192,6 +1201,7 @@ fn build_lighting() {
             }
         }
     }
+    paint_lines();
 
     // Walls. One tint per (span, ring, split position).
     let profile = Builder::profile();
@@ -1327,9 +1337,11 @@ fn build_spans() {
 // ---- arena texture ---------------------------------------------------------
 // One 4bpp page holds the 64x64 pitch tile, the 32x32 wall panel, the 128x84
 // honeycomb enclosure, a separate 96x48 square goal net, and two more pages of
-// full-resolution grass with the pitch markings composited into it. Separate
-// CLUTs let the solid surfaces and two open meshes share the asset without
-// trying to share a sixteen-colour palette.
+// full-resolution grass with the pitch markings composited into it. The pitch
+// no longer samples those two pages or the end tiles: the markings are
+// geometry (see [`LINE_SECTIONS`]). Separate CLUTs let the solid surfaces and
+// two open meshes share the asset without trying to share a sixteen-colour
+// palette.
 
 const TEX_TPAGE: Tpage = Tpage::new(384, 0, TexDepth::Bit4);
 const MARKED_LEFT_TPAGE: Tpage = Tpage::new(448, 0, TexDepth::Bit4);
@@ -1370,12 +1382,6 @@ const GLOW_W: u8 = 32;
 const TEX_W: usize = 256;
 const TEX_H: usize = 256 * 3;
 const GRASS_TILE_W: i32 = 64;
-const MARKED_TILE_W: i32 = 64;
-const MARKED_U0: i32 = 0;
-const MARKED_V0: i32 = 0;
-const MARKED_FIRST_Z: i32 = 3;
-const MARKED_ROWS: i32 = 4;
-const MARKED_COLS_PER_PAGE: i32 = 4;
 /// 4bpp packs four texels per halfword.
 const TEX_HALFWORDS_PER_ROW: usize = TEX_W / 4;
 
@@ -1413,30 +1419,6 @@ const COVER_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(COVER_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
-const MARKED_LEFT_PACKET: TexturedGouraudPacketMaterial = TextureMaterial::new(
-    MARKED_CLUT.uv_clut_word(),
-    MARKED_LEFT_TPAGE.uv_tpage_word(0),
-)
-.with_dither(true)
-.textured_gouraud_packet_material();
-const MARKED_RIGHT_PACKET: TexturedGouraudPacketMaterial = TextureMaterial::new(
-    MARKED_CLUT.uv_clut_word(),
-    MARKED_RIGHT_TPAGE.uv_tpage_word(0),
-)
-.with_dither(true)
-.textured_gouraud_packet_material();
-/// The end markings' six unique tiles live in the base page, drawn through
-/// the marked-grass palette.
-const END_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(MARKED_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
-        .with_dither(true)
-        .textured_gouraud_packet_material();
-/// Base-page origin of each unique end tile (tools/cook-arena
-/// `END_TILE_ORIGINS`), indexed `row * 3 + column - 1` for pitch columns
-/// 1..=3 of the two rows nearest the -Z goal. The other three columns and
-/// the +Z end are the same tiles mirrored through their UVs.
-const END_TILE_ORIGINS: [(i32, i32); 6] = [(128, 128), (192, 128), (0, 144), (128, 192), (192, 192), (64, 144)];
-const END_ROWS: i32 = 2;
 /// The crowd tile (tools/cook-arena `CROWD_*`): tiers of fans under the
 /// honeycomb's rows in the base page, the front tier's fascia at the bottom.
 const CROWD_U0: i32 = 128;
@@ -1498,11 +1480,6 @@ const _: () = assert!(
 const _: () = assert!(
     NET_V0 as i32 + NET_H <= 256,
     "goal net runs off the base texture page"
-);
-const _: () = assert!(
-    MARKED_U0 + MARKED_COLS_PER_PAGE * MARKED_TILE_W <= TEX_W as i32
-        && MARKED_V0 + MARKED_ROWS * MARKED_TILE_W <= 256,
-    "marked pitch tiles run off the texture page"
 );
 
 /// Texels of cover for `span` world units, shared by walls and roof.
@@ -1650,6 +1627,228 @@ fn paint_goal_pools() {
             }
         }
     }
+    paint_lines();
+}
+
+// ---- pitch markings --------------------------------------------------------
+// The lines are geometry, not texture. Painted into the pitch texture, chalk
+// was mapped affinely across quads up to a whole 1,024-uu tile across, so a
+// straight line bent where a quad's two triangles met and an arc wobbled from
+// quad to quad; its edges were 16-uu texel steps, several pixels tall near
+// the camera. A polygon's own edges stay straight under any projection, so
+// each marking is a strip of flat quads lying on the pitch, drawn in the slot
+// in front of it (see [`FLOOR_SLOT`]): exact edges and nothing to warp.
+
+/// Chalk before the pitch light multiplies it, as the texture's chalk was.
+const CHALK: Rgb = (205, 220, 210);
+/// Half-widths: the straight lines and the centre circle's band.
+const LINE_HALF_W: i32 = 40;
+const CIRCLE_HALF_W: i32 = 30;
+/// The halfway line stops this short of each side wall's foot.
+const HALFWAY_INSET: i32 = 300;
+const CIRCLE_R: i32 = 1122;
+/// Each end, measured in from its goal line: a goal box, a bigger box, and
+/// the arc on the bigger box's front, centred `ARC_CENTRE` in.
+const GOAL_BOX_HALF_W: i32 = 1300;
+const GOAL_BOX_DEPTH: i32 = 700;
+const BIG_BOX_HALF_W: i32 = 2300;
+const BIG_BOX_DEPTH: i32 = 1650;
+const ARC_CENTRE: i32 = 1100;
+const ARC_R: i32 = 860;
+/// Straight strips are cut every 256 uu, the near pitch cells' size, so a
+/// strip loses no more to the near plane than the grass under it does, and
+/// no quad outgrows what the GPU will draw. Away from the camera the draw
+/// steps over cuts the way the pitch's own bands coarsen.
+const LINE_STEP: i32 = 256;
+/// Curves are cut finely enough to read round: 226 uu a segment on the
+/// centre circle.
+const CIRCLE_SEGS: i32 = 32;
+const ARC_SEGS: i32 = 8;
+/// Sections (cross-cuts, two points each) and strips, with room.
+const MAX_LINE_SECTIONS: usize = 200;
+const MAX_LINE_STRIPS: usize = 16;
+
+/// The floor light grid is sampled at 256-uu steps, and [`chalk_at`] reads
+/// it with shifts.
+const _: () = assert!(
+    sim::HALF_X * 2 / TILES_X / FLOOR_SPLIT_MAX == 256
+        && sim::HALF_Z * 2 / TILES_Z / FLOOR_SPLIT_MAX == 256,
+    "chalk_at assumes a 256-uu floor light grid"
+);
+
+#[derive(Copy, Clone)]
+struct LineSection {
+    a: (i16, i16),
+    b: (i16, i16),
+    /// The chalk's light at the cut's centre.
+    c: Rgb,
+}
+
+#[derive(Copy, Clone)]
+struct LineStrip {
+    first: u8,
+    last: u8,
+    /// Curves never skip a section: a far circle cut to an eight-gon shows
+    /// its corners.
+    curved: bool,
+    centre: (i32, i32),
+    half: (i32, i32),
+}
+
+static mut LINE_SECTIONS: [LineSection; MAX_LINE_SECTIONS] = [LineSection {
+    a: (0, 0),
+    b: (0, 0),
+    c: (0, 0, 0),
+}; MAX_LINE_SECTIONS];
+static mut LINE_STRIPS: [LineStrip; MAX_LINE_STRIPS] = [LineStrip {
+    first: 0,
+    last: 0,
+    curved: false,
+    centre: (0, 0),
+    half: (0, 0),
+}; MAX_LINE_STRIPS];
+static mut LINE_STRIP_COUNT: usize = 0;
+
+/// Lay out every marking's sections once at boot. Colours come later, from
+/// [`paint_lines`], because the pitch light they follow changes with the
+/// time of day and the teams' paints.
+fn build_lines() {
+    let mut sections = 0usize;
+    let mut strips = 0usize;
+    // One strip from a run of cross-cuts, each given as its two points.
+    let mut strip = |cuts: &mut dyn Iterator<Item = ((i32, i32), (i32, i32))>, curved: bool| {
+        let first = sections;
+        let (mut lo, mut hi) = ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN));
+        for (a, b) in cuts {
+            for p in [a, b] {
+                lo = (lo.0.min(p.0), lo.1.min(p.1));
+                hi = (hi.0.max(p.0), hi.1.max(p.1));
+            }
+            unsafe {
+                LINE_SECTIONS[sections].a = (a.0 as i16, a.1 as i16);
+                LINE_SECTIONS[sections].b = (b.0 as i16, b.1 as i16);
+            }
+            sections += 1;
+        }
+        unsafe {
+            LINE_STRIPS[strips] = LineStrip {
+                first: first as u8,
+                last: (sections - 1) as u8,
+                curved,
+                centre: ((lo.0 + hi.0) / 2, (lo.1 + hi.1) / 2),
+                half: ((hi.0 - lo.0) / 2, (hi.1 - lo.1) / 2),
+            };
+        }
+        strips += 1;
+    };
+    // An axis-aligned straight line between two points on its centre line,
+    // cut every LINE_STEP and at its far end.
+    let straight = |from: (i32, i32), to: (i32, i32)| {
+        let along_x = from.1 == to.1;
+        let (s0, s1) = if along_x { (from.0, to.0) } else { (from.1, to.1) };
+        let dir = if s1 >= s0 { 1 } else { -1 };
+        let len = (s1 - s0).abs();
+        let cuts = (len + LINE_STEP - 1) / LINE_STEP;
+        (0..=cuts).map(move |k| {
+            let t = s0 + dir * (k * LINE_STEP).min(len);
+            if along_x {
+                ((t, from.1 - LINE_HALF_W), (t, from.1 + LINE_HALF_W))
+            } else {
+                ((from.0 - LINE_HALF_W, t), (from.0 + LINE_HALF_W, t))
+            }
+        })
+    };
+    // Cuts across a ring band from angle `a0` over `segs` steps of `da`
+    // (Q12 of a turn), about (cx, cz), with +Z of the angle along `dz`.
+    let ring = |cx: i32, cz: i32, dz: i32, r: i32, w: i32, a0: i32, da: i32, segs: i32| {
+        (0..=segs).map(move |k| {
+            let t = (a0 + da * k) as u16;
+            let (sn, cs) = (sin_q12(t), cos_q12(t) * dz);
+            let at = |rr: i32| (cx + (rr * sn >> 12), cz + (rr * cs >> 12));
+            (at(r - w), at(r + w))
+        })
+    };
+
+    let x_end = sim::HALF_X - RAMP_R - HALFWAY_INSET;
+    strip(&mut straight((-x_end, 0), (x_end, 0)), false);
+    strip(
+        &mut ring(0, 0, 1, CIRCLE_R, CIRCLE_HALF_W, 0, 4096 / CIRCLE_SEGS, CIRCLE_SEGS),
+        true,
+    );
+    // The D's centre line meets the big box's front line's centre line where
+    // cos(a) = (BIG_BOX_DEPTH - ARC_CENTRE) / ARC_R; its ends overlap into
+    // that line, which hides the join.
+    let mut arc_half = 0;
+    while cos_q12(arc_half as u16) * ARC_R > (BIG_BOX_DEPTH - ARC_CENTRE) * 4096 {
+        arc_half += 1;
+    }
+    for end in [-1, 1] {
+        // `end` is the goal's side; `d` runs in from its goal line.
+        let z = |d: i32| end * (sim::HALF_Z - d);
+        // The side lines start where the flat pitch does, a ramp radius in.
+        for (half_w, depth) in [(GOAL_BOX_HALF_W, GOAL_BOX_DEPTH), (BIG_BOX_HALF_W, BIG_BOX_DEPTH)] {
+            for side in [-half_w, half_w] {
+                strip(&mut straight((side, z(RAMP_R)), (side, z(depth + LINE_HALF_W))), false);
+            }
+            let reach = half_w + LINE_HALF_W;
+            strip(&mut straight((-reach, z(depth)), (reach, z(depth))), false);
+        }
+        strip(
+            &mut ring(
+                0,
+                z(ARC_CENTRE),
+                -end,
+                ARC_R,
+                LINE_HALF_W,
+                -arc_half,
+                2 * arc_half / ARC_SEGS,
+                ARC_SEGS,
+            ),
+            true,
+        );
+    }
+    unsafe { LINE_STRIP_COUNT = strips };
+}
+
+/// Chalk under the pitch light at a point: both mown stripes' light,
+/// averaged (chalk is not mown), bilinear off the 256-uu grid.
+fn chalk_at(x: i32, z: i32) -> Rgb {
+    let fx = (x + sim::HALF_X).clamp(0, 2 * sim::HALF_X - 1);
+    let fz = (z + sim::HALF_Z).clamp(0, 2 * sim::HALF_Z - 1);
+    let (gx, tx) = ((fx >> 8) as usize, fx & 255);
+    let (gz, tz) = ((fz >> 8) as usize, fz & 255);
+    let mut sum = [0i32; 3];
+    for stripe in 0..2 {
+        for (dx, wx) in [(0, 256 - tx), (1, tx)] {
+            for (dz, wz) in [(0, 256 - tz), (1, tz)] {
+                let c = rgb_of(unsafe { FLOOR_LIGHT[stripe][gx + dx][gz + dz] });
+                let w = wx * wz;
+                sum[0] += c.0 as i32 * w;
+                sum[1] += c.1 as i32 * w;
+                sum[2] += c.2 as i32 * w;
+            }
+        }
+    }
+    // Weights total 2 * 256 * 256.
+    tinted(
+        CHALK,
+        ((sum[0] >> 17) as u8, (sum[1] >> 17) as u8, (sum[2] >> 17) as u8),
+    )
+}
+
+/// Light every marking's sections from the current pitch light. Run after
+/// anything rewrites [`FLOOR_LIGHT`].
+fn paint_lines() {
+    let n = unsafe { LINE_STRIPS[LINE_STRIP_COUNT.max(1) - 1].last as usize + 1 };
+    for i in 0..n.min(MAX_LINE_SECTIONS) {
+        unsafe {
+            let s = &mut LINE_SECTIONS[i];
+            s.c = chalk_at(
+                (s.a.0 as i32 + s.b.0 as i32) / 2,
+                (s.a.1 as i32 + s.b.1 as i32) / 2,
+            );
+        }
+    }
 }
 
 /// The goal pools: half-extents across the mouth and out into the pitch, and
@@ -1745,6 +1944,13 @@ static mut OT_SETS: [OrderingTable<OT_DEPTH>; 2] = [OrderingTable::new(), Orderi
 static mut SET: usize = 0;
 static mut PENDING: bool = false;
 static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; 2] = [QUADS_INIT; 2];
+/// The pitch markings' quads, one colour each: one per pair of cuts at
+/// worst. A flat quad costs the GPU a quarter of a Gouraud one's setup and
+/// half its fill.
+const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS;
+static mut FLAT_QUADS_SETS: [[QuadFlat; MAX_FLAT_QUADS]; 2] = [FLAT_QUADS_INIT; 2];
+const FLAT_QUADS_INIT: [QuadFlat; MAX_FLAT_QUADS] =
+    [const { QuadFlat::new([(0, 0); 4], 0, 0, 0) }; MAX_FLAT_QUADS];
 const QUADS_INIT: [QuadGouraud; MAX_QUADS] =
     [const { QuadGouraud::new([(0, 0); 4], [(0, 0, 0); 4]) }; MAX_QUADS];
 /// Textured quads live in their own pool: a different packet size, and the
@@ -2072,6 +2278,7 @@ pub fn setup() {
     build_meshes();
     build_spans();
     build_stands();
+    build_lines();
     build_lighting();
     build_car_materials();
 }
@@ -3316,6 +3523,7 @@ struct Builder<'a> {
     ot: OtFrame<'a, OT_DEPTH>,
     arena: PrimitiveArena<'a, QuadGouraud>,
     textured: PrimitiveArena<'a, QuadTexturedGouraud>,
+    flats: PrimitiveArena<'a, QuadFlat>,
     glow: PrimitiveArena<'a, GlowQuad>,
 }
 
@@ -3753,15 +3961,11 @@ impl Builder<'_> {
         if !sp.iter().any(|&(x, y)| on_view(x, y)) {
             return;
         }
-        // Behind BOTH tiles that share the edge. Measured from the edge, a
-        // neighbouring quad's own sorting depth is its centre, up to half a
-        // tile deeper, so a small slot bias left the strip in front of the
-        // far tile and drew the boundary as a line. Nothing else lives
-        // between the pitch and the vista, so deep is safe.
-        let depth = (a.2 + b.2) / 2 + UNDERDRAW_BIAS;
+        // Behind BOTH tiles that share the edge: its own slot, drawn just
+        // before the pitch's.
         let (ca, cb) = (tinted(GRASS_A, ta), tinted(GRASS_A, tb));
         if let Some(q) = self.arena.push(QuadGouraud::new(sp, [ca, cb, ca, cb])) {
-            self.ot.add_packet_depth(DEPTH_RANGE, depth, q);
+            self.ot.add_packet(UNDERDRAW_SLOT, q);
         }
     }
 
@@ -3780,15 +3984,9 @@ impl Builder<'_> {
         light: &[[u32; FLOOR_GZ]; FLOOR_GX],
         gx: usize,
         gz: usize,
-        tex_u0: i32,
-        tex_v0: i32,
-        du: i32,
-        dv: i32,
-        packet: TexturedGouraudPacketMaterial,
     ) {
         count_offered!();
         let mut sp = [(0i16, 0i16); 4];
-        let mut z_sum = 0;
         for (k, (wx, wz)) in [(x0, z0), (x1, z0), (x0, z1), (x1, z1)]
             .into_iter()
             .enumerate()
@@ -3799,7 +3997,6 @@ impl Builder<'_> {
                 return;
             }
             sp[k] = (p.sx, p.sy);
-            z_sum += p.sz as i32;
         }
         if !sp.iter().any(|&(x, y)| on_view(x, y)) {
             return;
@@ -3815,10 +4012,29 @@ impl Builder<'_> {
                 *r1.get_unchecked(gz + stride),
             ]
         };
-        let (u0, v0) = (tex_u0 as u8, tex_v0 as u8);
-        let (u1, v1) = ((tex_u0 + du) as u8, (tex_v0 + dv) as u8);
-        let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
-        self.quad_tex_words(sp, z_sum, uvs, tints, FLOOR_BIAS, packet, false);
+        let last = (GRASS_TILE_W - 1) as u8;
+        let uvs = [uvw(0, 0), uvw(last, 0), uvw(0, last), uvw(last, last)];
+        self.floor_quad(sp, uvs, tints);
+    }
+
+    /// One pitch quad into the pitch's own slot. See [`FLOOR_SLOT`].
+    #[inline(always)]
+    fn floor_quad(&mut self, sp: [(i16, i16); 4], uvs: [u16; 4], tints: [u32; 4]) {
+        let mut prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
+            sp,
+            uvs,
+            [(0, 0, 0); 4],
+            GRASS_PACKET,
+        );
+        prim.color0_cmd |= tints[0];
+        prim.color1 = tints[1];
+        prim.color2 = tints[2];
+        prim.color3 = tints[3];
+        if let Some(q) = self.textured.push(prim) {
+            self.ot.add_packet(FLOOR_SLOT, q);
+        } else {
+            count_overflow!();
+        }
     }
 
     fn floor(&mut self, cull: &Cull) {
@@ -3857,46 +4073,6 @@ impl Builder<'_> {
                     (ix * FLOOR_SPLIT_MAX) as usize,
                     (iz * FLOOR_SPLIT_MAX) as usize,
                 );
-                let marked = (MARKED_FIRST_Z..MARKED_FIRST_Z + MARKED_ROWS).contains(&iz);
-                let (tex_u0, tex_v0, tex_w, packet) = if marked {
-                    let packet = if ix < MARKED_COLS_PER_PAGE {
-                        MARKED_LEFT_PACKET
-                    } else {
-                        MARKED_RIGHT_PACKET
-                    };
-                    (
-                        MARKED_U0 + (ix % MARKED_COLS_PER_PAGE) * MARKED_TILE_W,
-                        MARKED_V0 + (iz - MARKED_FIRST_Z) * MARKED_TILE_W,
-                        MARKED_TILE_W,
-                        packet,
-                    )
-                } else {
-                    (0, 0, GRASS_TILE_W, GRASS_PACKET)
-                };
-                // The two rows at each end carry the goal boxes. Mirrored
-                // columns and the far end run their UVs backwards from the
-                // tile's last texel.
-                let end_row = if iz < END_ROWS {
-                    iz
-                } else {
-                    TILES_Z - 1 - iz
-                };
-                let end_col = if ix < TILES_X / 2 { ix } else { TILES_X - 1 - ix };
-                let (tex_u0, tex_v0, packet, flip_u, flip_v) =
-                    if end_row < END_ROWS && (1..=3).contains(&end_col) {
-                        let (u0, v0) = END_TILE_ORIGINS[(end_row * 3 + end_col - 1) as usize];
-                        let (fu, fv) = (ix >= TILES_X / 2, iz >= TILES_Z / 2);
-                        (
-                            if fu { u0 + tex_w - 1 } else { u0 },
-                            if fv { v0 + tex_w - 1 } else { v0 },
-                            END_PACKET,
-                            fu,
-                            fv,
-                        )
-                    } else {
-                        (tex_u0, tex_v0, packet, false, false)
-                    };
-
                 // Most of the pitch is one-quad tiles, and the general path
                 // below charges each of them the full grid machinery (a 5x5
                 // Option array, closures, the conform check) to emit a single
@@ -3904,21 +4080,7 @@ impl Builder<'_> {
                 // four projections, one emit. Pixel-identical, and an n == 1
                 // tile never conforms, so nothing else changes.
                 if n == 1 {
-                    let last = tex_w - 1;
-                    self.floor_tile_far(
-                        x0,
-                        z0,
-                        x1,
-                        z1,
-                        light,
-                        gx,
-                        gz,
-                        tex_u0,
-                        tex_v0,
-                        if flip_u { -last } else { last },
-                        if flip_v { -last } else { last },
-                        packet,
-                    );
+                    self.floor_tile_far(x0, z0, x1, z1, light, gx, gz);
                     continue;
                 }
 
@@ -3930,9 +4092,7 @@ impl Builder<'_> {
                 let shift = n.trailing_zeros();
                 let px = |i: i32| x0 + ((x1 - x0) * i >> shift);
                 let pz = |i: i32| z0 + ((z1 - z0) * i >> shift);
-                let step = |i: i32| (tex_w * i >> shift).min(tex_w - 1);
-                let u = |i: i32| (if flip_u { tex_u0 - step(i) } else { tex_u0 + step(i) }) as u8;
-                let v = |i: i32| (if flip_v { tex_v0 - step(i) } else { tex_v0 + step(i) }) as u8;
+                let u = |i: i32| (GRASS_TILE_W * i >> shift).min(GRASS_TILE_W - 1) as u8;
 
                 // Project the tile's corner grid once. Every interior corner
                 // is shared by four sub-quads, so projecting per quad ran the
@@ -4016,7 +4176,7 @@ impl Builder<'_> {
                             continue;
                         }
                         count_kept!();
-                        let (va, vb) = (v(sz as i32), v(sz as i32 + 1));
+                        let (va, vb) = (u(sz as i32), u(sz as i32 + 1));
                         let uvs = [uvw(ua, va), uvw(ub, va), uvw(ua, vb), uvw(ub, vb)];
                         let (j0, j1) = (gz + sz * stride, gz + (sz + 1) * stride);
                         let tints = unsafe {
@@ -4027,16 +4187,89 @@ impl Builder<'_> {
                                 *r1.get_unchecked(j1),
                             ]
                         };
-                        self.quad_tex_words(
-                            sp,
-                            a.2 + b.2 + c.2 + d.2,
-                            uvs,
-                            tints,
-                            FLOOR_BIAS,
-                            packet,
-                            false,
-                        );
+                        self.floor_quad(sp, uvs, tints);
                     }
+                }
+            }
+        }
+    }
+
+    /// The pitch markings, as strips of flat quads (see [`LINE_SECTIONS`]).
+    /// Out of line, for the same i-cache reason as [`Self::conform_tile`],
+    /// and kept lean: it runs once per cut.
+    #[inline(never)]
+    fn lines(&mut self, cull: &Cull) {
+        // Cuts a strip steps over by distance: every cut near the camera,
+        // then every second, fourth and eighth. Each quad still ends on a
+        // cut, so a straight strip keeps one straight edge. Curves keep
+        // every cut out to a couple of thousand uu, where a sixteen-gon
+        // circle stops showing its corners, and never pass two: an
+        // eight-gon shows them at any range.
+        let (near, mid) = if split_view() { (400, 900) } else { (500, 1800) };
+        let curve_near = if split_view() { 900 } else { 2200 };
+        let (vx0, vx1, vy0, vy1) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+        let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
+        let cut = |s: &LineSection| {
+            (
+                project(Vec3I16::new(s.a.0, 0, s.a.1)),
+                project(Vec3I16::new(s.b.0, 0, s.b.1)),
+            )
+        };
+        for k in 0..unsafe { LINE_STRIP_COUNT } {
+            let strip = unsafe { LINE_STRIPS[k] };
+            let c = (strip.centre.0, 0, strip.centre.1);
+            let h = (strip.half.0, 0, strip.half.1);
+            if !cull.visible(c, h) || !cull.visible_vertically(c, h) {
+                continue;
+            }
+            let (mut i, last) = (strip.first as usize, strip.last as usize);
+            let far_step = if strip.curved { 2 } else { 4 };
+            let mut prev = cut(unsafe { sections.get_unchecked(i) });
+            while i < last {
+                let s = unsafe { sections.get_unchecked(i) };
+                let d = cull.flat_distance(s.a.0 as i32, s.a.1 as i32);
+                let step = if d < near || (strip.curved && d < curve_near) {
+                    1
+                } else if d < mid {
+                    2
+                } else if d < 3500 || strip.curved {
+                    far_step
+                } else {
+                    8
+                };
+                let mut j = (i + step).min(last);
+                let mut next = cut(unsafe { sections.get_unchecked(j) });
+                // A long step that reaches behind the camera would drop the
+                // whole quad, visible part and all: take one cut instead.
+                if j > i + 1 && (next.0.sz == 0 || next.1.sz == 0) {
+                    j = i + 1;
+                    next = cut(unsafe { sections.get_unchecked(j) });
+                }
+                count_offered!();
+                let (a, b, cc, dd) = (prev.0, prev.1, next.0, next.1);
+                prev = next;
+                i = j;
+                if a.sz == 0 || b.sz == 0 || cc.sz == 0 || dd.sz == 0 {
+                    continue;
+                }
+                let min_x = a.sx.min(b.sx).min(cc.sx).min(dd.sx);
+                let max_x = a.sx.max(b.sx).max(cc.sx).max(dd.sx);
+                let min_y = a.sy.min(b.sy).min(cc.sy).min(dd.sy);
+                let max_y = a.sy.max(b.sy).max(cc.sy).max(dd.sy);
+                if max_x < vx0 || min_x >= vx1 || max_y < vy0 || min_y >= vy1 {
+                    continue;
+                }
+                count_kept!();
+                // Flat, in the light at the cut it starts from: a Gouraud
+                // quad costs the GPU four times the setup and twice the
+                // fill, and the pitch light moves less than one 15-bit step
+                // from cut to cut.
+                let sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
+                let col = s.c;
+                if let Some(quad) = self.flats.push(QuadFlat::new(sp, col.0, col.1, col.2)) {
+                    self.ot.add_packet(LINE_SLOT, quad);
+                } else {
+                    count_overflow!();
                 }
             }
         }
@@ -6198,6 +6431,7 @@ fn build_view(
                 ot: unsafe { OtFrame::begin(&mut OT_SETS[SET]) },
                 arena: unsafe { PrimitiveArena::new(&mut QUADS_SETS[SET]) },
                 textured: unsafe { PrimitiveArena::new(&mut TEX_QUADS_SETS[SET]) },
+                flats: unsafe { PrimitiveArena::new(&mut FLAT_QUADS_SETS[SET]) },
                 glow: unsafe { PrimitiveArena::new(&mut GLOW_SETS[SET]) },
             };
             // The crowd's palettes for this frame, loaded before anything in
@@ -6241,7 +6475,12 @@ fn build_view(
             b
         });
         let cull = view.cull();
-        staged!(S_FLOOR, { on_scratchpad(|| b.floor(&cull)) });
+        staged!(S_FLOOR, {
+            on_scratchpad(|| {
+                b.floor(&cull);
+                b.lines(&cull);
+            })
+        });
         staged!(S_PADS, { on_scratchpad(|| b.pads(s, &cull)) });
         staged!(S_WALLS, {
             on_scratchpad(|| {
