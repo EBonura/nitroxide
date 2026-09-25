@@ -650,7 +650,8 @@ const CORNER_X: i32 = sim::CORNER - sim::HALF_Z; // 2944
 // + goals(14) + ball(48) + flame(2 x 2) + shadows(2 x 3) + lamps(27)
 // + pads(34, up to 4 each now that each stands on a two-ring plate), with slack.
 // The pads were never in this tally and the plate pushed them past the old 448.
-const MAX_QUADS: usize = 576;
+// The pitch markings add the quads they shade (see LINE_FLAT_SPREAD).
+const MAX_QUADS: usize = 576 + 48;
 
 /// GP0 polygon-command bit 25: blend this primitive with what is already in
 /// the framebuffer instead of overwriting it.
@@ -1665,6 +1666,9 @@ const LINE_STEP: i32 = 256;
 /// Curves are cut finely enough to read round: 226 uu a segment on the
 /// centre circle.
 const CIRCLE_SEGS: i32 = 32;
+/// The most a colour channel may change along a marking quad and still be
+/// drawn flat: under one 15-bit step, which is eight 8-bit ones.
+const LINE_FLAT_SPREAD: i32 = 6;
 const ARC_SEGS: i32 = 8;
 /// Sections (cross-cuts, two points each) and strips, with room.
 const MAX_LINE_SECTIONS: usize = 200;
@@ -4273,16 +4277,28 @@ impl Builder<'_> {
                     continue;
                 }
                 count_kept!();
-                // Flat, in the light at the cut it starts from: a Gouraud
-                // quad costs the GPU four times the setup and twice the
-                // fill, and the pitch light moves less than one 15-bit step
-                // from cut to cut.
+                // Flat where the light barely moves along the quad: a
+                // Gouraud quad costs the GPU four times the setup and twice
+                // the fill. Shaded where it does move, in the goal pools and
+                // down a long far step, or the chalk steps visibly from quad
+                // to quad.
                 let sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
-                let col = s.c;
-                if let Some(quad) = self.flats.push(QuadFlat::new(sp, col.0, col.1, col.2)) {
-                    self.ot.add_packet(LINE_SLOT, quad);
+                let (c0, c1) = (s.c, unsafe { sections.get_unchecked(j) }.c);
+                let dif = |u: u8, v: u8| (u as i32 - v as i32).abs();
+                if dif(c0.0, c1.0).max(dif(c0.1, c1.1)).max(dif(c0.2, c1.2)) > LINE_FLAT_SPREAD {
+                    if let Some(quad) = self.arena.push(QuadGouraud::new(sp, [c0, c0, c1, c1])) {
+                        self.ot.add_packet(LINE_SLOT, quad);
+                    } else {
+                        count_overflow!();
+                    }
                 } else {
-                    count_overflow!();
+                    let avg = |u: u8, v: u8| ((u as u16 + v as u16) / 2) as u8;
+                    let col = (avg(c0.0, c1.0), avg(c0.1, c1.1), avg(c0.2, c1.2));
+                    if let Some(quad) = self.flats.push(QuadFlat::new(sp, col.0, col.1, col.2)) {
+                        self.ot.add_packet(LINE_SLOT, quad);
+                    } else {
+                        count_overflow!();
+                    }
                 }
             }
         }
