@@ -490,6 +490,8 @@ const SHADOW_DEPTH_BIAS: i32 = 60;
 /// Boost pads read as objects on the ground rather than paint, so they come
 /// forward of the markings.
 const PAD_BIAS: i32 = 30;
+/// A distant pad orb's one colour: between its lit tips and dim sides.
+const PAD_ORB_FAR: Rgb = (225, 173, 57);
 
 /// Pulls the boost plume in front of the car's own shadow, which otherwise wins
 /// the slot and hides it.
@@ -1944,10 +1946,11 @@ static mut OT_SETS: [OrderingTable<OT_DEPTH>; 2] = [OrderingTable::new(), Orderi
 static mut SET: usize = 0;
 static mut PENDING: bool = false;
 static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; 2] = [QUADS_INIT; 2];
-/// The pitch markings' quads, one colour each: one per pair of cuts at
-/// worst. A flat quad costs the GPU a quarter of a Gouraud one's setup and
-/// half its fill.
-const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS;
+/// Single-colour quads: the pitch markings (one per pair of cuts at worst)
+/// and the pad plates (two a pad). A flat quad costs the GPU a quarter of a
+/// Gouraud one's setup and half its fill, so nothing that is one colour
+/// anyway pays for shading.
+const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS + 2 * sim::PADS.len();
 static mut FLAT_QUADS_SETS: [[QuadFlat; MAX_FLAT_QUADS]; 2] = [FLAT_QUADS_INIT; 2];
 const FLAT_QUADS_INIT: [QuadFlat; MAX_FLAT_QUADS] =
     [const { QuadFlat::new([(0, 0); 4], 0, 0, 0) }; MAX_FLAT_QUADS];
@@ -3561,6 +3564,15 @@ impl Builder<'_> {
         self.emit(sp, z_sum / 4 + bias, colors);
     }
 
+    /// Emit a projected quad of one colour. See [`MAX_FLAT_QUADS`].
+    fn emit_flat(&mut self, sp: [(i16, i16); 4], depth: i32, color: Rgb) {
+        if let Some(q) = self.flats.push(QuadFlat::new(sp, color.0, color.1, color.2)) {
+            self.ot.add_packet_depth(DEPTH_RANGE, depth, q);
+        } else {
+            count_overflow!();
+        }
+    }
+
     /// As [`Builder::quad_biased`], but semi-transparent: the GPU averages the
     /// quad with what is behind it. What the boost plume is made of.
     fn quad_blended(&mut self, corners: [(i32, i32, i32); 4], colors: [Rgb; 4], bias: i32) {
@@ -4284,6 +4296,11 @@ impl Builder<'_> {
     /// orb instead, and that is why you can see them. Two crossed vertical
     /// quads give one from any angle for the price of two polygons.
     fn pads(&mut self, s: &Sim, cull: &Cull) {
+        // Every corner is projected once and shared: the inner plate's
+        // corners are halfway from the centre to the outer plate's on screen
+        // (a 46-uu plate is too small for perspective to tell), and the two
+        // orb diamonds share their tips.
+        let proj = |x: i32, y: i32, z: i32| project(Vec3I16::new(x as i16, y as i16, z as i16));
         for (i, pad) in sim::PADS.iter().enumerate() {
             let r = if pad.big { 62 } else { 42 };
             let lift = if pad.big { 78 } else { 58 };
@@ -4295,9 +4312,10 @@ impl Builder<'_> {
             {
                 continue;
             }
+            let far = cull.flat_distance(pad.x, pad.z);
             // Past 3000 in a half-width view the orb is a pixel or two;
             // nothing a player steers by survives at that size.
-            if split_view() && cull.flat_distance(pad.x, pad.z) > 3000 {
+            if split_view() && far > 3000 {
                 continue;
             }
             let live = s.pad_timers[i] == 0;
@@ -4307,31 +4325,31 @@ impl Builder<'_> {
             // says a pad belongs here, so the layout is learnable and a spent one
             // reads as spent rather than as absent. Two rings, the outer a dark
             // kerb and the inner lit only while there is something to collect.
-            let g = r * 3 / 4;
-            let plate = |b: &mut Self, reach: i32, y: i32, colour: Rgb, bias: i32| {
-                b.quad_biased(
-                    [
-                        (px - reach, y, pz),
-                        (px, y, pz - reach),
-                        (px, y, pz + reach),
-                        (px + reach, y, pz),
-                    ],
-                    [colour; 4],
-                    bias,
-                );
-            };
+            //
             // A half-width view keeps only the orb once a pad is distant: the
             // plate rings are a couple of pixels there, and the split kickoff
             // sees every pad on the pitch from both views at once.
-            if !(split_view() && cull.flat_distance(px, pz) > 2000) {
-                plate(self, g, -4, (52, 56, 70), PAD_BIAS + 20);
-                plate(
-                    self,
-                    g / 2,
-                    -6,
-                    if live { dim } else { (34, 38, 50) },
-                    PAD_BIAS + 10,
-                );
+            // Past 4500 in a full view the plates are a sliver a pixel tall.
+            if far <= if split_view() { 2000 } else { 4500 } {
+                let g = r * 3 / 4;
+                let c = proj(px, -4, pz);
+                let o = [
+                    proj(px - g, -4, pz),
+                    proj(px, -4, pz - g),
+                    proj(px, -4, pz + g),
+                    proj(px + g, -4, pz),
+                ];
+                if c.sz != 0 && o.iter().all(|p| p.sz != 0) {
+                    let sp = [(o[0].sx, o[0].sy), (o[1].sx, o[1].sy), (o[2].sx, o[2].sy), (o[3].sx, o[3].sy)];
+                    if quad_overlaps_view(&sp) {
+                        let depth = o.iter().map(|p| p.sz as i32).sum::<i32>() / 4;
+                        self.emit_flat(sp, depth + PAD_BIAS + 20, (52, 56, 70));
+                        let half = |p: (i16, i16)| ((c.sx + p.0) >> 1, (c.sy + p.1) >> 1);
+                        let inner = [half(sp[0]), half(sp[1]), half(sp[2]), half(sp[3])];
+                        let lit = if live { dim } else { (34, 38, 50) };
+                        self.emit_flat(inner, depth + PAD_BIAS + 10, lit);
+                    }
+                }
             }
 
             // The orb only exists while the pad does. It used to linger as a
@@ -4340,22 +4358,39 @@ impl Builder<'_> {
             if !live {
                 continue;
             }
-            let top = -(lift + r);
+            let (t, b) = (proj(px, -(lift + r), pz), proj(px, -(lift - r), pz));
+            if t.sz == 0 || b.sz == 0 {
+                continue;
+            }
             let mid = -lift;
-            let bot = -(lift - r);
-            // Two diamonds in perpendicular vertical planes.
-            for axis in 0..2 {
-                let (ax, az) = if axis == 0 { (r, 0) } else { (0, r) };
-                self.quad_biased(
-                    [
-                        (px, top, pz),
-                        (px - ax, mid, pz - az),
-                        (px + ax, mid, pz + az),
-                        (px, bot, pz),
-                    ],
-                    [bright, dim, dim, bright],
-                    PAD_BIAS,
-                );
+            // Far away the orb is a few pixels of diamond whichever way it
+            // is built, so it is one flat diamond facing the camera, in the
+            // colour between the lit tips and the dim sides: a sixth of the
+            // GPU time of two shaded ones.
+            let sides: [(i32, i32); 2] = if far > if split_view() { 1200 } else { 2500 } {
+                [(r * cull.right[0] as i32 >> 12, r * cull.right[2] as i32 >> 12), (0, 0)]
+            } else {
+                // Two diamonds in perpendicular vertical planes.
+                [(r, 0), (0, r)]
+            };
+            let flat = sides[1] == (0, 0);
+            for &(ax, az) in sides.iter().take(if flat { 1 } else { 2 }) {
+                let (l, rr) = (proj(px - ax, mid, pz - az), proj(px + ax, mid, pz + az));
+                if l.sz == 0 || rr.sz == 0 {
+                    continue;
+                }
+                let sp = [(t.sx, t.sy), (l.sx, l.sy), (rr.sx, rr.sy), (b.sx, b.sy)];
+                count_offered!();
+                if !quad_overlaps_view(&sp) {
+                    continue;
+                }
+                count_kept!();
+                let depth = (t.sz as i32 + l.sz as i32 + rr.sz as i32 + b.sz as i32) / 4 + PAD_BIAS;
+                if flat {
+                    self.emit_flat(sp, depth, PAD_ORB_FAR);
+                } else {
+                    self.emit(sp, depth, [bright, dim, dim, bright]);
+                }
             }
         }
     }
