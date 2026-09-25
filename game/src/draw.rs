@@ -1985,7 +1985,8 @@ struct GlowQuad {
 /// Data words after the tag: the quad's thirteen and the restore.
 const GLOW_WORDS: u8 = 14;
 const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
-/// Goal halos (four a goal) and the ball's hoop and disc, with room.
+/// Goal halos (four a goal), and the ball's disc and hoop, the hoop cut
+/// into up to twelve cells near the camera, with room.
 const MAX_GLOWS: usize = 64;
 static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; 2] = [GLOW_INIT; 2];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
@@ -5470,7 +5471,7 @@ impl Builder<'_> {
     /// ball, with a disc inside it that grows to fill it as the ball comes
     /// down. The shadow says where the ball is; this says when it lands.
     /// Two additive quads, and only while the ball is up.
-    fn ball_ring(&mut self, s: &Sim) {
+    fn ball_ring(&mut self, s: &Sim, cull: &Cull) {
         let h = r(s.ball.p.y) - sim::BALL_R;
         if h < BALL_RING_MIN_H {
             return;
@@ -5481,24 +5482,64 @@ impl Builder<'_> {
         if x.abs() > sim::HALF_X - RAMP_R || z.abs() > sim::HALF_Z - RAMP_R {
             return;
         }
-        let flat = |b: &mut Self, rad: i32, tint: Rgb, packet| {
-            b.glow_quad(
-                [
-                    (x - rad, -3, z - rad),
-                    (x + rad, -3, z - rad),
-                    (x - rad, -3, z + rad),
-                    (x + rad, -3, z + rad),
-                ],
-                tint,
-                BALL_RING_BIAS,
-                packet,
-            );
+        // One quad per glow bent the hoop out of round wherever it was near
+        // (the PS1 maps a texture affinely across each triangle), so it is
+        // cut into a grid that is finer the closer it lies, the way the
+        // pitch is. The disc is a soft blob with no edge to bend, so it
+        // stays one quad.
+        let d = cull.flat_distance(x, z);
+        let hoop_n: i32 = if d < 900 {
+            4
+        } else if d < 3500 {
+            2
+        } else {
+            1
         };
-        flat(self, BALL_RING_R, BALL_RING_TINT, RING_PACKET);
+        let disc_n: i32 = 1;
+        let flat = |b: &mut Self, rad: i32, n: i32, hollow: bool, tint: Rgb, packet| {
+            let mut grid = [[None::<(i16, i16, i32)>; 5]; 5];
+            for (i, row) in grid.iter_mut().enumerate().take(n as usize + 1) {
+                for (j, corner) in row.iter_mut().enumerate().take(n as usize + 1) {
+                    let gx = x - rad + 2 * rad * i as i32 / n;
+                    let gz = z - rad + 2 * rad * j as i32 / n;
+                    let p = project(Vec3I16::new(gx as i16, -3, gz as i16));
+                    if p.sz != 0 {
+                        *corner = Some((p.sx, p.sy, p.sz as i32));
+                    }
+                }
+            }
+            let uv = |i: usize| (GLOW_W as i32 * i as i32 / n) as u8;
+            for i in 0..n as usize {
+                for j in 0..n as usize {
+                    // A 4x4 hoop's middle four cells lie wholly inside its
+                    // hole: nothing there to draw.
+                    if hollow && n == 4 && (1..=2).contains(&i) && (1..=2).contains(&j) {
+                        continue;
+                    }
+                    count_offered!();
+                    let (Some(a), Some(bb), Some(c), Some(dd)) =
+                        (grid[i][j], grid[i + 1][j], grid[i][j + 1], grid[i + 1][j + 1])
+                    else {
+                        continue;
+                    };
+                    let sp = [(a.0, a.1), (bb.0, bb.1), (c.0, c.1), (dd.0, dd.1)];
+                    if !quad_overlaps_view(&sp) {
+                        continue;
+                    }
+                    count_kept!();
+                    let (u0, u1) = (GLOW_U0 + uv(i), GLOW_U0 + uv(i + 1));
+                    let (v0, v1) = (GLOW_V0 + uv(j), GLOW_V0 + uv(j + 1));
+                    let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
+                    let depth = (a.2 + bb.2 + c.2 + dd.2) / 4 + BALL_RING_BIAS;
+                    b.emit_glow(sp, depth, uvs, tint, packet);
+                }
+            }
+        };
+        flat(self, BALL_RING_R, hoop_n, true, BALL_RING_TINT, RING_PACKET);
         // The disc is the landing: a spot at the top of the flight, the
         // whole hoop on touchdown.
         let fill = (4096 - h * 4096 / BALL_RING_FULL_H).clamp(600, 4096);
-        flat(self, BALL_RING_R * fill >> 12, BALL_DISC_TINT, GLOW_PACKET);
+        flat(self, BALL_RING_R * fill >> 12, disc_n, false, BALL_DISC_TINT, GLOW_PACKET);
     }
 
     /// A patch on the floor under something airborne. Cheap, and without it you
@@ -6508,7 +6549,7 @@ fn build_view(
                 }
                 b.ceiling(&cull);
                 b.goals(&view);
-                b.ball_ring(s);
+                b.ball_ring(s, &cull);
                 b.shadow(
                     r(s.ball.p.x),
                     r(s.ball.p.y) - sim::BALL_R,
