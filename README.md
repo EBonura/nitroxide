@@ -29,8 +29,8 @@ runs at the original PlayStation's 320×240 resolution.
 The disc image is on [itch.io](https://bonnie-studios.itch.io/nitroxide),
 music included: the soundtrack rides the disc as CD audio, so the download is
 the full experience. NitroXide also ships on the
-[PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc), which runs
-[in your browser](https://bonnie-studios.itch.io/psoxide) on the PSoXide
+[PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc), which
+runs [in your browser](https://bonnie-studios.itch.io/psoxide) on the PSoXide
 page, no console needed.
 
 ## Build
@@ -307,8 +307,21 @@ explicitly with `PSOXIDE_FROM`.
 
 ## Recent changes
 
-Source snapshot **2026.09.05**: Pinned SDK and engine sources separately and switched to the standalone emulator.
-See the [changelog](CHANGELOG.md) for the remaining changes and published download versions.
+**0.3.0 (not yet published): the arena and HUD overhaul.** The pitch now looks
+like a stadium. Each half, its walls and the roof glow in that team's colour,
+the goals are lit the same way, boost pads are pools of light with the orbs
+floating over them again, and the goal boxes and arcs are marked on the pitch
+as real geometry, so they stay straight up close and don't vanish far away.
+There's a crowd behind the cage, and an airborne ball gets a hoop on the pitch
+with a disc inside it that fills up as the ball comes down, so you can read a
+high ball's landing at a glance. The scoreboard shrinks to a tab while you
+play, the goal banner and results text are outlined, and split-screen ball
+cam keeps your own car in frame. Under the hood the wheels and car vertices
+are posed on the GTE, distant cars and the ball draw from low-detail meshes,
+and the game links in a profile-placed I-cache order.
+
+See the [changelog](CHANGELOG.md) for the full list and the published download
+versions.
 
 ## PSoXide source components
 
