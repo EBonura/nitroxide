@@ -1,10 +1,12 @@
-NitroXide (PSX)  -  v0.2.4
+NitroXide (PSX)  -  v0.3.0
 ==========================
 
 A Rocket League-style rocket-car soccer game for the original PlayStation:
-drive, boost and score, solo or two players split-screen. This release improves
-the curved arena, wall-car and camera transitions, boost pickup balance, roof
-visibility, and the stability of the pitch markings. No AI opponent yet.
+drive, boost and score against the CPU, or with a friend in split-screen.
+This release is the arena and HUD overhaul: team-coloured halves, walls and
+roof, lit goals, boost pads as pools of light under floating orbs, goal boxes
+and arcs on the pitch, a crowd behind the cage, a landing hoop under an
+airborne ball, and a scoreboard that tucks into a tab while you play.
 
 To run:
   - Boot NitroXide.cue in a PS1 emulator (PSoXide, DuckStation, or
