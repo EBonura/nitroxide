@@ -38,7 +38,8 @@ const MARKED_CLUT_ROW: usize = 3;
 const PAD_CLUT_ROW: usize = 4;
 const SPENT_CLUT_ROW: usize = 5;
 const GLOW_CLUT_ROW: usize = 6;
-const CLUT_ROWS: usize = 7;
+const RING_CLUT_ROW: usize = 7;
+const CLUT_ROWS: usize = 8;
 /// A 32x32 radial glow below the goal net: index 15 at the centre falling to
 /// 1 at the rim, 0 (a hole) outside it. Every light in the arena that is not
 /// baked into a vertex tint (boost pads, orbs, halos, goal glow, the ball's
@@ -120,6 +121,19 @@ fn spent_palette() -> Vec<[u8; 3]> {
             0 => [0, 0, 0],
             1..=3 => [72, 76, 92],
             _ => [44, 48, 62],
+        })
+        .collect()
+}
+
+/// The ball's ground ring: only the outer rings of the glow tile are lit,
+/// the rest are holes, so one quad draws a hoop.
+fn ring_palette() -> Vec<[u8; 3]> {
+    (0..CLUT_ENTRIES)
+        .map(|i| match i {
+            1 => [170, 170, 170],
+            2 | 3 => [255, 255, 255],
+            4 => [110, 110, 110],
+            _ => [0, 0, 0],
         })
         .collect()
 }
@@ -228,6 +242,7 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
         pad_palette(),
         spent_palette(),
         glow_palette(),
+        ring_palette(),
     ];
     assert_eq!(palette_rows.len(), CLUT_ROWS);
     let mut blob = encode_indexed_psxt_with_clut_rows(
@@ -253,6 +268,9 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
     for entry in 1..CLUT_ENTRIES {
         set_clut_mask_bit(&mut blob, PAD_CLUT_ROW, entry);
         set_clut_mask_bit(&mut blob, GLOW_CLUT_ROW, entry);
+    }
+    for entry in 1..=4 {
+        set_clut_mask_bit(&mut blob, RING_CLUT_ROW, entry);
     }
     validate(&blob);
     blob

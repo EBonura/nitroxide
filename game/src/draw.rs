@@ -667,6 +667,19 @@ const MAX_QUADS: usize = 576;
 /// the framebuffer instead of overwriting it.
 const SEMI_TRANSPARENT: u32 = 1 << 25;
 
+/// The ball indicator: shown once the ball's underside is this high, its
+/// hoop radius, the height at which its inner disc is smallest, and tints.
+const BALL_RING_MIN_H: i32 = 150;
+/// Filed well in front of the pitch under it. At the pads' bias the far half
+/// of the hoop lost the ordering-table slot to the grass it lies on; the hoop
+/// is additive, so where this lets it over the underside of a low ball it
+/// only brightens it, and it is not drawn for a ball that low.
+const BALL_RING_BIAS: i32 = -200;
+const BALL_RING_R: i32 = 190;
+const BALL_RING_FULL_H: i32 = 1400;
+const BALL_RING_TINT: Rgb = (132, 140, 132);
+const BALL_DISC_TINT: Rgb = (84, 94, 76);
+
 /// Sides on a shadow disc.
 ///
 /// Eight, drawn as three quads in a strip. A shadow is twenty to forty pixels
@@ -1211,6 +1224,8 @@ const PAD_CLUT: Clut = Clut::new(384, 261);
 const SPENT_CLUT: Clut = Clut::new(384, 262);
 /// A plain radial falloff for every other light sprite.
 const GLOW_CLUT: Clut = Clut::new(384, 263);
+/// The glow tile's outer rings only: one quad draws a hoop.
+const RING_CLUT: Clut = Clut::new(384, 264);
 /// The 32x32 radial glow tile, below the goal net in the base page.
 const GLOW_U0: u8 = 0;
 const GLOW_V0: u8 = 112;
@@ -1288,6 +1303,11 @@ const PAD_PACKET: TexturedGouraudPacketMaterial =
         .textured_gouraud_packet_material();
 const GLOW_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(GLOW_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+        .with_blend_mode(BlendMode::Add)
+        .with_dither(true)
+        .textured_gouraud_packet_material();
+const RING_PACKET: TexturedGouraudPacketMaterial =
+    TextureMaterial::new(RING_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_blend_mode(BlendMode::Add)
         .with_dither(true)
         .textured_gouraud_packet_material();
@@ -1524,8 +1544,8 @@ pub fn upload_arena_texture(blob: &[u8]) -> bool {
         || texture.height() as usize != TEX_H
         || texture.halfwords_per_row() as usize != TEX_HALFWORDS_PER_ROW
         || texture.pixel_bytes().len() != TEX_HALFWORDS_PER_ROW * TEX_H * 2
-        || texture.clut_entries() != 16 * 7
-        || texture.clut_bytes().len() != 16 * 7 * 2
+        || texture.clut_entries() != 16 * 8
+        || texture.clut_bytes().len() != 16 * 8 * 2
     {
         return false;
     }
@@ -1556,6 +1576,7 @@ pub fn upload_arena_texture(blob: &[u8]) -> bool {
         PAD_CLUT,
         SPENT_CLUT,
         GLOW_CLUT,
+        RING_CLUT,
     ]
         .iter()
         .copied()
@@ -4977,6 +4998,41 @@ impl Builder<'_> {
 
     // ---- actors --------------------------------------------------------
 
+    /// Rocket League's ball indicator: a hoop on the pitch under an airborne
+    /// ball, with a disc inside it that grows to fill it as the ball comes
+    /// down. The shadow says where the ball is; this says when it lands.
+    /// Two additive quads, and only while the ball is up.
+    fn ball_ring(&mut self, s: &Sim) {
+        let h = r(s.ball.p.y) - sim::BALL_R;
+        if h < BALL_RING_MIN_H {
+            return;
+        }
+        let (x, z) = (r(s.ball.p.x), r(s.ball.p.z));
+        // Over the pitch only: past the foot of the ramp the floor curves
+        // up and a flat hoop would cut through it.
+        if x.abs() > sim::HALF_X - RAMP_R || z.abs() > sim::HALF_Z - RAMP_R {
+            return;
+        }
+        let flat = |b: &mut Self, rad: i32, tint: Rgb, packet| {
+            b.glow_quad(
+                [
+                    (x - rad, -3, z - rad),
+                    (x + rad, -3, z - rad),
+                    (x - rad, -3, z + rad),
+                    (x + rad, -3, z + rad),
+                ],
+                tint,
+                BALL_RING_BIAS,
+                packet,
+            );
+        };
+        flat(self, BALL_RING_R, BALL_RING_TINT, RING_PACKET);
+        // The disc is the landing: a spot at the top of the flight, the
+        // whole hoop on touchdown.
+        let fill = (4096 - h * 4096 / BALL_RING_FULL_H).clamp(600, 4096);
+        flat(self, BALL_RING_R * fill >> 12, BALL_DISC_TINT, GLOW_PACKET);
+    }
+
     /// A patch on the floor under something airborne. Cheap, and without it you
     /// cannot tell a high ball from a near one. Takes separate half-extents
     /// because a car is two and a half times longer than it is wide, and a
@@ -5957,6 +6013,7 @@ fn build_view(
                 }
                 b.ceiling(&cull);
                 b.goals(&view);
+                b.ball_ring(s);
                 b.shadow(
                     r(s.ball.p.x),
                     r(s.ball.p.y) - sim::BALL_R,
