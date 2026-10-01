@@ -1115,20 +1115,33 @@ const ROOF_HALF_X: i32 = sim::HALF_X - CEIL_R;
 const ROOF_HALF_Z: i32 = sim::HALF_Z - CEIL_R;
 const ROOF_COLS: usize = ((2 * ROOF_HALF_X + ROOF_STEP_X - 1) / ROOF_STEP_X) as usize;
 const ROOF_ROWS: usize = ((2 * ROOF_HALF_Z + ROOF_STEP_Z - 1) / ROOF_STEP_Z) as usize;
-/// Light at every roof patch corner, baked once with `CEIL_LIGHT`. The draw
-/// used to re-blend the four roof corners for all four corners of every patch
-/// every frame (twelve mixes a patch, about a hundred patches a view), which
-/// was the single largest cost of a split frame; the roof never moves.
-static mut ROOF_CORNER_LIGHT: [[Rgb; ROOF_ROWS + 1]; ROOF_COLS + 1] =
-    [[(128, 128, 128); ROOF_ROWS + 1]; ROOF_COLS + 1];
+/// Light at every roof patch corner, baked once with `CEIL_LIGHT`, as the
+/// GPU colour words the patches carry. The draw used to re-blend the four
+/// roof corners for all four corners of every patch every frame (twelve
+/// mixes a patch, about a hundred patches a view), which was the single
+/// largest cost of a split frame; the roof never moves. Words rather than
+/// RGB triples: a byte at a time was twelve main-RAM loads a patch.
+static mut ROOF_CORNER_LIGHT: [[u32; ROOF_ROWS + 1]; ROOF_COLS + 1] =
+    [[rgbc((128, 128, 128)); ROOF_ROWS + 1]; ROOF_COLS + 1];
 /// The same corners before the team colours go over them.
 static mut ROOF_BASE: [[Rgb; ROOF_ROWS + 1]; ROOF_COLS + 1] =
     [[(128, 128, 128); ROOF_ROWS + 1]; ROOF_COLS + 1];
 /// World X of roof corner column `ix` (the last column is clipped to the
 /// roof edge, as the patch walk always did).
-fn roof_corner_x(ix: usize) -> i32 {
-    (-ROOF_HALF_X + ix as i32 * ROOF_STEP_X).min(ROOF_HALF_X)
+const fn roof_corner_x(ix: usize) -> i32 {
+    let x = -ROOF_HALF_X + ix as i32 * ROOF_STEP_X;
+    if x < ROOF_HALF_X { x } else { ROOF_HALF_X }
 }
+/// Cover texels across each roof column, for its patches' U range.
+const ROOF_PATCH_W: [u8; ROOF_COLS] = {
+    let mut w = [0u8; ROOF_COLS];
+    let mut ix = 0;
+    while ix < ROOF_COLS {
+        w[ix] = cover_texels(roof_corner_x(ix + 1) - roof_corner_x(ix));
+        ix += 1;
+    }
+    w
+};
 fn roof_corner_z(iz: usize) -> i32 {
     (-ROOF_HALF_Z + iz as i32 * ROOF_STEP_Z).min(ROOF_HALF_Z)
 }
@@ -1284,7 +1297,7 @@ fn build_lighting() {
             let tz = ((pz + z) * 16 / (2 * z)).clamp(0, 16);
             let c = mix(mix(l[0], l[1], tx), mix(l[2], l[3], tx), tz);
             unsafe {
-                ROOF_CORNER_LIGHT[ix][iz] = c;
+                ROOF_CORNER_LIGHT[ix][iz] = rgbc(c);
                 ROOF_BASE[ix][iz] = c;
             }
         }
@@ -1706,7 +1719,7 @@ fn paint_curb() {
     }
     for ix in 0..=ROOF_COLS {
         for iz in 0..=ROOF_ROWS {
-            unsafe { ROOF_CORNER_LIGHT[ix][iz] = glow(ROOF_BASE[ix][iz], roof_corner_z(iz)) };
+            unsafe { ROOF_CORNER_LIGHT[ix][iz] = rgbc(glow(ROOF_BASE[ix][iz], roof_corner_z(iz))) };
         }
     }
     paint_goal_pools();
@@ -2383,6 +2396,33 @@ impl Cull {
         // has half the vertical frustum, and the roof and far floor go with it.
         let half_h = unsafe { VIEW_HALF_H };
         y.abs() - Self::extent(self.vertical, h) <= z * half_h / PROJ_H as i32
+    }
+
+    /// How far a box with half-extents `h` reaches along the forward, right
+    /// and vertical view axes: [`Self::extent`] on each, for a box size that
+    /// is tested many times a frame.
+    fn extents(&self, h: (i32, i32, i32)) -> [i32; 3] {
+        [
+            Self::extent(self.fwd, h),
+            Self::extent(self.right, h),
+            Self::extent(self.vertical, h),
+        ]
+    }
+
+    /// `visible(c, h) && visible_vertically(c, h)`, given `extents(h)`: the
+    /// same tests on the same integers, with the forward distance and the
+    /// extents computed once rather than once per test.
+    fn visible_box(&self, c: (i32, i32, i32), e: [i32; 3]) -> bool {
+        let d = (c.0 - self.pos.0, c.1 - self.pos.1, c.2 - self.pos.2);
+        let z = Self::dot(self.fwd, d) + e[0];
+        if z <= 0 {
+            return false;
+        }
+        if Self::dot(self.right, d).abs() - e[1] > z * cull_half_w() / PROJ_H as i32 {
+            return false;
+        }
+        let half_h = unsafe { VIEW_HALF_H };
+        Self::dot(self.vertical, d).abs() - e[2] <= z * half_h / PROJ_H as i32
     }
 
     /// Chebyshev distance from the camera on the ground plane, which is what
@@ -3206,12 +3246,23 @@ struct WheelPose {
     travel: [i16; 2],
 }
 
-/// Wheel vertex indices per car, front axle (slots 2 and 3) first, then the
-/// rear; `WHEEL_LIST_SPLIT` is where the rear starts and `WHEEL_LIST_LEN` the
-/// total. Built at boot so the per-frame pass never scans the bodywork.
-static mut WHEEL_LIST: [[u16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
-static mut WHEEL_LIST_SPLIT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
-static mut WHEEL_LIST_LEN: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
+/// Wheel vertex indices per car, grouped by wheel in [`WHEEL_ORDER`];
+/// `WHEEL_BOUNDS` is where each group starts, with the total last. Built at
+/// boot so the per-frame pass never scans the bodywork.
+static mut WHEEL_LIST: [[u16; WHEEL_CAP]; CAR_SLOTS] = [[0; WHEEL_CAP]; CAR_SLOTS];
+/// Wheel vertices a car may have. The committed cars have 72 to 96; a mesh
+/// with more poses only the first `WHEEL_CAP`.
+const WHEEL_CAP: usize = 128;
+static mut WHEEL_BOUNDS: [[u16; 5]; CAR_SLOTS] = [[0; 5]; CAR_SLOTS];
+/// Each listed wheel vertex's posing input, three words in list order: its
+/// offset from its wheel's pivot (x and y packed), that offset's z with the
+/// normal's z above it, and the normal's x and y packed. Main-RAM loads are
+/// the posing pass's cost, and these are three where the tables were nine.
+static mut WHEEL_IN: [[[u32; 3]; WHEEL_CAP]; CAR_SLOTS] = [[[0; 3]; WHEEL_CAP]; CAR_SLOTS];
+/// Wheel slots in posing order: the front axle (front-left, front-right),
+/// then the rear (rear-left, rear-right), so each axle's turn and each
+/// wheel's pivot are loaded once.
+const WHEEL_ORDER: [u8; 4] = [2, 3, 0, 1];
 /// This frame's posed wheel vertices as GTE words (position xy, z, normal
 /// xy, z), indexed by vertex; only wheel entries are ever read.
 static mut POSED_WHEELS: [[u32; 4]; CAR_VERT_CAP] = [[0; 4]; CAR_VERT_CAP];
@@ -3228,19 +3279,33 @@ fn build_wheel_lists() {
     for which in 0..CAR_SLOTS {
         let slots = CAR_WHEELS[which];
         let count = car_projected_count(which);
+        let (vxy, vz) = unsafe { (&CAR_VERT_XY[which], &CAR_VERT_Z[which]) };
+        let (nxy, nz) = unsafe { (&CAR_NORMAL_XY[which], &CAR_NORMAL_Z[which]) };
         let mut n = 0;
-        for front in [true, false] {
-            if !front {
-                unsafe { WHEEL_LIST_SPLIT[which] = n as u16 };
-            }
+        for (w, &wheel) in WHEEL_ORDER.iter().enumerate() {
+            unsafe { WHEEL_BOUNDS[which][w] = n as u16 };
+            let c = unsafe { CAR_WHEEL_CENTRES[which][wheel as usize] };
             for (i, &slot) in slots.iter().enumerate().take(count) {
-                if slot != WHEEL_NONE && slot < 4 && (slot >= 2) == front {
-                    unsafe { WHEEL_LIST[which][n] = i as u16 };
-                    n += 1;
+                if slot != wheel || n == WHEEL_CAP {
+                    continue;
                 }
+                let local = Vec3I16::new(
+                    (vxy[i] as i16).wrapping_sub(c.x),
+                    ((vxy[i] >> 16) as i16).wrapping_sub(c.y),
+                    vz[i].wrapping_sub(c.z),
+                );
+                unsafe {
+                    WHEEL_LIST[which][n] = i as u16;
+                    WHEEL_IN[which][n] = [
+                        local.xy_packed(),
+                        (local.z as u16 as u32) | ((nz[i] as u16 as u32) << 16),
+                        nxy[i],
+                    ];
+                }
+                n += 1;
             }
         }
-        unsafe { WHEEL_LIST_LEN[which] = n as u16 };
+        unsafe { WHEEL_BOUNDS[which][4] = n as u16 };
     }
 }
 
@@ -3255,46 +3320,41 @@ fn build_wheel_lists() {
 /// way, so the words match the CPU path bit for bit. Eighteen CPU multiplies
 /// a vertex were most of the car projection's cost.
 fn pose_wheels(which: usize, centres: &[Vec3I16; 4], pose: &WheelPose) {
-    let slots = CAR_WHEELS[which];
-    let (vxy, vz) = unsafe { (&CAR_VERT_XY[which], &CAR_VERT_Z[which]) };
-    let (nxy, nz) = unsafe { (&CAR_NORMAL_XY[which], &CAR_NORMAL_Z[which]) };
     let list = unsafe { &WHEEL_LIST[which] };
-    let (split, len) = unsafe {
-        (
-            WHEEL_LIST_SPLIT[which] as usize,
-            WHEEL_LIST_LEN[which] as usize,
-        )
-    };
+    let input = unsafe { &WHEEL_IN[which] };
+    let bounds = unsafe { WHEEL_BOUNDS[which] };
     let posed = unsafe { &mut POSED_WHEELS };
     let narrow = |value: i32| value.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
     scene::load_translation(Vec3I32::new(0, 0, 0));
-    for (axle, rotation, range) in [(0usize, &pose.front, 0..split), (1, &pose.rear, split..len)] {
+    for (axle, rotation) in [&pose.front, &pose.rear].into_iter().enumerate() {
         scene::load_rotation(rotation);
         let travel = pose.travel[axle] as i32;
-        for &i in &list[range] {
-            let i = i as usize;
-            let centre = centres[slots[i] as usize];
-            let local = Vec3I16::new(
-                (vxy[i] as i16).wrapping_sub(centre.x),
-                ((vxy[i] >> 16) as i16).wrapping_sub(centre.y),
-                vz[i].wrapping_sub(centre.z),
-            );
-            // The SDK's padded schedule: two NOPs between the V0 writes and
-            // MVMVA, the console-confirmed fix for the HWB-010/011 commit slip
-            // that has MVMVA read the previous V0.x.
-            let turned = scene::transform_vertex_scheduled(local);
-            let lit = scene::transform_vertex_scheduled(Vec3I16::new(
-                nxy[i] as i16,
-                (nxy[i] >> 16) as i16,
-                nz[i],
-            ));
-            let p = Vec3I16::new(
-                narrow(centre.x as i32 + turned.x),
-                narrow(centre.y as i32 + turned.y + travel),
-                narrow(centre.z as i32 + turned.z),
-            );
-            let n = Vec3I16::new(narrow(lit.x), narrow(lit.y), narrow(lit.z));
-            posed[i] = [p.xy_packed(), p.z_packed(), n.xy_packed(), n.z_packed()];
+        for w in axle * 2..axle * 2 + 2 {
+            let centre = centres[WHEEL_ORDER[w] as usize];
+            let (cx, cy, cz) = (centre.x as i32, centre.y as i32 + travel, centre.z as i32);
+            let range = bounds[w] as usize..bounds[w + 1] as usize;
+            for (&i, &[local_xy, zs, n_xy]) in list[range.clone()].iter().zip(&input[range]) {
+                // The SDK's padded schedule: two NOPs between the V0 writes
+                // and MVMVA, the console-confirmed fix for the HWB-010/011
+                // commit slip that has MVMVA read the previous V0.x.
+                let turned = scene::transform_vertex_scheduled(Vec3I16::new(
+                    local_xy as i16,
+                    (local_xy >> 16) as i16,
+                    zs as i16,
+                ));
+                let lit = scene::transform_vertex_scheduled(Vec3I16::new(
+                    n_xy as i16,
+                    (n_xy >> 16) as i16,
+                    (zs >> 16) as i16,
+                ));
+                let p = Vec3I16::new(
+                    narrow(cx + turned.x),
+                    narrow(cy + turned.y),
+                    narrow(cz + turned.z),
+                );
+                let n = Vec3I16::new(narrow(lit.x), narrow(lit.y), narrow(lit.z));
+                posed[i as usize] = [p.xy_packed(), p.z_packed(), n.xy_packed(), n.z_packed()];
+            }
         }
     }
 }
@@ -3400,6 +3460,35 @@ fn radix_sort_u32_high16(keys: &mut [u32]) {
     // Two passes leave the result back in `keys`.
 }
 
+/// Sort `keys` ascending by their high 16 bits, ties kept in index order, and
+/// return the sorted run, which is in `keys` or in `CAR_SORT_SPARE`. A car's
+/// faces span a few hundred depth units, so when the run's depths `lo..=hi`
+/// fit one 256-bucket pass, a single counting pass over just that range puts
+/// the faces in the order the two byte passes did, for about half the cost.
+fn sort_by_depth(keys: &mut [u32], lo: u32, hi: u32) -> &[u32] {
+    if keys.is_empty() || hi - lo >= 256 {
+        radix_sort_u32_high16(keys);
+        return keys;
+    }
+    let spare = unsafe { &mut CAR_SORT_SPARE[..keys.len()] };
+    let mut counts = [0u16; 256];
+    for &k in keys.iter() {
+        counts[((k >> 16) - lo) as usize] += 1;
+    }
+    let mut start = 0u16;
+    for c in counts[..=(hi - lo) as usize].iter_mut() {
+        let n = *c;
+        *c = start;
+        start += n;
+    }
+    for &k in keys.iter() {
+        let b = ((k >> 16) - lo) as usize;
+        spare[counts[b] as usize] = k;
+        counts[b] += 1;
+    }
+    spare
+}
+
 fn submit_car_faces(
     faces: &[[u16; 3]],
     projected: &[CarLit],
@@ -3416,8 +3505,17 @@ fn submit_car_faces(
     // car, and the slot spread still orders it against the world.
     // Off the stack: the cap is sized for the detailed front-end car.
     let keys = unsafe { &mut CAR_SORT_KEYS };
+    // Each front face's packet is written as soon as the face passes the
+    // back-face test, while its corners are still in registers, and the sort
+    // key carries the packet's place in the arena rather than the face's.
+    // Re-reading the face and its three corners from main RAM after the sort
+    // was nine stalled loads per drawn face. Same packets, linked in the same
+    // order (the radix sort is stable and front faces keep mesh order), so
+    // the same pixels; only where each packet sits in the arena moves.
     let mut n = 0usize;
-    for (i, face) in faces.iter().enumerate().take(CAR_FACE_CAP) {
+    let mut first: *mut TriGouraud = core::ptr::null_mut();
+    let (mut lo, mut hi) = (u32::MAX, 0u32);
+    for face in faces.iter().take(CAR_FACE_CAP) {
         let a = &projected[face[0] as usize];
         let b = &projected[face[1] as usize];
         let c = &projected[face[2] as usize];
@@ -3425,19 +3523,6 @@ fn submit_car_faces(
             continue;
         }
         let depth = ((a.sz + b.sz + c.sz) as i32 / 3).clamp(0, 0xffff) as u32;
-        keys[n] = (depth << 16) | i as u32;
-        n += 1;
-    }
-    // Two-pass radix on the 16-bit depth (the index rides in the low half):
-    // about a third of quicksort's cost at this size, and the order is
-    // total, so painter's order inside a slot is exact either way.
-    radix_sort_u32_high16(&mut keys[..n]);
-    for &key in &keys[..n] {
-        let face = &faces[(key & 0xffff) as usize];
-        let a = &projected[face[0] as usize];
-        let b = &projected[face[1] as usize];
-        let c = &projected[face[2] as usize];
-        let depth = (key >> 16) as i32;
         // Word for word what `TriGouraud::new` builds from the unpacked
         // corners: the GTE's SXY is the GPU's vertex word and its RGB the
         // colour word, both with nothing in the bits the packet leaves clear.
@@ -3450,11 +3535,26 @@ fn submit_car_faces(
             color2: c.rgb,
             v2: c.xy,
         };
-        if let Some(t) = tris.push(prim) {
-            ot.add_packet_depth(DEPTH_RANGE, depth, t);
-        } else {
-            return;
+        let Some(t) = tris.push(prim) else {
+            break;
+        };
+        if n == 0 {
+            first = t;
         }
+        keys[n] = (depth << 16) | n as u32;
+        n += 1;
+        lo = lo.min(depth);
+        hi = hi.max(depth);
+    }
+    // A counting sort on the 16-bit depth (the index rides in the low half),
+    // or the two-pass radix when the depths spread too far for one pass:
+    // either is a fraction of quicksort's cost at this size, and the order
+    // is total, so painter's order inside a slot is exact either way.
+    for &key in sort_by_depth(&mut keys[..n], lo, hi) {
+        // SAFETY: the arena hands out consecutive slots, so the n packets
+        // pushed above start at `first`, and the index came from that count.
+        let t = unsafe { &mut *first.add((key & 0xffff) as usize) };
+        ot.add_packet_depth(DEPTH_RANGE, (key >> 16) as i32, t);
     }
 }
 
@@ -4209,7 +4309,7 @@ impl Builder<'_> {
         let step_z = sim::HALF_Z * 2 / TILES_Z;
         // The pitch is flat, so a tile's box is its footprint with no height.
         // The chamfer only ever pulls corners inward, so this stays generous.
-        let tile_h = (step_x / 2, 0, step_z / 2);
+        let tile_e = cull.extents((step_x / 2, 0, step_z / 2));
         for ix in 0..TILES_X {
             for iz in 0..TILES_Z {
                 let x0 = -sim::HALF_X + ix * step_x;
@@ -4219,9 +4319,7 @@ impl Builder<'_> {
                 // The vertical test matters in a half-height view: the tiles
                 // under and just ahead of the camera, the subdivided ones,
                 // fall below its bottom edge.
-                if !cull.visible((mx, 0, mz), tile_h)
-                    || !cull.visible_vertically((mx, 0, mz), tile_h)
-                {
+                if !cull.visible_box((mx, 0, mz), tile_e) {
                     continue;
                 }
                 // Mown stripes down the pitch and the whole floodlight
@@ -4396,7 +4494,7 @@ impl Builder<'_> {
             let strip = unsafe { LINE_STRIPS[k] };
             let c = (strip.centre.0, 0, strip.centre.1);
             let h = (strip.half.0, 0, strip.half.1);
-            if !cull.visible(c, h) || !cull.visible_vertically(c, h) {
+            if !cull.visible_box(c, cull.extents(h)) {
                 continue;
             }
             let (mut i, last) = (strip.first as usize, strip.last as usize);
@@ -4473,15 +4571,15 @@ impl Builder<'_> {
         // (a 46-uu plate is too small for perspective to tell), and the two
         // orb diamonds share their tips.
         let proj = |x: i32, y: i32, z: i32| project(Vec3I16::new(x as i16, y as i16, z as i16));
+        // The two pad sizes' cull boxes, (r, top / 2, r) below.
+        let pad_e = [cull.extents((42, 50, 42)), cull.extents((62, 70, 62))];
         for (i, pad) in sim::PADS.iter().enumerate() {
             let r = if pad.big { 62 } else { 42 };
             let lift = if pad.big { 78 } else { 58 };
             // Orb and pool together: the orb tops out at `lift + r` and the
             // pool lies on the pitch, so the box runs the whole way down.
             let top = lift + r;
-            if !cull.visible((pad.x, -top / 2, pad.z), (r, top / 2, r))
-                || !cull.visible_vertically((pad.x, -top / 2, pad.z), (r, top / 2, r))
-            {
+            if !cull.visible_box((pad.x, -top / 2, pad.z), pad_e[pad.big as usize]) {
                 continue;
             }
             let far = cull.flat_distance(pad.x, pad.z);
@@ -5080,24 +5178,32 @@ impl Builder<'_> {
         // `build_view` runs this on. One place projects a ring, the top of
         // each pass (the first pass only primes `upper`), so the projection
         // stays inline and the GTE's latency stays hidden behind the loop.
-        let mut lower: [Option<(i16, i16, i32)>; SLOTS];
-        let mut upper = [None; SLOTS];
+        // Two ring buffers swapped by row parity: copying the upper ring
+        // into the lower one every row was a measurable memcpy per span.
+        let mut ring_buf: [[Option<(i16, i16, i32)>; SLOTS]; 2] = [[None; SLOTS]; 2];
+        // A straight span sweeps every column along the same normal, so its
+        // inward offset is one pair of multiplies a ring, not a pair a vertex.
+        let straight = (1..columns).all(|k| cnx[k] == cnx[0] && cnz[k] == cnz[0]);
         for row in 0..ring_count {
             let top = rings[row];
-            lower = upper;
+            let (lower, upper) = {
+                let (a, b) = ring_buf.split_at_mut(1);
+                if row & 1 == 0 { (&a[0], &mut b[0]) } else { (&b[0], &mut a[0]) }
+            };
             let p = profile[top];
+            let shared = ((cnx[0] * p.0) >> 12, (cnz[0] * p.0) >> 12);
             for k in 0..columns {
                 // Each column sweeps the profile along its own normal: one
                 // normal for a straight span, turning round a corner span's
                 // rounded joints.
-                let (x0, z0, nx, nz) = unsafe {
-                    (*sx.get_unchecked(k), *sz.get_unchecked(k), *cnx.get_unchecked(k), *cnz.get_unchecked(k))
+                let (x0, z0) = unsafe { (*sx.get_unchecked(k), *sz.get_unchecked(k)) };
+                let (ox, oz) = if straight {
+                    shared
+                } else {
+                    let (nx, nz) = unsafe { (*cnx.get_unchecked(k), *cnz.get_unchecked(k)) };
+                    ((nx * p.0) >> 12, (nz * p.0) >> 12)
                 };
-                let v = project(Vec3I16::new(
-                    (x0 + ((nx * p.0) >> 12)) as i16,
-                    -p.1 as i16,
-                    (z0 + ((nz * p.0) >> 12)) as i16,
-                ));
+                let v = project(Vec3I16::new((x0 + ox) as i16, -p.1 as i16, (z0 + oz) as i16));
                 upper[k] = if v.sz != 0 {
                     Some((v.sx, v.sy, v.sz as i32))
                 } else {
@@ -5183,7 +5289,7 @@ impl Builder<'_> {
             STAND_TINT_OUT,
         ];
         for st in unsafe { STANDS.iter() } {
-            if !cull.visible(st.centre, st.half) || !cull.visible_vertically(st.centre, st.half) {
+            if !cull.visible_box(st.centre, cull.extents(st.half)) {
                 continue;
             }
             let near = Self::floor_split(cull.flat_distance(st.centre.0, st.centre.2)) > 2;
@@ -5418,24 +5524,62 @@ impl Builder<'_> {
         // 9,720-uu roof. Patch it at exact texture-repeat distances instead:
         // every roof cell now has the same dimensions as one on the wall, and
         // the 128x84 atlas periods meet without a doubled strand. Corner
-        // light comes from the boot-time table; each patch is culled on its
-        // own box, the way floor tiles are, so a camera looking along the
-        // pitch projects the dozen patches in front of it and not the roof.
+        // light comes from the boot-time table; each row of patches is culled
+        // on its own box, so a camera looking along the pitch projects the
+        // few rows in front of it and not the roof.
         let y = -sim::CEIL;
         let lights = unsafe { &ROOF_CORNER_LIGHT };
-        let (half_x, half_z) = (ROOF_STEP_X / 2, ROOF_STEP_Z / 2);
+        // Each patch corner is shared by up to four patches. Seen from below
+        // the whole roof is in view, ninety-six patches, and projecting their
+        // corners per patch ran the GTE 384 times for 119 distinct points;
+        // the full-length roof view was the costliest view on Manny's tape.
+        // The box test per patch was the other half of that bill, so the
+        // roof is now culled a row at a time: a visible row projects its
+        // corner line once, the line above carried over to the next row, and
+        // each patch then only needs its projected corners on screen. A patch
+        // the old per-patch box test rejected lies past a side of the view,
+        // so its corners land past the same edge and the screen test rejects
+        // it too: the same patches, projections and sums, so the same pixels.
+        let corner_line = |z: i32| {
+            let mut line = [None; ROOF_COLS + 1];
+            for (ix, corner) in line.iter_mut().enumerate() {
+                let p = project(Vec3I16::new(roof_corner_x(ix) as i16, y as i16, z as i16));
+                if p.sz != 0 {
+                    *corner = Some((p.sx, p.sy, p.sz as i32));
+                }
+            }
+            line
+        };
+        let mut lo: Option<[Option<(i16, i16, i32)>; ROOF_COLS + 1]> = None;
         for iz in 0..ROOF_ROWS {
             let (z0, z1) = (roof_corner_z(iz), roof_corner_z(iz + 1));
+            if !cull.visible((0, y, (z0 + z1) / 2), (ROOF_HALF_X, 0, (z1 - z0) / 2)) {
+                lo = None;
+                continue;
+            }
+            let below = match lo {
+                Some(line) => line,
+                None => corner_line(z0),
+            };
+            let above = corner_line(z1);
+            let h = ((z1 - z0 + COVER_UU_PER_TEXEL - 1) / COVER_UU_PER_TEXEL).clamp(1, ROOF_PATCH_V)
+                as u8;
             for ix in 0..ROOF_COLS {
-                let (x0, x1) = (roof_corner_x(ix), roof_corner_x(ix + 1));
-                if !cull.visible(((x0 + x1) / 2, y, (z0 + z1) / 2), (half_x, 0, half_z)) {
+                count_offered!();
+                let (Some((ax, ay, az)), Some((bx, by, bz)), Some((cx, cy, cz)), Some((dx, dy, dz))) =
+                    (below[ix], below[ix + 1], above[ix], above[ix + 1])
+                else {
+                    continue;
+                };
+                let sp = [(ax, ay), (bx, by), (cx, cy), (dx, dy)];
+                if !quad_overlaps_view(&sp) {
                     continue;
                 }
-                let w = cover_texels(x1 - x0);
-                let h = ((z1 - z0 + COVER_UU_PER_TEXEL - 1) / COVER_UU_PER_TEXEL)
-                    .clamp(1, ROOF_PATCH_V) as u8;
-                self.quad_tex(
-                    [(x0, y, z0), (x1, y, z0), (x0, y, z1), (x1, y, z1)],
+                count_kept!();
+                let w = ROOF_PATCH_W[ix];
+                self.quad_tex_words(
+                    sp,
+                    az + bz + cz + dz,
                     [
                         uvw(COVER_U0, COVER_V0),
                         uvw(COVER_U0 + w, COVER_V0),
@@ -5453,6 +5597,7 @@ impl Builder<'_> {
                     true,
                 );
             }
+            lo = Some(above);
         }
     }
 

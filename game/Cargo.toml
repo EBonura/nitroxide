@@ -47,6 +47,11 @@ boot-wheels = []
 # Dev: aim ball cam at a stationary ball near the roof so the enclosure's top
 # surface is visible in deterministic visual QA.
 boot-roof = []
+# Dev: the full-length roof view (Manny's tape, polls 3260..3480): ball cam
+# from one end at a ball held high near the far goal, so the whole roof, both
+# side walls and the far end are in view at once. A perf station: the
+# costliest single-player view, held still for the 60 fps gate.
+boot-roof-length = []
 # Dev: render every second vblank. Not a shipping mode: a build whose frames
 # all fit two vblanks presents on the same ticks as any other such build, so
 # two builds' screenshots can be compared tick for tick to prove a speed-up

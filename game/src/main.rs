@@ -265,6 +265,17 @@ struct NitroXide {
 }
 
 impl NitroXide {
+    /// The `boot-roof-length` station's ball: high over the far end, held
+    /// there after every tick so gravity cannot level the camera.
+    #[cfg(feature = "boot-roof-length")]
+    fn hold_roof_length_ball(&mut self) {
+        self.sim.ball.p.x = 0;
+        self.sim.ball.p.y = nitroxide_sim::uu(1500);
+        self.sim.ball.p.z = nitroxide_sim::uu(3800);
+        self.sim.ball.v = nitroxide_sim::V3::ZERO;
+        self.sim.ball.grounded = false;
+    }
+
     fn new() -> Self {
         NitroXide {
             analog_retry: 0,
@@ -1425,6 +1436,15 @@ impl Scene for NitroXide {
             self.sim.ball.grounded = false;
             self.sim.opponent.p.x = nitroxide_sim::uu(3000);
         }
+        #[cfg(feature = "boot-roof-length")]
+        {
+            self.phase = Phase::Play;
+            self.sim.opponent_ai = false;
+            self.ball_cam[0] = true;
+            self.sim.car.p.z = nitroxide_sim::uu(-4000);
+            self.sim.opponent.p.x = nitroxide_sim::uu(3000);
+            self.hold_roof_length_ball();
+        }
         #[cfg(feature = "boot-roof")]
         {
             self.phase = Phase::Play;
@@ -1757,6 +1777,8 @@ impl Scene for NitroXide {
                 } else {
                     self.sim.tick(&input);
                 }
+                #[cfg(feature = "boot-roof-length")]
+                self.hold_roof_length_ball();
                 #[cfg(feature = "boot-roof")]
                 {
                     // This is a camera station, not a physics scenario. Keep
