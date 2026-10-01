@@ -668,6 +668,11 @@ const BALL_RING_MIN_H: i32 = 150;
 /// the car's rear (train tape, route tick 700).
 const BALL_RING_BIAS: i32 = 0;
 const BALL_RING_R: i32 = 190;
+/// The hoop band: dark at its inner and outer radius, brightest between.
+/// The span the ring palette's lit entries covered on the old textured hoop.
+const BALL_HOOP_IN: i32 = 136;
+const BALL_HOOP_MID: i32 = 160;
+const BALL_HOOP_OUT: i32 = 188;
 const BALL_RING_FULL_H: i32 = 1400;
 const BALL_RING_TINT: Rgb = (132, 140, 132);
 const BALL_DISC_TINT: Rgb = (84, 94, 76);
@@ -1373,7 +1378,8 @@ const PAD_CLUT: Clut = Clut::new(384, 261);
 const SPENT_CLUT: Clut = Clut::new(384, 262);
 /// A plain radial falloff for every other light sprite.
 const GLOW_CLUT: Clut = Clut::new(384, 263);
-/// The glow tile's outer rings only: one quad draws a hoop.
+/// The glow tile's outer rings only. Unsampled since the hoop became a ring
+/// of quads; uploaded because the atlas carries it.
 const RING_CLUT: Clut = Clut::new(384, 264);
 /// The 32x32 radial glow tile, below the goal net in the base page.
 const GLOW_U0: u8 = 0;
@@ -1443,11 +1449,6 @@ const CROWD_PACKETS: [TexturedGouraudPacketMaterial; 2] = [
 /// material, which owns the tpage word's blend bits.
 const GLOW_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(GLOW_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
-        .with_blend_mode(BlendMode::Add)
-        .with_dither(true)
-        .textured_gouraud_packet_material();
-const RING_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(RING_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_blend_mode(BlendMode::Add)
         .with_dither(true)
         .textured_gouraud_packet_material();
@@ -1994,8 +1995,8 @@ struct GlowQuad {
 /// Data words after the tag: the quad's thirteen and the restore.
 const GLOW_WORDS: u8 = 14;
 const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
-/// Goal halos (four a goal), and the ball's disc and hoop, the hoop cut
-/// into up to twelve cells near the camera, with room.
+/// Goal halos (four a goal, eight with both goals in view), the ball's disc,
+/// and its hoop at up to twenty segments of two quads: 49 at most.
 const MAX_GLOWS: usize = 64;
 static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; 2] = [GLOW_INIT; 2];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
@@ -3705,11 +3706,11 @@ impl Builder<'_> {
         sp: [(i16, i16); 4],
         depth: i32,
         uvs: [u16; 4],
-        tint: Rgb,
+        tints: [Rgb; 4],
         packet: TexturedGouraudPacketMaterial,
     ) {
         let mut quad =
-            QuadTexturedGouraud::with_packet_material_packed_uv_words(sp, uvs, [tint; 4], packet);
+            QuadTexturedGouraud::with_packet_material_packed_uv_words(sp, uvs, tints, packet);
         quad.color0_cmd |= SEMI_TRANSPARENT;
         if let Some(g) = self.glow.push(GlowQuad {
             quad,
@@ -3752,7 +3753,7 @@ impl Builder<'_> {
             return;
         }
         count_kept!();
-        self.emit_glow(sp, z_sum / 4 + bias, Self::GLOW_UVS, tint, packet);
+        self.emit_glow(sp, z_sum / 4 + bias, Self::GLOW_UVS, [tint; 4], packet);
     }
 
     fn emit(&mut self, sp: [(i16, i16); 4], depth: i32, colors: [Rgb; 4]) {
@@ -5532,7 +5533,7 @@ impl Builder<'_> {
     /// Rocket League's ball indicator: a hoop on the pitch under an airborne
     /// ball, with a disc inside it that grows to fill it as the ball comes
     /// down. The shadow says where the ball is; this says when it lands.
-    /// Two additive quads, and only while the ball is up.
+    /// Additive, and only while the ball is up.
     fn ball_ring(&mut self, s: &Sim, cull: &Cull) {
         let h = r(s.ball.p.y) - sim::BALL_R;
         if h < BALL_RING_MIN_H {
@@ -5544,64 +5545,83 @@ impl Builder<'_> {
         if x.abs() > sim::HALF_X - RAMP_R || z.abs() > sim::HALF_Z - RAMP_R {
             return;
         }
-        // One quad per glow bent the hoop out of round wherever it was near
-        // (the PS1 maps a texture affinely across each triangle), so it is
-        // cut into a grid that is finer the closer it lies, the way the
-        // pitch is. The disc is a soft blob with no edge to bend, so it
-        // stays one quad.
+        // The hoop is geometry, the way the pitch markings are: a ring of
+        // segments, each two additive quads across the band, dark at the
+        // inner and outer edge and bright at the middle. Gouraud does the
+        // falloff, and every quad samples the glow tile's one bright centre
+        // texel, so there is no texture to map affinely and no texel steps:
+        // the edge stays round and smooth at any range. The 32x32 hoop
+        // texture it replaces stepped in blocks of several pixels near the
+        // camera. Fewer segments with distance.
         let d = cull.flat_distance(x, z);
-        let hoop_n: i32 = if d < 900 {
-            4
+        let segs: usize = if d < 900 {
+            20
         } else if d < 3500 {
-            2
+            16
         } else {
-            1
+            12
         };
-        let disc_n: i32 = 1;
-        let flat = |b: &mut Self, rad: i32, n: i32, hollow: bool, tint: Rgb, packet| {
-            let mut grid = [[None::<(i16, i16, i32)>; 5]; 5];
-            for (i, row) in grid.iter_mut().enumerate().take(n as usize + 1) {
-                for (j, corner) in row.iter_mut().enumerate().take(n as usize + 1) {
-                    let gx = x - rad + 2 * rad * i as i32 / n;
-                    let gz = z - rad + 2 * rad * j as i32 / n;
-                    let p = project(Vec3I16::new(gx as i16, -3, gz as i16));
-                    if p.sz != 0 {
-                        *corner = Some((p.sx, p.sy, p.sz as i32));
-                    }
-                }
-            }
-            let uv = |i: usize| (GLOW_W as i32 * i as i32 / n) as u8;
-            for i in 0..n as usize {
-                for j in 0..n as usize {
-                    // A 4x4 hoop's middle four cells lie wholly inside its
-                    // hole: nothing there to draw.
-                    if hollow && n == 4 && (1..=2).contains(&i) && (1..=2).contains(&j) {
-                        continue;
-                    }
-                    count_offered!();
-                    let (Some(a), Some(bb), Some(c), Some(dd)) =
-                        (grid[i][j], grid[i + 1][j], grid[i][j + 1], grid[i + 1][j + 1])
-                    else {
-                        continue;
-                    };
-                    let sp = [(a.0, a.1), (bb.0, bb.1), (c.0, c.1), (dd.0, dd.1)];
-                    if !quad_overlaps_view(&sp) {
-                        continue;
-                    }
-                    count_kept!();
-                    let (u0, u1) = (GLOW_U0 + uv(i), GLOW_U0 + uv(i + 1));
-                    let (v0, v1) = (GLOW_V0 + uv(j), GLOW_V0 + uv(j + 1));
-                    let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
-                    let depth = (a.2 + bb.2 + c.2 + dd.2) / 4 + BALL_RING_BIAS;
-                    b.emit_glow(sp, depth, uvs, tint, packet);
-                }
-            }
+        const RADII: [i32; 3] = [BALL_HOOP_IN, BALL_HOOP_MID, BALL_HOOP_OUT];
+        // One column of the ring: the three radii at segment `k`. Only the
+        // first, the previous and the next column are kept, which keeps the
+        // frame small enough for the scratchpad stack.
+        let column = |k: usize| {
+            let a = (4096 * k / segs) as u16;
+            let (sn, cs) = (sin_q12(a), cos_q12(a));
+            RADII.map(|rad| {
+                let p = project(Vec3I16::new(
+                    (x + (rad * sn >> 12)) as i16,
+                    -3,
+                    (z + (rad * cs >> 12)) as i16,
+                ));
+                (p.sz != 0).then_some((p.sx, p.sy, p.sz as i32))
+            })
         };
-        flat(self, BALL_RING_R, hoop_n, true, BALL_RING_TINT, RING_PACKET);
+        const C: u8 = GLOW_W / 2;
+        let uvs = [uvw(GLOW_U0 + C, GLOW_V0 + C); 4];
+        let (dark, peak) = ((0, 0, 0), BALL_RING_TINT);
+        let first = column(0);
+        let mut prev = first;
+        for k in 0..segs {
+            let next = if k + 1 == segs { first } else { column(k + 1) };
+            for band in 0..2 {
+                count_offered!();
+                let (Some(a), Some(bb), Some(c), Some(dd)) =
+                    (prev[band], next[band], prev[band + 1], next[band + 1])
+                else {
+                    continue;
+                };
+                let sp = [(a.0, a.1), (bb.0, bb.1), (c.0, c.1), (dd.0, dd.1)];
+                if !quad_overlaps_view(&sp) {
+                    continue;
+                }
+                count_kept!();
+                let tints = if band == 0 {
+                    [dark, dark, peak, peak]
+                } else {
+                    [peak, peak, dark, dark]
+                };
+                let depth = (a.2 + bb.2 + c.2 + dd.2) / 4 + BALL_RING_BIAS;
+                self.emit_glow(sp, depth, uvs, tints, GLOW_PACKET);
+            }
+            prev = next;
+        }
         // The disc is the landing: a spot at the top of the flight, the
-        // whole hoop on touchdown.
+        // whole hoop on touchdown. A soft blob with no edge to bend, so one
+        // quad over the whole glow tile.
         let fill = (4096 - h * 4096 / BALL_RING_FULL_H).clamp(600, 4096);
-        flat(self, BALL_RING_R * fill >> 12, disc_n, false, BALL_DISC_TINT, GLOW_PACKET);
+        let rad = BALL_RING_R * fill >> 12;
+        self.glow_quad(
+            [
+                (x - rad, -3, z - rad),
+                (x + rad, -3, z - rad),
+                (x - rad, -3, z + rad),
+                (x + rad, -3, z + rad),
+            ],
+            BALL_DISC_TINT,
+            BALL_RING_BIAS,
+            GLOW_PACKET,
+        );
     }
 
     /// A patch on the floor under something airborne. Cheap, and without it you
