@@ -668,10 +668,9 @@ const BALL_RING_MIN_H: i32 = 150;
 /// the car's rear (train tape, route tick 700).
 const BALL_RING_BIAS: i32 = 0;
 const BALL_RING_R: i32 = 190;
-/// The hoop band: dark at its inner and outer radius, brightest between.
+/// The hoop band: dark at its inner and outer radius, brightest halfway.
 /// The span the ring palette's lit entries covered on the old textured hoop.
 const BALL_HOOP_IN: i32 = 136;
-const BALL_HOOP_MID: i32 = 160;
 const BALL_HOOP_OUT: i32 = 188;
 const BALL_RING_FULL_H: i32 = 1400;
 const BALL_RING_TINT: Rgb = (132, 140, 132);
@@ -1996,7 +1995,7 @@ struct GlowQuad {
 const GLOW_WORDS: u8 = 14;
 const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
 /// Goal halos (four a goal, eight with both goals in view), the ball's disc,
-/// and its hoop at up to twenty segments of two quads: 49 at most.
+/// and its hoop at up to sixteen segments of two quads: 41 at most.
 const MAX_GLOWS: usize = 64;
 static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; 2] = [GLOW_INIT; 2];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
@@ -5554,28 +5553,41 @@ impl Builder<'_> {
         // texture it replaces stepped in blocks of several pixels near the
         // camera. Fewer segments with distance.
         let d = cull.flat_distance(x, z);
+        // Sixteen near: a chord then strays under 4 uu from the circle, and
+        // the soft edges hide that. Twenty cost two dropped frames on the
+        // train tape's heaviest stretch (polls 833..834), where the ball is
+        // overhead and the hoop is under the camera.
         let segs: usize = if d < 900 {
-            20
-        } else if d < 3500 {
             16
+        } else if d < 3500 {
+            10
         } else {
-            12
+            8
         };
-        const RADII: [i32; 3] = [BALL_HOOP_IN, BALL_HOOP_MID, BALL_HOOP_OUT];
-        // One column of the ring: the three radii at segment `k`. Only the
-        // first, the previous and the next column are kept, which keeps the
-        // frame small enough for the scratchpad stack.
+        // One column of the ring at segment `k`: the inner and outer radius
+        // projected, and the bright middle halfway between them on screen.
+        // The band is 52 uu across, too narrow for perspective to tell the
+        // midpoint from the projected middle radius, and it saves a third of
+        // the projections. Only the first, the previous and the next column
+        // are kept, which keeps the frame small enough for the scratchpad
+        // stack.
         let column = |k: usize| {
             let a = (4096 * k / segs) as u16;
             let (sn, cs) = (sin_q12(a), cos_q12(a));
-            RADII.map(|rad| {
+            let at = |rad: i32| {
                 let p = project(Vec3I16::new(
                     (x + (rad * sn >> 12)) as i16,
                     -3,
                     (z + (rad * cs >> 12)) as i16,
                 ));
                 (p.sz != 0).then_some((p.sx, p.sy, p.sz as i32))
-            })
+            };
+            let (inner, outer) = (at(BALL_HOOP_IN), at(BALL_HOOP_OUT));
+            let mid = match (inner, outer) {
+                (Some(i), Some(o)) => Some(((i.0 + o.0) >> 1, (i.1 + o.1) >> 1, (i.2 + o.2) >> 1)),
+                _ => None,
+            };
+            [inner, mid, outer]
         };
         const C: u8 = GLOW_W / 2;
         let uvs = [uvw(GLOW_U0 + C, GLOW_V0 + C); 4];
