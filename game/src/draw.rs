@@ -609,8 +609,10 @@ const GRASS_A: Rgb = (30, 62, 40);
 // loses the entire floor.
 const TILES_X: i32 = 8;
 const TILES_Z: i32 = 10;
-/// Segments per side wall, for the same reason.
-const WALL_SEGS: i32 = 8;
+/// Segments per side wall, for the same reason. Six since the rounded
+/// corner joints took their spans' cost: the straight run is shorter, and
+/// near the camera each span still splits into three columns.
+const WALL_SEGS: i32 = 6;
 /// Radius of the curve where the floor rolls up into the wall, and the wall
 /// rolls over into the ceiling. Rocket League's arena is a rounded tray, not a
 /// box: these transitions are most of why it reads as an arena. Real ones are
@@ -900,6 +902,12 @@ const FLOOR_GZ: usize = (TILES_Z * FLOOR_SPLIT_MAX) as usize + 1;
 /// shifts per corner.
 static mut FLOOR_LIGHT: [[[u32; FLOOR_GZ]; FLOOR_GX]; 2] =
     [[[rgbc((128, 128, 128)); FLOOR_GZ]; FLOOR_GX]; 2];
+/// Every pitch grid point pulled onto the floor's outline (`Builder::chamfer`),
+/// at boot. The floor reads these instead of clamping each vertex a frame:
+/// the rounded corner joints made that clamp four planes deep, and the
+/// floor projects several hundred grid points a view.
+static mut FLOOR_POS: [[(i16, i16); FLOOR_GZ]; FLOOR_GX] = [[(0, 0); FLOOR_GZ]; FLOOR_GX];
+
 /// The pitch light before the goal mouths' team pools go over it.
 static mut FLOOR_BASE: [[[u32; FLOOR_GZ]; FLOOR_GX]; 2] =
     [[[rgbc((128, 128, 128)); FLOOR_GZ]; FLOOR_GX]; 2];
@@ -915,11 +923,17 @@ const fn rgb_of(w: u32) -> Rgb {
 struct Span {
     a: (i32, i32),
     b: (i32, i32),
-    /// Inward unit normal, Q12.
-    n: (i32, i32),
 }
 
-const SPAN_COUNT: usize = WALL_SEGS as usize * 2 + 8;
+/// Where the straight side walls end on Z, and the straight end walls on X:
+/// at the rounded corner joints' tangent points.
+const SIDE_WALL_Z: i32 = sim::CORNER_JOINT_PTS[0].1;
+const END_WALL_X: i32 = sim::CORNER_JOINT_PTS[5].0;
+/// Side wall runs, one span per corner (round both joints and along the
+/// corner plane), and the four end wall runs.
+const SPAN_COUNT: usize = WALL_SEGS as usize * 2 + 4 + 4;
+/// Light slots per span: a corner span has six columns at its finest.
+const SLOTS: usize = 6;
 
 /// The stands: a tiered slope outside the enclosure, seen through the
 /// honeycomb. Its front edge stands just behind the wall above the rail, its
@@ -932,7 +946,7 @@ const STAND_Y_IN: i32 = 560;
 const STAND_Y_OUT: i32 = 1850;
 /// Crowd texels per uu along the front edge: 16 uu a texel, the pitch's.
 const STAND_UU_PER_TEXEL: i32 = 16;
-const STAND_COUNT: usize = 2 * WALL_SEGS as usize + 4 + 2 * 3;
+const STAND_COUNT: usize = 2 * 8 + 4 + 2 * 3;
 /// The deepest slot but the sky's. The stands are the inside of a convex
 /// bowl seen from within it, so no piece hides another and they need no
 /// sorting; everything in the arena is in front of them.
@@ -1059,20 +1073,18 @@ fn build_stands() {
 static mut SPANS: [Span; SPAN_COUNT] = [Span {
     a: (0, 0),
     b: (0, 0),
-    n: (0, 0),
 }; SPAN_COUNT];
 
-/// Positions along a span the splitter can land a vertex on, as twelfths:
-/// 0, 1/3, 1/2, 2/3, 1. Splits are 1, 2 or 3, so those five cover every
-/// vertex the wall can emit, and the light for each is baked once.
+/// Positions along a straight span the splitter can land a vertex on, as
+/// twelfths: 0, 1/3, 1/2, 2/3, 1. Splits are 1, 2 or 3, so those five cover
+/// every vertex a straight wall can emit, and the light for each is baked
+/// once. A corner span's eight slots are its columns (`corner_slots`).
 const SLOT_TWELFTHS: [i32; 5] = [0, 4, 6, 8, 12];
-/// Slot index of vertex `k` of a span split `splits` ways.
-const SLOT_OF: [[usize; 4]; 4] = [[0, 0, 0, 0], [0, 4, 0, 0], [0, 2, 4, 0], [0, 1, 3, 4]];
 
-/// Baked wall light per span, ring and split slot, as GPU colour words for
-/// the same reason as [`FLOOR_LIGHT`].
-static mut WALL_LIGHT: [[[u32; 5]; PROFILE_LEN]; SPAN_COUNT] =
-    [[[rgbc((128, 128, 128)); 5]; PROFILE_LEN]; SPAN_COUNT];
+/// Baked wall light per span, ring and slot, as GPU colour words for the
+/// same reason as [`FLOOR_LIGHT`].
+static mut WALL_LIGHT: [[[u32; SLOTS]; PROFILE_LEN]; SPAN_COUNT] =
+    [[[rgbc((128, 128, 128)); SLOTS]; PROFILE_LEN]; SPAN_COUNT];
 
 /// The untinted wall light for every ring, kept so the team colours can be
 /// laid over it again whenever a match changes them: the barrier below the
@@ -1082,10 +1094,10 @@ static mut WALL_LIGHT: [[[u32; 5]; PROFILE_LEN]; SPAN_COUNT] =
 /// Doing that per vertex per frame instead cost a mix and a multiply on every
 /// corner of every lower-wall quad, which measured as eleven dropped frames in
 /// nine hundred. The colours change twice a match at the very most.
-static mut WALL_BASE: [[[Rgb; 5]; PROFILE_LEN]; SPAN_COUNT] =
-    [[[(128, 128, 128); 5]; PROFILE_LEN]; SPAN_COUNT];
-/// Where each span's split positions sit in Z, for the barrier's blend.
-static mut CURB_Z: [[i32; 5]; SPAN_COUNT] = [[0; 5]; SPAN_COUNT];
+static mut WALL_BASE: [[[Rgb; SLOTS]; PROFILE_LEN]; SPAN_COUNT] =
+    [[[(128, 128, 128); SLOTS]; PROFILE_LEN]; SPAN_COUNT];
+/// Where each span's slots sit in Z, for the barrier's blend.
+static mut CURB_Z: [[i32; SLOTS]; SPAN_COUNT] = [[0; SLOTS]; SPAN_COUNT];
 
 /// The four corners of the roof, lit like everything else.
 static mut CEIL_LIGHT: [Rgb; 4] = [(128, 128, 128); 4];
@@ -1188,6 +1200,7 @@ fn build_lighting() {
                 // The corners of the pitch are pulled in to meet the chamfer,
                 // so that is where the vertex actually is.
                 let (cx, cz) = Builder::chamfer(x, z);
+                unsafe { FLOOR_POS[gx][gz] = (cx as i16, cz as i16) };
                 let c = lamp_light((cx, 0, cz), (0, -4096, 0));
                 // Warm each end toward its team, smoothly. The old version
                 // stepped it per tile, which drew two bands across the pitch.
@@ -1215,23 +1228,20 @@ fn build_lighting() {
     // Walls. One tint per (span, ring, split position).
     let profile = Builder::profile();
     for si in 0..SPAN_COUNT {
-        let s = unsafe { SPANS[si] };
+        let slots = unsafe { SPAN_SLOT[si] };
         for (ri, &(inset, height)) in profile.iter().enumerate() {
-            for slot in 0..5 {
-                let t = SLOT_TWELFTHS[slot];
-                let at = (
-                    s.a.0 + (s.b.0 - s.a.0) * t / 12,
-                    s.a.1 + (s.b.1 - s.a.1) * t / 12,
-                );
+            for (slot, &(sx, sz, nx, nz)) in slots.iter().enumerate() {
+                let at = (sx, sz);
+                let n = (nx, nz);
                 let p = (
-                    at.0 + ((s.n.0 * inset) >> 12),
+                    at.0 + ((n.0 * inset) >> 12),
                     -height,
-                    at.1 + ((s.n.1 * inset) >> 12),
+                    at.1 + ((n.1 * inset) >> 12),
                 );
                 let c = if ri == RAIL_LO_RING || ri == RAIL_HI_RING {
                     RAIL_TINT
                 } else {
-                    let c = lamp_light(p, (s.n.0, 0, s.n.1));
+                    let c = lamp_light(p, (n.0, 0, n.1));
                     let lift = match ri {
                         WALL_TOP_RING => RAIL_LIFT,
                         CURVE_SEGS => BASE_LIFT,
@@ -1281,66 +1291,158 @@ fn build_lighting() {
     }
 }
 
+/// The columns a span is drawn with at one level of detail: where each
+/// stands on the floor, the inward normal its profile is swept along, which
+/// baked light slot it reads, and the panel and cover U it carries.
+#[derive(Copy, Clone)]
+struct SpanCols {
+    count: usize,
+    x: [i32; SLOTS],
+    z: [i32; SLOTS],
+    nx: [i32; SLOTS],
+    nz: [i32; SLOTS],
+    slot: [u8; SLOTS],
+    panel_u: [u8; SLOTS],
+    cover_u: [u8; SLOTS],
+}
+const EMPTY_COLS: SpanCols = SpanCols {
+    count: 0,
+    x: [0; SLOTS],
+    z: [0; SLOTS],
+    nx: [0; SLOTS],
+    nz: [0; SLOTS],
+    slot: [0; SLOTS],
+    panel_u: [0; SLOTS],
+    cover_u: [0; SLOTS],
+};
+/// Per span, the columns at one, two and three splits' worth of detail.
+static mut SPAN_COLS: [[SpanCols; 3]; SPAN_COUNT] = [[EMPTY_COLS; 3]; SPAN_COUNT];
+/// Per span and light slot: floor position and inward normal (x, z, nx, nz).
+static mut SPAN_SLOT: [[(i32, i32, i32, i32); SLOTS]; SPAN_COUNT] =
+    [[(0, 0, 0, 0); SLOTS]; SPAN_COUNT];
+
+/// Which slots a straight span's columns use at each level of detail:
+/// twelfths 0..12, 0..6..12, 0..4..8..12 (see [`SLOT_TWELFTHS`]).
+const STRAIGHT_LODS: [&[usize]; 3] = [&[0, 4], &[0, 2, 4], &[0, 1, 3, 4]];
+/// A corner span's slots are sim::CORNER_JOINT_PTS: the side wall's
+/// tangent point, the side joint's middle, the corner plane's two ends, the
+/// end joint's middle and the end wall's tangent point. Near the camera each
+/// joint is drawn with both its chords, the same two the simulation drives
+/// on; further away with one.
+const CORNER_LODS: [&[usize]; 3] = [&[0, 2, 3, 5], &[0, 2, 3, 5], &[0, 1, 2, 3, 4, 5]];
+
 /// Lay out the wall perimeter. Same order the old `walls` loop drew it in;
 /// pulling it into a table is what lets the light bake index a span.
-/// Where a span splits into one, two or three columns, and the slice of the
-/// panel and cover U ranges each column carries.
-#[derive(Copy, Clone)]
-struct SpanSplit {
-    x: [i32; 4],
-    z: [i32; 4],
-    panel_u: [u8; 4],
-    cover_u: [u8; 4],
-}
-const EMPTY_SPLIT: SpanSplit = SpanSplit {
-    x: [0; 4],
-    z: [0; 4],
-    panel_u: [0; 4],
-    cover_u: [0; 4],
-};
-static mut SPAN_SPLITS: [[SpanSplit; 3]; SPAN_COUNT] = [[EMPTY_SPLIT; 3]; SPAN_COUNT];
-
+///
+/// The straight walls stop at the rounded corner joints' tangent points
+/// (sim::CORNER_JOINT_PTS), and each corner is one span that
+/// runs round the side joint, along the corner plane and round the end
+/// joint, with a normal per column. One span rather than one per chord: the
+/// chords share their columns' projections. A span per chord cost the train
+/// tape a sixth of its frames at 60.
 fn build_spans() {
     let mut i = 0;
-    let mut put = |a: (i32, i32), b: (i32, i32), n: (i32, i32)| {
-        unsafe { SPANS[i] = Span { a, b, n } };
-        let span_len = isqrt_i32((b.0 - a.0) * (b.0 - a.0) + (b.1 - a.1) * (b.1 - a.1));
-        let cover_u = cover_texels(span_len) as i32;
-        for splits in 1..=3i32 {
-            let mut out = EMPTY_SPLIT;
-            for k in 0..=splits as usize {
-                out.x[k] = a.0 + (b.0 - a.0) * k as i32 / splits;
-                out.z[k] = a.1 + (b.1 - a.1) * k as i32 / splits;
-                out.panel_u[k] = (64 + 32 * k as i32 / splits).min(95) as u8;
-                out.cover_u[k] = (COVER_U0 as i32 + cover_u * k as i32 / splits) as u8;
+    let mut put = |slots: [(i32, i32, i32, i32); SLOTS], lods: [&[usize]; 3]| {
+        let (first, last) = (slots[0], slots[SLOTS - 1]);
+        unsafe {
+            SPANS[i] = Span {
+                a: (first.0, first.1),
+                b: (last.0, last.1),
+            };
+            SPAN_SLOT[i] = slots;
+        }
+        // Distance along the span to each slot, for the U ranges.
+        let mut along = [0i32; SLOTS];
+        for s in 1..SLOTS {
+            let (dx, dz) = (slots[s].0 - slots[s - 1].0, slots[s].1 - slots[s - 1].1);
+            along[s] = along[s - 1] + isqrt_i32(dx * dx + dz * dz);
+        }
+        let total = along[SLOTS - 1].max(1);
+        let cover = cover_texels(total) as i32;
+        for (level, cols) in lods.iter().enumerate() {
+            let mut out = EMPTY_COLS;
+            out.count = cols.len();
+            for (k, &s) in cols.iter().enumerate() {
+                out.x[k] = slots[s].0;
+                out.z[k] = slots[s].1;
+                out.nx[k] = slots[s].2;
+                out.nz[k] = slots[s].3;
+                out.slot[k] = s as u8;
+                out.panel_u[k] = (64 + 32 * along[s] / total).min(95) as u8;
+                out.cover_u[k] = (COVER_U0 as i32 + cover * along[s] / total) as u8;
             }
-            unsafe { SPAN_SPLITS[i][splits as usize - 1] = out };
+            unsafe { SPAN_COLS[i][level] = out };
         }
         i += 1;
     };
-    let step = CORNER_Z * 2 / WALL_SEGS;
+    // A straight run: five slots at SLOT_TWELFTHS, the rest repeating the
+    // last, so a slot table can always be read whole.
+    let straight = |a: (i32, i32), b: (i32, i32), n: (i32, i32)| {
+        let mut s = [(b.0, b.1, n.0, n.1); SLOTS];
+        for (k, &t) in SLOT_TWELFTHS.iter().enumerate() {
+            s[k] = (a.0 + (b.0 - a.0) * t / 12, a.1 + (b.1 - a.1) * t / 12, n.0, n.1);
+        }
+        s
+    };
     for k in 0..WALL_SEGS {
-        let z0 = -CORNER_Z + k * step;
-        let z1 = z0 + step;
-        put((-sim::HALF_X, z0), (-sim::HALF_X, z1), (4096, 0));
-        put((sim::HALF_X, z0), (sim::HALF_X, z1), (-4096, 0));
+        let z0 = -SIDE_WALL_Z + 2 * SIDE_WALL_Z * k / WALL_SEGS;
+        let z1 = -SIDE_WALL_Z + 2 * SIDE_WALL_Z * (k + 1) / WALL_SEGS;
+        put(straight((-sim::HALF_X, z0), (-sim::HALF_X, z1), (4096, 0)), STRAIGHT_LODS);
+        put(straight((sim::HALF_X, z0), (sim::HALF_X, z1), (-4096, 0)), STRAIGHT_LODS);
     }
-    const D: i32 = 2896; // 4096 / sqrt(2)
     for &sx in &[-1i32, 1] {
         for &sz in &[-1i32, 1] {
-            put(
-                (sx * sim::HALF_X, sz * CORNER_Z),
-                (sx * CORNER_X, sz * sim::HALF_Z),
-                (-sx * D, -sz * D),
-            );
+            put(corner_slots(sx, sz), CORNER_LODS);
         }
     }
+    // Last, so the goal lintel in `walls` finds them at SPAN_COUNT - 4.
     for &sz in &[-1i32, 1] {
         let z = sz * sim::HALF_Z;
         let gw = sim::GOAL_HALF_W;
-        put((-CORNER_X, z), (-gw, z), (0, -sz * 4096));
-        put((gw, z), (CORNER_X, z), (0, -sz * 4096));
+        put(straight((-END_WALL_X, z), (-gw, z), (0, -sz * 4096)), STRAIGHT_LODS);
+        put(straight((gw, z), (END_WALL_X, z), (0, -sz * 4096)), STRAIGHT_LODS);
     }
+}
+
+/// The six slots of the corner span in quadrant (`sx`, `sz`): the joint
+/// vertices the simulation uses, each with the normal its profile is swept
+/// along. The two tangent points take their straight wall's normal, so the
+/// sweep meets the wall's own without a step; the others take the bisector
+/// of the two faces that meet there.
+fn corner_slots(sx: i32, sz: i32) -> [(i32, i32, i32, i32); SLOTS] {
+    let planes = sim::CORNER_JOINT_PLANES;
+    const D: i32 = 2896; // the corner plane, 4096 / sqrt(2)
+    let faces = [
+        (4096, 0),
+        (planes[0].0, planes[0].1),
+        (planes[1].0, planes[1].1),
+        (D, D),
+        (planes[2].0, planes[2].1),
+        (planes[3].0, planes[3].1),
+        (0, 4096),
+    ];
+    let mut out = [(0, 0, 0, 0); SLOTS];
+    for (k, &(px, pz)) in sim::CORNER_JOINT_PTS.iter().enumerate() {
+        let (nx, nz) = match k {
+            0 => faces[0],
+            5 => faces[6],
+            _ => {
+                // Faces either side of vertex k: chords before and after,
+                // with the corner plane between vertices 2 and 3.
+                let (f0, f1) = match k {
+                    1 => (faces[1], faces[2]),
+                    2 => (faces[2], faces[3]),
+                    3 => (faces[3], faces[4]),
+                    _ => (faces[4], faces[5]),
+                };
+                let (bx, bz) = (f0.0 + f1.0, f0.1 + f1.1);
+                let len = isqrt_i32(bx * bx + bz * bz).max(1);
+                (bx * 4096 / len, bz * 4096 / len)
+            }
+        };
+        out[k] = (sx * px, sz * pz, -sx * nx, -sz * nz);
+    }
+    out
 }
 
 // ---- arena texture ---------------------------------------------------------
@@ -1588,7 +1690,7 @@ fn glow(light: Rgb, z: i32) -> Rgb {
 fn paint_curb() {
     for si in 0..SPAN_COUNT {
         for ri in 0..PROFILE_LEN {
-            for slot in 0..5 {
+            for slot in 0..SLOTS {
                 unsafe {
                     let (base, z) = (WALL_BASE[si][ri][slot], CURB_Z[si][slot]);
                     WALL_LIGHT[si][ri][slot] = rgbc(if ri <= RAIL_LO_RING {
@@ -2330,6 +2432,14 @@ fn keep_inside(mut x: i32, mut z: i32) -> (i32, i32) {
     if over > 0 {
         x -= x.signum() * over / 2;
         z -= z.signum() * over / 2;
+    }
+    // The rounded corner joints cut further in than the planes do.
+    for &(nx, nz, off) in &sim::CORNER_JOINT_PLANES {
+        let over = ((x.abs() * nx + z.abs() * nz) >> 12) - ((off >> 2) - CAM_WALL_MARGIN);
+        if over > 0 {
+            x -= x.signum() * (nx * over >> 12);
+            z -= z.signum() * (nz * over >> 12);
+        }
     }
     (x, z)
 }
@@ -3830,11 +3940,32 @@ impl Builder<'_> {
         // instead of stepping at the two places it meets the straight walls.
         let limit = sim::CORNER - (RAMP_R * 5793 >> 12); // RAMP_R * sqrt(2)
         let sum = x.abs() + z.abs();
-        if sum <= limit {
+        let (x, z) = if sum <= limit {
             (x, z)
         } else {
             (x * limit / sum, z * limit / sum)
+        };
+
+        // And cut the rounded joints either side of each corner plane: the
+        // foot of the ramp is each joint chord a ramp radius further in.
+        // The pitch is sampled on a 256-uu grid, and between two samples on
+        // either side of a joint's bend its edge cuts inside the ramp's foot:
+        // a sliver of sky showed through. The pitch is drawn before every
+        // wall, so it can run under the ramp with nothing to fight: tuck it
+        // FLOOR_TUCK further out than the foot along the joints. Only the
+        // corner boxes the joints stand in can reach them, so test the box.
+        const FLOOR_TUCK: i32 = 48;
+        let (mut x, mut z) = (x, z);
+        if x.abs() > sim::CORNER_JOINT_PTS[5].0 - RAMP_R && z.abs() > sim::CORNER_JOINT_PTS[0].1 - RAMP_R {
+            for &(nx, nz, off) in &sim::CORNER_JOINT_PLANES {
+                let over = ((x.abs() * nx + z.abs() * nz) >> 12) - ((off >> 2) - RAMP_R + FLOOR_TUCK);
+                if over > 0 {
+                    x -= x.signum() * (nx * over >> 12);
+                    z -= z.signum() * (nz * over >> 12);
+                }
+            }
         }
+        (x, z)
     }
 
     /// How many ways to split a floor tile at this distance from the camera.
@@ -4016,22 +4147,19 @@ impl Builder<'_> {
     #[inline(never)]
     fn floor_tile_far(
         &mut self,
-        x0: i32,
-        z0: i32,
-        x1: i32,
-        z1: i32,
         light: &[[u32; FLOOR_GZ]; FLOOR_GX],
         gx: usize,
         gz: usize,
     ) {
         count_offered!();
         let mut sp = [(0i16, 0i16); 4];
-        for (k, (wx, wz)) in [(x0, z0), (x1, z0), (x0, z1), (x1, z1)]
+        let step = FLOOR_SPLIT_MAX as usize;
+        for (k, (ix, iz)) in [(gx, gz), (gx + step, gz), (gx, gz + step), (gx + step, gz + step)]
             .into_iter()
             .enumerate()
         {
-            let (cx, cz) = Self::chamfer(wx, wz);
-            let p = project(Vec3I16::new(cx as i16, 0, cz as i16));
+            let (cx, cz) = unsafe { *FLOOR_POS.get_unchecked(ix).get_unchecked(iz) };
+            let p = project(Vec3I16::new(cx, 0, cz));
             if p.sz == 0 {
                 return;
             }
@@ -4119,7 +4247,7 @@ impl Builder<'_> {
                 // four projections, one emit. Pixel-identical, and an n == 1
                 // tile never conforms, so nothing else changes.
                 if n == 1 {
-                    self.floor_tile_far(x0, z0, x1, z1, light, gx, gz);
+                    self.floor_tile_far(light, gx, gz);
                     continue;
                 }
 
@@ -4129,9 +4257,9 @@ impl Builder<'_> {
                 // here is non-negative, so a shift is the same division
                 // without the R3000's 36-cycle DIV on every grid point.
                 let shift = n.trailing_zeros();
-                let px = |i: i32| x0 + ((x1 - x0) * i >> shift);
-                let pz = |i: i32| z0 + ((z1 - z0) * i >> shift);
                 let u = |i: i32| (GRASS_TILE_W * i >> shift).min(GRASS_TILE_W - 1) as u8;
+                // Grid points between sub-tile corners, for `FLOOR_POS`.
+                let grid_step = FLOOR_SPLIT_MAX as usize >> shift;
 
                 // Project the tile's corner grid once. Every interior corner
                 // is shared by four sub-quads, so projecting per quad ran the
@@ -4143,8 +4271,12 @@ impl Builder<'_> {
                     [[None; FLOOR_SPLIT_MAX as usize + 1]; FLOOR_SPLIT_MAX as usize + 1];
                 for (sx, column) in corners.iter_mut().enumerate().take(nu + 1) {
                     for (sz, corner) in column.iter_mut().enumerate().take(nu + 1) {
-                        let (cx, cz) = Self::chamfer(px(sx as i32), pz(sz as i32));
-                        let p = project(Vec3I16::new(cx as i16, 0, cz as i16));
+                        let (cx, cz) = unsafe {
+                            *FLOOR_POS
+                                .get_unchecked(gx + sx * grid_step)
+                                .get_unchecked(gz + sz * grid_step)
+                        };
+                        let p = project(Vec3I16::new(cx, 0, cz));
                         if p.sz != 0 {
                             *corner = Some((p.sx, p.sy, p.sz as i32));
                         }
@@ -4850,7 +4982,7 @@ impl Builder<'_> {
     /// Sweep the profile along one perimeter span, taking its vertex colours
     /// from the light baked for it at boot.
     fn wall_span(&mut self, si: usize, cull: &Cull) {
-        let Span { a, b, n } = unsafe { SPANS[si] };
+        let Span { a, b, .. } = unsafe { SPANS[si] };
         let end_wall = a.1 == b.1 && a.1.abs() == sim::HALF_Z;
         if end_wall
             && cull.pos.2 * a.1.signum() > sim::HALF_Z
@@ -4898,19 +5030,23 @@ impl Builder<'_> {
             _ => 4,
         };
         let light = unsafe { &WALL_LIGHT[si] };
-        let slots = &SLOT_OF[splits as usize];
-        // Where each split lands along the span, and the slice of the panel's
-        // U range it carries. Once per span: this used to be recomputed for
-        // every quad of every ring, which on a three-way split is a hundred
-        // integer divides for four distinct answers.
-        // Now once per span at boot (`build_spans`): per frame, the divides
-        // and the square root were 25 DIVs a visible span.
-        let SpanSplit {
+        // Where each column stands, the normal its profile sweeps along, its
+        // light slot, and the panel and cover U it carries. Once per span at
+        // boot (`build_spans`): per frame, the divides and the square root
+        // were 25 DIVs a visible span.
+        // Copied out whole: `build_view` runs on the scratchpad stack, so the
+        // per-vertex reads below then cost a cycle, not a main-RAM load stall
+        // each, which with a normal per column was most of a corner's cost.
+        let SpanCols {
+            count: columns,
             x: sx,
             z: sz,
+            nx: cnx,
+            nz: cnz,
+            slot: slots,
             panel_u,
             cover_u: cover_us,
-        } = unsafe { SPAN_SPLITS[si][splits as usize - 1] };
+        } = unsafe { SPAN_COLS[si][splits as usize - 1] };
         // Rings of the sweep. Keep every ring in split-screen as well as full
         // screen: skipping alternate samples did not merely reduce detail. It
         // jumped over the floor curve's vertical tangent and joined a point on
@@ -4938,38 +5074,44 @@ impl Builder<'_> {
                 ri = top;
             }
         }
-        let ring = |p: (i32, i32), at: (i32, i32)| {
-            (at.0 + ((n.0 * p.0) >> 12), -p.1, at.1 + ((n.1 * p.0) >> 12))
-        };
         // Two rings of the grid at a time: the lower edge of the band being
         // drawn and its upper edge, projected just before the band needs it.
         // Keeping every ring made the frame too big for the scratchpad stack
-        // `build_view` runs this on.
-        let project_ring = |r: usize, out: &mut [Option<(i16, i16, i32)>; 4]| {
-            for k in 0..=splits as usize {
-                let (wx, wy, wz) = ring(profile[r], (sx[k], sz[k]));
-                let p = project(Vec3I16::new(wx as i16, wy as i16, wz as i16));
-                out[k] = if p.sz != 0 {
-                    Some((p.sx, p.sy, p.sz as i32))
+        // `build_view` runs this on. One place projects a ring, the top of
+        // each pass (the first pass only primes `upper`), so the projection
+        // stays inline and the GTE's latency stays hidden behind the loop.
+        let mut lower: [Option<(i16, i16, i32)>; SLOTS];
+        let mut upper = [None; SLOTS];
+        for row in 0..ring_count {
+            let top = rings[row];
+            lower = upper;
+            let p = profile[top];
+            for k in 0..columns {
+                // Each column sweeps the profile along its own normal: one
+                // normal for a straight span, turning round a corner span's
+                // rounded joints.
+                let (x0, z0, nx, nz) = unsafe {
+                    (*sx.get_unchecked(k), *sz.get_unchecked(k), *cnx.get_unchecked(k), *cnz.get_unchecked(k))
+                };
+                let v = project(Vec3I16::new(
+                    (x0 + ((nx * p.0) >> 12)) as i16,
+                    -p.1 as i16,
+                    (z0 + ((nz * p.0) >> 12)) as i16,
+                ));
+                upper[k] = if v.sz != 0 {
+                    Some((v.sx, v.sy, v.sz as i32))
                 } else {
                     None
                 };
             }
-        };
-        let mut lower = [None; 4];
-        let mut upper = [None; 4];
-        project_ring(rings[0], &mut lower);
-
-        for row in 0..ring_count - 1 {
-            let (ri, top) = (rings[row], rings[row + 1]);
-            if row > 0 {
-                lower = upper;
+            if row == 0 {
+                continue;
             }
-            project_ring(top, &mut upper);
+            let ri = rings[row - 1];
             // Unchecked for the same reason the floor is: the ring index
             // walks a window over a table sized from `PROFILE_LEN`.
             let (llo, lhi) = unsafe { (light.get_unchecked(ri), light.get_unchecked(top)) };
-            for k in 0..splits as usize {
+            for k in 0..columns - 1 {
                 count_offered!();
                 let (Some(a), Some(b), Some(c), Some(d)) =
                     (lower[k], lower[k + 1], upper[k], upper[k + 1])
@@ -4999,7 +5141,7 @@ impl Builder<'_> {
                     (panel_u[k], panel_u[k + 1], 0, 31)
                 };
                 let uvs = [uvw(u0, v0), uvw(u1, v0), uvw(u0, v1), uvw(u1, v1)];
-                let (s0, s1) = (slots[k], slots[k + 1]);
+                let (s0, s1) = (slots[k] as usize, slots[k + 1] as usize);
                 // The barrier's rings already carry the colour of the half of
                 // the pitch they stand on, laid over their light by
                 // `paint_curb` when the match set its paints.
@@ -5188,7 +5330,7 @@ impl Builder<'_> {
             // Phase the honeycomb from the left end-wall span. Its eight-texel
             // horizontal period then reaches the right span without a doubled
             // strand at either goalpost.
-            let phase = cover_texels(CORNER_X - gw) as i32 % HEX_W;
+            let phase = cover_texels(END_WALL_X - gw) as i32 % HEX_W;
             let u0 = COVER_U0 + phase as u8;
             let u1 = u0 + across;
             let wall_top = profile[WALL_TOP_RING];
