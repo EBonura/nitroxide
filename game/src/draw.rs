@@ -2296,6 +2296,12 @@ pub fn setup() {
 // vertical, so this clears it without crushing the follow distance as badly
 // as a full ramp-radius inset would.
 const CAM_WALL_MARGIN: i32 = 180;
+/// Height the camera keeps above the pitch and below the roof. Climbing a
+/// wall, the boom trails the car downward, and from the foot of the ramp
+/// that put the eye under the pitch, looking up through it at the arena
+/// (Manny's 2026-09-24 tape, polls 3290..3328). Within `CAM_WALL_MARGIN` of a
+/// wall the ramp is at most about 13 uu high, so this clears it too.
+const CAM_SURFACE_CLEAR: i32 = 100;
 
 /// Pull a point inside the arena footprint: side walls, end walls, and the four
 /// corner chamfers. Same shape the sim confines the ball with, minus the goals.
@@ -2439,7 +2445,8 @@ fn camera(
         )
     };
     (cx, cz) = keep_inside(car_x + offset.0, car_z + offset.2);
-    let cyy = car_y + offset.1;
+    // Render Y is down: the pitch is at 0 and the roof at -CEIL.
+    let cyy = (car_y + offset.1).clamp(-(sim::CEIL - CAM_SURFACE_CLEAR), -CAM_SURFACE_CLEAR);
     let current_flat = isqrt_i32((car_x - cx) * (car_x - cx) + (car_z - cz) * (car_z - cz));
 
     // Ball cam primarily aims at the ball. Its vertical aim is softened so a
