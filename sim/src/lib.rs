@@ -64,6 +64,54 @@ pub const WALL_RAMP_R: i32 = 260;
 pub const CEIL_R: i32 = 260;
 /// Where a corner plane crosses each axis: the corner is `|x| + |z| = CORNER`.
 pub const CORNER: i32 = 8064;
+/// Radii of the rounded vertical joints where a corner plane meets a side
+/// wall and an end wall. The published tables give only the planes, and say
+/// their wall lengths ignore "the curvature at the intersections". These
+/// were measured off an overhead camera frame of the standard arena, against
+/// its own 8192 x 10240 footprint: the wall-top outline bends through
+/// 108.5 px at the side joints and 102 px at the end joints at 0.1080 px/uu,
+/// about 1000 and 950 uu, each good to about 130 uu. The scale checks out
+/// on the same frame: the fitted wall and corner lines land on 4096, 5120
+/// and 8064 to under a pixel.
+pub const CORNER_SIDE_R: i32 = 1000;
+pub const CORNER_END_R: i32 = 950;
+/// Centres of those joints in the +x, +z quadrant: one radius inside the
+/// side (or end) wall and one inside the corner plane.
+pub const CORNER_SIDE_C: (i32, i32) = (
+    HALF_X - CORNER_SIDE_R,
+    CORNER - (CORNER_SIDE_R * 5793 >> 12) - (HALF_X - CORNER_SIDE_R),
+);
+pub const CORNER_END_C: (i32, i32) = (
+    CORNER - (CORNER_END_R * 5793 >> 12) - (HALF_Z - CORNER_END_R),
+    HALF_Z - CORNER_END_R,
+);
+
+/// The rounded joints as the simulation and the renderer both build them:
+/// each joint's arc cut into two chords, with the middle vertex pushed out so
+/// the chords straddle the arc (2 / (1 + cos 11.25 deg) of the radius, at most
+/// about 10 uu either side). Folded into the +x, +z quadrant, in uu, from the
+/// side wall's tangent point round to the end wall's: the side joint at 0,
+/// 22.5 and 45 degrees about `CORNER_SIDE_C`, then the end joint at 45, 67.5
+/// and 90 about `CORNER_END_C`. Between the third and fourth vertex runs the
+/// corner plane itself. A test re-derives every number here.
+pub const CORNER_JOINT_PTS: [(i32, i32); 6] = [
+    (4096, 3554),
+    (4029, 3940),
+    (3803, 4261),
+    (3223, 4842),
+    (2918, 5056),
+    (2551, 5120),
+];
+/// The four chords as planes: outward unit normal (Q12) and the plane's
+/// distance from the centre in quarter uu, `(x * nx + z * nz) / 4096 = off / 4`
+/// in the folded quadrant.
+pub const CORNER_JOINT_PLANES: [(i32, i32, i32); 4] = [
+    (4036, 700, 18573),
+    (3349, 2358, 22250),
+    (2353, 3353, 23261),
+    (704, 4035, 21929),
+];
+
 /// Half the width of a goal mouth (RL: 892.755).
 pub const GOAL_HALF_W: i32 = 893;
 /// Height of a goal mouth (RL: 642.775).
@@ -2735,6 +2783,23 @@ fn nearest_arena_wall(x: i32, z: i32, mouth_open: bool) -> WallDistance {
     if corner.distance < nearest.distance {
         nearest = corner;
     }
+
+    // The rounded joints between the corner plane and the walls beside it,
+    // as their chords. The footprint stays convex, so the nearest surface is
+    // still just the nearest plane. In quarter uu, which keeps the products
+    // inside i32. Not past a goal line: there the goal box has the walls.
+    if z.abs() <= uu(HALF_Z) {
+        let (ax, az) = (x.abs() >> (FP - 2), z.abs() >> (FP - 2));
+        for &(nx, nz, off) in &CORNER_JOINT_PLANES {
+            let distance = (off - ((ax * nx + az * nz) >> 12)) << (FP - 2);
+            if distance < nearest.distance {
+                nearest = WallDistance {
+                    distance,
+                    inward: V3::new(-x.signum() * nx, 0, -z.signum() * nz),
+                };
+            }
+        }
+    }
     nearest
 }
 
@@ -3059,6 +3124,34 @@ fn confine(
             // definition not against the other.
             normal = V3::new(-sx * 2896, 0, -sz * 2896);
         }
+
+        // The rounded joints either side of each corner plane, as their
+        // chords (CORNER_JOINT_PLANES): the same push and bounce as the
+        // corner plane, along each chord's own normal. In quarter uu, which
+        // keeps the products inside i32.
+        for &(nx, nz, off) in &CORNER_JOINT_PLANES {
+            let (sx, sz) = (x.signum(), z.signum());
+            let (ax, az) = (x.abs() >> (FP - 2), z.abs() >> (FP - 2));
+            let over = ((ax * nx + az * nz) >> 12) - (off - (r << 2));
+            if over > 0 {
+                // Outward unit normal, Q12, in signed world axes.
+                let (wx, wz) = (sx * nx, sz * nz);
+                let back = over << (FP - 2);
+                x -= wx * back >> 12;
+                z -= wz * back >> 12;
+                let vn = (vx * wx + vz * wz) >> 12;
+                if vn > 0 {
+                    let j = if bounce == 0 {
+                        vn
+                    } else {
+                        vn + damp(vn, bounce)
+                    };
+                    vx -= wx * j >> 12;
+                    vz -= wz * j >> 12;
+                }
+                normal = V3::new(-wx, 0, -wz);
+            }
+        }
     }
 
     (x, z, vx, vz, normal)
@@ -3237,9 +3330,10 @@ mod tests {
     #[test]
     fn ball_fired_at_a_corner_comes_back_off_the_chamfer() {
         let mut sim = solo();
-        // Straight at the +x/+z corner, which is a 45-degree plane, not a box
-        // corner: it should come back roughly the way it came.
-        sim.ball.v = V3::new(2400, 0, 2400);
+        // At the middle of the +x/+z corner plane, a 45-degree plane, not a
+        // box corner: it should come back roughly the way it came. (Straight
+        // down the diagonal now meets the rounded joint beside the plane.)
+        sim.ball.v = V3::new(1855, 0, 2400);
         for _ in 0..600 {
             sim.tick(&Input::default());
             assert!(
@@ -3271,6 +3365,136 @@ mod tests {
             "chamfer did not move the point: {cx} {cz}"
         );
         assert!(in_bounds(V3::new(cx, uu(BALL_R), cz), BALL_R));
+    }
+
+    /// Q12 sine and cosine of `deg10` tenths of a degree, from a short
+    /// Taylor series: enough for checking constants to a unit.
+    fn trig_q12(deg10: i32) -> (i32, i32) {
+        // radians in Q20
+        let r = (deg10 as i64 * 3_294_199) / 1800; // pi * 2^20 / 1800 * deg10
+        let r2 = r * r >> 20;
+        let r3 = r2 * r >> 20;
+        let r4 = r2 * r2 >> 20;
+        let r5 = r4 * r >> 20;
+        let r7 = r5 * r2 >> 20;
+        let s = r - r3 / 6 + r5 / 120 - r7 / 5040;
+        let r6 = r4 * r2 >> 20;
+        let c = (1 << 20) - r2 / 2 + r4 / 24 - r6 / 720 + (r6 * r2 >> 20) / 40320;
+        ((s >> 8) as i32, (c >> 8) as i32)
+    }
+
+    #[test]
+    fn the_rounded_corner_joints_are_the_measured_arcs_cut_into_chords() {
+        // The joints' centres: a radius inside the wall and the corner plane.
+        let side_c = (
+            HALF_X - CORNER_SIDE_R,
+            CORNER - (CORNER_SIDE_R * 5793 >> 12) - (HALF_X - CORNER_SIDE_R),
+        );
+        let end_c = (
+            CORNER - (CORNER_END_R * 5793 >> 12) - (HALF_Z - CORNER_END_R),
+            HALF_Z - CORNER_END_R,
+        );
+        // 2 / (1 + cos 11.25 deg), Q12.
+        let balance = |r: i32| r * 4136 >> 12;
+        let at = |c: (i32, i32), r: i32, deg10: i32| {
+            let (sn, cs) = trig_q12(deg10);
+            (c.0 + (r * cs >> 12), c.1 + (r * sn >> 12))
+        };
+        let want = [
+            at(side_c, CORNER_SIDE_R, 0),
+            at(side_c, balance(CORNER_SIDE_R), 225),
+            at(side_c, CORNER_SIDE_R, 450),
+            at(end_c, CORNER_END_R, 450),
+            at(end_c, balance(CORNER_END_R), 675),
+            at(end_c, CORNER_END_R, 900),
+        ];
+        for (k, (&got, w)) in CORNER_JOINT_PTS.iter().zip(want).enumerate() {
+            assert!(
+                (got.0 - w.0).abs() <= 2 && (got.1 - w.1).abs() <= 2,
+                "vertex {k}: {got:?} vs {w:?}"
+            );
+        }
+        // The tangent points lie on the walls and on the corner plane.
+        let p = CORNER_JOINT_PTS;
+        assert_eq!(p[0].0, HALF_X);
+        assert_eq!(p[5].1, HALF_Z);
+        assert!((p[2].0 + p[2].1 - CORNER).abs() <= 1 && (p[3].0 + p[3].1 - CORNER).abs() <= 1);
+        // Each plane is a unit normal through its chord's two ends.
+        for (k, &(nx, nz, off)) in CORNER_JOINT_PLANES.iter().enumerate() {
+            let len2 = nx * nx + nz * nz;
+            assert!(
+                (len2 - 4096 * 4096).abs() < 4096 * 8,
+                "plane {k} normal not unit"
+            );
+            let chord = [(p[0], p[1]), (p[1], p[2]), (p[3], p[4]), (p[4], p[5])][k];
+            for e in [chord.0, chord.1] {
+                let d = ((e.0 * 4 * nx + e.1 * 4 * nz) >> 12) - off;
+                assert!(d.abs() <= 4, "plane {k} misses {e:?} by {d} quarter uu");
+            }
+        }
+    }
+
+    #[test]
+    fn the_corner_joints_cut_the_corner_and_meet_the_walls_without_a_step() {
+        // Just inside each straight surface, next to a joint, the nearest
+        // wall is that surface, at that distance: the chords start exactly
+        // where the walls end.
+        let p = CORNER_JOINT_PTS;
+        for (x, z) in [(HALF_X - 300, p[0].1 - 50), (p[5].0 - 50, HALF_Z - 300)] {
+            let d = nearest_arena_wall(uu(x), uu(z), false).distance;
+            assert!(
+                (d - uu(300)).abs() <= uu(2),
+                "{x},{z}: {} uu from the wall",
+                d >> FP
+            );
+        }
+        // Where the side wall met the corner plane, 40 uu inside both, is now
+        // outside the rounded joint.
+        let (x, z) = (HALF_X - 40, CORNER - 57 - (HALF_X - 40));
+        let wall = nearest_arena_wall(uu(x), uu(z), false);
+        assert!(
+            wall.distance < 0,
+            "the joint did not cut the corner: {}",
+            wall.distance >> FP
+        );
+        // Its normal turns between the wall's and the plane's.
+        assert!(
+            wall.inward.x < -2896 && wall.inward.z < 0,
+            "{:?}",
+            wall.inward
+        );
+        // And confine pushes a ball there back inside every chord.
+        let (cx, cz, _, _, _) = confine(uu(x), uu(z), 0, 0, BALL_R, BALL_BOUNCE, false);
+        let after = nearest_arena_wall(cx, cz, false).distance;
+        assert!(
+            after >= uu(BALL_R - 1),
+            "still {} uu from the wall",
+            after >> FP
+        );
+    }
+
+    #[test]
+    fn a_ball_rolled_along_the_side_wall_into_the_corner_stays_inside_the_joint() {
+        let mut sim = solo();
+        sim.ball.p = V3::new(uu(HALF_X - BALL_R - 20), uu(BALL_R), uu(2400));
+        sim.ball.v = V3::new(600, 0, 2600);
+        for _ in 0..240 {
+            sim.tick(&Input::default());
+            let d = nearest_arena_wall(sim.ball.p.x, sim.ball.p.z, false).distance;
+            if sim.ball.p.z.abs() <= uu(HALF_Z) {
+                assert!(
+                    d >= uu(BALL_R - 2),
+                    "ball {} uu from the wall: {:?}",
+                    d >> FP,
+                    sim.ball.p
+                );
+            }
+            assert!(
+                in_bounds(sim.ball.p, BALL_R),
+                "left the arena: {:?}",
+                sim.ball.p
+            );
+        }
     }
 
     #[test]
@@ -4771,6 +4995,41 @@ mod tests {
             sim.car.up
         );
         assert!(sim.car.grounded, "wall driving should count as grounded");
+    }
+
+    #[test]
+    fn a_car_on_the_side_wall_drives_round_the_rounded_corner() {
+        let mut sim = solo();
+        // Take the right-hand wall at an angle, as above, but further up the
+        // pitch, then hold the line into the +x/+z corner: the wall turns
+        // through the rounded joint into the corner plane, and the car has
+        // to stay on it, and inside, the whole way.
+        sim.car.p = V3::new(uu(HALF_X - 200), uu(CAR_REST_Y), uu(2400));
+        sim.car.yaw = 420;
+        sim.car.v = V3::new(700, 0, 2000);
+        let input = Input {
+            throttle: 128,
+            boost: true,
+            ..Input::default()
+        };
+        let mut joint_ticks = 0;
+        for _ in 0..90 {
+            sim.tick(&input);
+            assert!(in_bounds(sim.car.p, CAR_R), "car escaped: {:?}", sim.car.p);
+            let wall = nearest_arena_wall(sim.car.p.x, sim.car.p.z, false);
+            let on_joint = CORNER_JOINT_PLANES.iter().any(|&(nx, nz, _)| {
+                wall.inward.x == -sim.car.p.x.signum() * nx
+                    && wall.inward.z == -sim.car.p.z.signum() * nz
+            });
+            if on_joint && sim.car.grounded && sim.car.up.y < 2048 {
+                joint_ticks += 1;
+            }
+        }
+        assert!(
+            joint_ticks > 0,
+            "never drove on the rounded joint: {:?}",
+            sim.car.p
+        );
     }
 
     #[test]
