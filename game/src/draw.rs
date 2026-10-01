@@ -1369,12 +1369,21 @@ const GRASS_CLUT: Clut = Clut::new(384, 258);
 const COVER_CLUT: Clut = Clut::new(384, 259);
 /// Fifteen grass colours plus chalk for the two marked-pitch pages.
 const MARKED_CLUT: Clut = Clut::new(384, 260);
-/// The atlas's boost-pad palettes. The pads are untextured orbs again, so
-/// nothing samples these two rows; they are uploaded because the atlas
-/// carries them.
-const PAD_CLUT: Clut = Clut::new(384, 261);
-/// A spent pad: opaque dark plate, no STP.
+/// The ball's sixteen colours (tools/cook-arena `BALL_PALETTE`), in the row
+/// the boost pads' palette had before they went back to untextured orbs.
+const BALL_CLUT: Clut = Clut::new(384, 261);
+/// A spent pad's old palette: unsampled, uploaded because the atlas carries
+/// it.
 const SPENT_CLUT: Clut = Clut::new(384, 262);
+/// The ball's texture (tools/cook-arena `ball_texture`): below the glow tile,
+/// eight texels a column of facets, the latitude rows at `BALL_ROW_V`.
+const BALL_U0: u8 = 0;
+const BALL_V0: u8 = 144;
+const BALL_ROW_V: [u8; BALL_LAT + 1] = [0, 13, 26, 38, 51, 64];
+const BALL_PACKET: TexturedGouraudPacketMaterial =
+    TextureMaterial::new(BALL_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+        .with_dither(true)
+        .textured_gouraud_packet_material();
 /// A plain radial falloff for every other light sprite.
 const GLOW_CLUT: Clut = Clut::new(384, 263);
 /// The glow tile's outer rings only. Unsampled since the hoop became a ring
@@ -1929,7 +1938,7 @@ pub fn upload_arena_texture(blob: &[u8]) -> bool {
         GRASS_CLUT,
         COVER_CLUT,
         MARKED_CLUT,
-        PAD_CLUT,
+        BALL_CLUT,
         SPENT_CLUT,
         GLOW_CLUT,
         RING_CLUT,
@@ -2853,6 +2862,10 @@ const LIGHTS: LightRig = LightRig::new(
 /// procedural and shades itself rather than going through the GTE rig. Mirrors
 /// `LIGHTS`' first entry with Y flipped, so the two agree on where the sun is.
 const BALL_LIGHT: (i32, i32, i32) = (0x0400, -0x0E00, -0x0500);
+/// The ball's vertex tint where the light is full on it: 1.56 times the
+/// texture's own colour (128 is 1.0), so the mid-grey plates come up bright
+/// on the lit side.
+const BALL_TINT_LIT: i32 = 200;
 
 /// Triangle budget for both cars together. The garage always pairs the chosen
 /// model with the one two slots ahead; the heaviest prepared pair is 1189.
@@ -5744,7 +5757,39 @@ impl Builder<'_> {
         // frame fits the scratchpad stack `build_view` runs this on.
         let mut sp = [[(0i16, 0i16); BALL_LON]; 2];
         let mut sz = [[0i32; BALL_LON]; 2];
-        let project_row = |j: usize, sp: &mut [(i16, i16); BALL_LON], sz: &mut [i32; BALL_LON]| {
+        let mut tint = [[0u32; BALL_LON]; 2];
+        // The eye direction and the light in the ball's own frame, once (the
+        // rotation's transpose is its inverse), so the cull below is one dot
+        // product against a facet's object-space normal and a vertex's light
+        // is one against its own position. Rotating every facet's normal into
+        // the world first cost nine multiplies a facet, and half the facets
+        // are then thrown away.
+        let wm = &world.m;
+        let to_local = |v: (i32, i32, i32)| {
+            (
+                (wm[0][0] as i32 * v.0 + wm[1][0] as i32 * v.1 + wm[2][0] as i32 * v.2) >> 12,
+                (wm[0][1] as i32 * v.0 + wm[1][1] as i32 * v.1 + wm[2][1] as i32 * v.2) >> 12,
+                (wm[0][2] as i32 * v.0 + wm[1][2] as i32 * v.1 + wm[2][2] as i32 * v.2) >> 12,
+            )
+        };
+        let to_cam_local = to_local(to_cam);
+        let light_local = to_local(BALL_LIGHT);
+        // Lit per vertex, so the sphere shades smoothly across its facets
+        // instead of in flat steps, and the light's falloff is the same one
+        // the flat facets used. The tint runs past 128 (the texture's own
+        // brightness) on the lit side: the texture is mid-grey so that the
+        // panels keep their contrast in shadow.
+        let vertex_tint = |v: (i32, i32, i32)| {
+            let k = 4096 / sim::BALL_R.max(1);
+            let dot = ((v.0 * light_local.0 + v.1 * light_local.1 + v.2 * light_local.2) * k) >> 12;
+            let lit = (2500 + dot / 2).clamp(1100, 4096);
+            let t = (lit * BALL_TINT_LIT >> 12) as u8;
+            rgbc((t, t, t))
+        };
+        let project_row = |j: usize,
+                           sp: &mut [(i16, i16); BALL_LON],
+                           sz: &mut [i32; BALL_LON],
+                           tint: &mut [u32; BALL_LON]| {
             // The first and last rows are the poles: sixteen copies of one
             // point. Project it once.
             if j == 0 || j == BALL_LAT {
@@ -5752,6 +5797,7 @@ impl Builder<'_> {
                 let p = project(Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16));
                 *sp = [(p.sx, p.sy); BALL_LON];
                 *sz = [p.sz as i32; BALL_LON];
+                *tint = [vertex_tint(v); BALL_LON];
                 return;
             }
             // Project only the columns the quad loop below reads: a split
@@ -5762,23 +5808,14 @@ impl Builder<'_> {
                 let p = project(Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16));
                 sp[i] = (p.sx, p.sy);
                 sz[i] = p.sz as i32;
+                tint[i] = vertex_tint(v);
             }
         };
-        // The eye direction in the ball's own frame, once (the rotation's
-        // transpose is its inverse), so the cull below is one dot product
-        // against a facet's object-space normal. Rotating every facet's
-        // normal into the world first cost nine multiplies a facet, and half
-        // the facets are then thrown away.
-        let wm = &world.m;
-        let to_cam_local = (
-            (wm[0][0] as i32 * to_cam.0 + wm[1][0] as i32 * to_cam.1 + wm[2][0] as i32 * to_cam.2) >> 12,
-            (wm[0][1] as i32 * to_cam.0 + wm[1][1] as i32 * to_cam.1 + wm[2][1] as i32 * to_cam.2) >> 12,
-            (wm[0][2] as i32 * to_cam.0 + wm[1][2] as i32 * to_cam.1 + wm[2][2] as i32 * to_cam.2) >> 12,
-        );
-        project_row(0, &mut sp[0], &mut sz[0]);
+        project_row(0, &mut sp[0], &mut sz[0], &mut tint[0]);
         for j in 0..BALL_LAT {
             let (lo, hi) = (j & 1, (j + 1) & 1);
-            project_row(j + 1, &mut sp[hi], &mut sz[hi]);
+            project_row(j + 1, &mut sp[hi], &mut sz[hi], &mut tint[hi]);
+            let (v_lo, v_hi) = (BALL_V0 + BALL_ROW_V[j], BALL_V0 + BALL_ROW_V[j + 1]);
             for i in (0..BALL_LON).step_by(lon_step) {
                 let i2 = (i + lon_step) % BALL_LON;
                 if sz[lo][i] == 0 || sz[lo][i2] == 0 || sz[hi][i] == 0 || sz[hi][i2] == 0 {
@@ -5800,22 +5837,25 @@ impl Builder<'_> {
                 if local.0 * to_cam_local.0 + local.1 * to_cam_local.1 + local.2 * to_cam_local.2 <= 0 {
                     continue;
                 }
-                let n = apply(&world, local);
-                let dot = (n.0 * BALL_LIGHT.0 + n.1 * BALL_LIGHT.1 + n.2 * BALL_LIGHT.2) >> 12;
-                let lit = (2500 + dot / 2).clamp(1100, 4096);
-                // Panels: two facets wide, staggered a third of the way round
-                // each band. The old pattern was six lone dark quads in an
-                // irregular scatter, which read as blotches rather than as a
-                // ball. Caps stay light, because a pattern that runs to a pole
-                // turns into a pinwheel the moment the ball rolls one at you.
-                let cap = j == 0 || j == BALL_LAT - 1;
-                let dark = !cap && (i / 2 + j) % 3 == 0;
-                let base: Rgb = if dark { (34, 34, 46) } else { (242, 242, 248) };
-                let col = shade(base, lit, 4096);
-                self.emit(
+                // The texture is baked through these exact coordinates (see
+                // tools/cook-arena `ball_texel_direction`): eight texels a
+                // column, and a pole's two corners at the column's middle, so
+                // the polar triangle samples the panels the cooker put there
+                // and the pattern keeps one size all over the ball. A split
+                // view's double-width facets take the same rule over their
+                // two columns.
+                let (u_a, u_b) = (BALL_U0 + 8 * i as u8, BALL_U0 + 8 * (i + lon_step) as u8);
+                let u_mid = (u_a + u_b) / 2;
+                let (ua, ub) = if j == 0 { (u_mid, u_mid) } else { (u_a, u_b) };
+                let (uc, ud) = if j + 1 == BALL_LAT { (u_mid, u_mid) } else { (u_a, u_b) };
+                self.quad_tex_words(
                     [sp[lo][i], sp[lo][i2], sp[hi][i], sp[hi][i2]],
-                    (sz[lo][i] + sz[lo][i2] + sz[hi][i] + sz[hi][i2]) / 4,
-                    [col; 4],
+                    sz[lo][i] + sz[lo][i2] + sz[hi][i] + sz[hi][i2],
+                    [uvw(ua, v_lo), uvw(ub, v_lo), uvw(uc, v_hi), uvw(ud, v_hi)],
+                    [tint[lo][i], tint[lo][i2], tint[hi][i], tint[hi][i2]],
+                    0,
+                    BALL_PACKET,
+                    false,
                 );
             }
         }
