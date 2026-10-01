@@ -660,11 +660,13 @@ const SEMI_TRANSPARENT: u32 = 1 << 25;
 /// The ball indicator: shown once the ball's underside is this high, its
 /// hoop radius, the height at which its inner disc is smallest, and tints.
 const BALL_RING_MIN_H: i32 = 150;
-/// Filed well in front of what else lies on the pitch (the pitch itself has
-/// its own slots, see [`FLOOR_SLOT`]). The hoop is additive, so where this
-/// lets it over the underside of a low ball it only brightens it, and it is
-/// not drawn for a ball that low.
-const BALL_RING_BIAS: i32 = -200;
+/// No bias. The pitch and its markings have their own slots behind every
+/// sorted one (see [`FLOOR_SLOT`]), and shadows and pads sort with positive
+/// biases, so the hoop already lands in front of all of them. The -200 it
+/// used to carry dated from a depth-sorted pitch, and it also put the hoop
+/// over any car standing near its far edge: an additive white band across
+/// the car's rear (train tape, route tick 700).
+const BALL_RING_BIAS: i32 = 0;
 const BALL_RING_R: i32 = 190;
 const BALL_RING_FULL_H: i32 = 1400;
 const BALL_RING_TINT: Rgb = (132, 140, 132);
