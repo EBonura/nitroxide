@@ -1953,10 +1953,10 @@ static mut SET: usize = 0;
 static mut PENDING: bool = false;
 static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; 2] = [QUADS_INIT; 2];
 /// Single-colour quads: the pitch markings (one per pair of cuts at worst)
-/// and the pad plates (two a pad). A flat quad costs the GPU a quarter of a
-/// Gouraud one's setup and half its fill, so nothing that is one colour
-/// anyway pays for shading.
-const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS + 2 * sim::PADS.len();
+/// and, per pad, the two plates and the far orb's one diamond. A flat quad
+/// costs the GPU a quarter of a Gouraud one's setup and half its fill, so
+/// nothing that is one colour anyway pays for shading.
+const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS + 3 * sim::PADS.len();
 static mut FLAT_QUADS_SETS: [[QuadFlat; MAX_FLAT_QUADS]; 2] = [FLAT_QUADS_INIT; 2];
 const FLAT_QUADS_INIT: [QuadFlat; MAX_FLAT_QUADS] =
     [const { QuadFlat::new([(0, 0); 4], 0, 0, 0) }; MAX_FLAT_QUADS];
