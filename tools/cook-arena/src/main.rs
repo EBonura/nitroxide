@@ -35,35 +35,33 @@ const NET_CELL: usize = 8;
 const CLUT_ENTRIES: usize = 16;
 const COVER_CLUT_ROW: usize = 2;
 const MARKED_CLUT_ROW: usize = 3;
-const PAD_CLUT_ROW: usize = 4;
+const BALL_CLUT_ROW: usize = 4;
 const SPENT_CLUT_ROW: usize = 5;
 const GLOW_CLUT_ROW: usize = 6;
 const RING_CLUT_ROW: usize = 7;
 const CLUT_ROWS: usize = 8;
 /// A 32x32 radial glow below the goal net: index 15 at the centre falling to
-/// 1 at the rim, 0 (a hole) outside it. Every light in the arena that is not
-/// baked into a vertex tint (boost pads, orbs, halos, goal glow, the ball's
-/// ground ring) is this one tile drawn through one of three palettes.
+/// 1 at the rim, 0 (a hole) outside it. The goal halos, the goal-line strip
+/// and the ball's landing disc sample it through the glow palette, and the
+/// ball's ground hoop samples its centre texel.
 const GLOW_U0: usize = 0;
 const GLOW_V0: usize = NET_V0 + NET_H;
 const GLOW_W: usize = 32;
 const CHALK_INDEX: u8 = 15;
-/// The markings at each end: a goal box, a larger box and the arc on its
-/// front edge, the way Mannfield's pitch reads from the chase camera. Both
-/// ends and both halves of each end are mirror images, and the floor draws
-/// them from six unique tiles by flipping UVs, so they fit in the base page's
-/// free space instead of two more 64 KB marked pages.
-const END_TILE_W: usize = 64;
-/// Base-page texel origin of each unique end tile, indexed `row * 3 + col - 1`
-/// for pitch columns 1..=3 of rows 0..=1 at the -Z end.
-const END_TILE_ORIGINS: [(usize, usize); 6] = [
-    (128, 128),
-    (192, 128),
-    (0, 144),
-    (128, 192),
-    (192, 192),
-    (64, 144),
-];
+/// The ball's texture (draw.rs `Builder::ball`), in the base page's free
+/// space below the glow tile, where the unused end-of-pitch marking tiles
+/// were. Laid out the way the ball's 16 x 5 facets sample it: eight texels a
+/// column of facets, and the latitude rows at `BALL_ROW_V`. Drawn through the
+/// ball palette, CLUT row 4.
+const BALL_U0: usize = 0;
+const BALL_V0: usize = 144;
+const BALL_TEX_W: usize = 128;
+const BALL_TEX_H: usize = 64;
+const BALL_LON: usize = 16;
+const BALL_LAT: usize = 5;
+/// V at each latitude row of the ball mesh, pole to pole (draw.rs keeps the
+/// same table).
+const BALL_ROW_V: [f64; BALL_LAT + 1] = [0.0, 13.0, 26.0, 38.0, 51.0, 64.0];
 /// The crowd behind the enclosure (draw.rs `Builder::stands`): tiers of
 /// fans below the honeycomb's rows, drawn through one of two per-frame
 /// palettes whose entries 12..=14 are the team's colour and 15 the lit fascia
@@ -73,20 +71,6 @@ const CROWD_U0: usize = 128;
 const CROWD_V0: usize = 88;
 const CROWD_W: usize = 128;
 const CROWD_H: usize = 40;
-const GOAL_BOX_HALF_W: i32 = 1300;
-const GOAL_BOX_DEPTH: i32 = 700;
-const BIG_BOX_HALF_W: i32 = 2300;
-const BIG_BOX_DEPTH: i32 = 1650;
-const ARC_CENTRE: i32 = 1100;
-const ARC_R: i32 = 860;
-const END_LINE_HALF_W: i32 = 40;
-/// The floor's own geometry, which the texels have to land on: the pitch
-/// stops a ramp radius in from the walls except across a goal mouth, and the
-/// corners are chamfered (draw.rs `Builder::chamfer`).
-const GOAL_HALF_W: i32 = 893;
-const RAMP_R: i32 = 260;
-const CORNER: i32 = 8064;
-const FLOOR_CELL_UU: i32 = 256;
 const CHALK: [u8; 3] = [205, 220, 210];
 
 const ARENA_PALETTE: [[u8; 3]; CLUT_ENTRIES] = [
@@ -140,16 +124,29 @@ fn glow_palette() -> Vec<[u8; 3]> {
         .collect()
 }
 
-/// A live boost pad at rest: a bright rim a ring in from the edge, a dimmer
-/// bowl inside it and a hot centre. The game rewrites this row every frame to
-/// run a ripple outward through it (`draw::pad_clut`); this is the frame the
-/// atlas starts with.
-fn pad_palette() -> Vec<[u8; 3]> {
-    const RINGS: [u8; CLUT_ENTRIES] = [
-        0, 110, 230, 190, 90, 60, 52, 52, 60, 76, 96, 120, 146, 172, 200, 224,
-    ];
-    RINGS.iter().map(|&v| [v, v, v]).collect()
-}
+/// The ball's sixteen colours: the palette of the approved generated design
+/// (work/nitro-review-2026-10-01/ballgen, reduced to 16 colours), with its
+/// one unused entry turned into the deepest seam. Mid-grey on purpose: the
+/// vertex tint runs past 128 on the lit side. Opaque, and no entry is black,
+/// so nothing in the ball is a hole.
+const BALL_PALETTE: [[u8; 3]; CLUT_ENTRIES] = [
+    [50, 50, 53],
+    [63, 62, 64],
+    [73, 76, 78],
+    [130, 70, 30],
+    [81, 83, 87],
+    [89, 92, 96],
+    [98, 102, 106],
+    [210, 101, 8],
+    [108, 112, 115],
+    [30, 30, 33],
+    [110, 115, 117],
+    [121, 125, 130],
+    [131, 136, 141],
+    [143, 147, 153],
+    [247, 204, 8],
+    [155, 159, 166],
+];
 
 /// A spent pad: an opaque dark kerb and a darker floor, the plate the pad
 /// sits on while it is recharging. No STP bits, so it draws solid even
@@ -239,6 +236,7 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
     marked_palette.push(CHALK);
     assert_eq!(marked_palette.len(), CLUT_ENTRIES);
 
+    let ball_map = ball_texture();
     let mut indices = vec![0u8; TEX_W * TEX_H];
     for y in 0..TEX_H {
         for x in 0..TEX_W {
@@ -267,8 +265,10 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
                 && (CROWD_V0..CROWD_V0 + CROWD_H).contains(&y)
             {
                 crowd_index(x - CROWD_U0, y - CROWD_V0)
-            } else if let Some(index) = end_marked_index(x, y, &marked_grass_indices) {
-                index
+            } else if (BALL_U0..BALL_U0 + BALL_TEX_W).contains(&x)
+                && (BALL_V0..BALL_V0 + BALL_TEX_H).contains(&y)
+            {
+                ball_map[(y - BALL_V0) * BALL_TEX_W + (x - BALL_U0)]
             } else if x >= COVER_U0 {
                 0
             } else if x >= GRASS_W && y < GRASS_W {
@@ -284,7 +284,7 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
         grass_palette,
         COVER_PALETTE.to_vec(),
         marked_palette,
-        pad_palette(),
+        BALL_PALETTE.to_vec(),
         spent_palette(),
         glow_palette(),
         ring_palette(),
@@ -311,7 +311,6 @@ fn cook(grass_pixels: &[[u8; 3]]) -> Vec<u8> {
     // The glow rows are drawn additively, and a texel only blends if its
     // CLUT entry carries STP: every visible ring gets it.
     for entry in 1..CLUT_ENTRIES {
-        set_clut_mask_bit(&mut blob, PAD_CLUT_ROW, entry);
         set_clut_mask_bit(&mut blob, GLOW_CLUT_ROW, entry);
     }
     for entry in 1..=4 {
@@ -380,70 +379,190 @@ fn crowd_index(px: usize, py: usize) -> u8 {
     }
 }
 
-/// A texel of one of the six unique end tiles, or `None` outside them.
-fn end_marked_index(px: usize, py: usize, grass: &[u8]) -> Option<u8> {
-    let (slot, &(u0, v0)) = END_TILE_ORIGINS.iter().enumerate().find(|(_, &(u0, v0))| {
-        (u0..u0 + END_TILE_W).contains(&px) && (v0..v0 + END_TILE_W).contains(&py)
-    })?;
-    let (lx, lz) = (px - u0, py - v0);
-    let (col, row) = (slot % 3 + 1, slot / 3);
-    let (x, z) = end_texel_world(col as i32, row as i32, lx as i32, lz as i32);
-    Some(if end_chalk(x, z + PITCH_HALF_Z) {
-        CHALK_INDEX
-    } else {
-        grass[lz * GRASS_W + lx]
-    })
-}
-
-/// Where the floor draws a texel of tile (`col`, `row`): the renderer
-/// splits a near tile into 256-uu cells whose corners it pulls onto the
-/// chamfered pitch outline and maps the texture across each cell affinely,
-/// so interpolate the texel's position between its cell's pulled corners.
-fn end_texel_world(col: i32, row: i32, lx: i32, lz: i32) -> (i32, i32) {
-    let per_cell = END_TILE_W as i32 * FLOOR_CELL_UU / PITCH_TILE_UU;
-    let x0 = -PITCH_HALF_X + col * PITCH_TILE_UU + lx / per_cell * FLOOR_CELL_UU;
-    let z0 = -PITCH_HALF_Z + row * PITCH_TILE_UU + lz / per_cell * FLOOR_CELL_UU;
-    // Texel centre within the cell, in 1/(2 * per_cell) steps.
-    let (fx, fz) = ((lx % per_cell) * 2 + 1, (lz % per_cell) * 2 + 1);
-    let den = 2 * per_cell;
-    let c = |dx: i32, dz: i32| floor_chamfer(x0 + dx * FLOOR_CELL_UU, z0 + dz * FLOOR_CELL_UU);
-    let (a, b, cc, d) = (c(0, 0), c(1, 0), c(0, 1), c(1, 1));
-    let lerp = |p: i32, q: i32, t: i32| p + (q - p) * t / den;
-    let top = (lerp(a.0, b.0, fx), lerp(a.1, b.1, fx));
-    let bottom = (lerp(cc.0, d.0, fx), lerp(cc.1, d.1, fx));
-    (lerp(top.0, bottom.0, fz), lerp(top.1, bottom.1, fz))
-}
-
-/// draw.rs `Builder::chamfer`, point for point.
-fn floor_chamfer(x: i32, z: i32) -> (i32, i32) {
-    let foot_x = PITCH_HALF_X - RAMP_R;
-    let foot_z = if x.abs() < GOAL_HALF_W {
-        PITCH_HALF_Z
-    } else {
-        PITCH_HALF_Z - RAMP_R
-    };
-    let (x, z) = (x.clamp(-foot_x, foot_x), z.clamp(-foot_z, foot_z));
-    let limit = CORNER - (RAMP_R * 5793 >> 12);
-    let sum = x.abs() + z.abs();
-    if sum <= limit {
-        (x, z)
-    } else {
-        (x * limit / sum, z * limit / sum)
+/// The ball texture, baked through the ball's own mesh so its panels come
+/// out evenly sized on screen.
+///
+/// The approved design was drawn as a latitude/longitude map, and a
+/// lat/long map squeezes panels together toward the poles and spreads them
+/// at the equator; worse, the ball's polar facets are triangles that sample
+/// only half of their map cell. So the layout is not painted in map space at
+/// all. Each texel asks which ball facet draws it and where, maps that point
+/// onto the sphere, and takes the colour of the panel there. The panels are
+/// a football's: a truncated icosahedron's twelve pentagons and twenty
+/// hexagons, projected onto the sphere. The look (plate greys, bevels, dark
+/// seams, an amber light in every pentagon) and the palette are the design's.
+fn ball_texture() -> Vec<u8> {
+    let faces = ball_faces();
+    let mut out = vec![0u8; BALL_TEX_W * BALL_TEX_H];
+    for py in 0..BALL_TEX_H {
+        for px in 0..BALL_TEX_W {
+            let d = ball_texel_direction(px as f64 + 0.5, py as f64 + 0.5);
+            out[py * BALL_TEX_W + px] = ball_style(&faces, d);
+        }
     }
+    out
 }
 
-/// Chalk at `x` across the pitch and `d` in from the -Z goal line.
-fn end_chalk(x: i32, d: i32) -> bool {
-    let ax = x.abs();
-    let w = END_LINE_HALF_W;
-    let rect = |half_w: i32, depth: i32| {
-        let side = (ax - half_w).abs() <= w && (0..=depth + w).contains(&d);
-        let front = (d - depth).abs() <= w && ax <= half_w + w;
-        side || front
+/// Ball mesh vertex (`i` round, `j` from the -Y pole) on the unit sphere,
+/// the same formula as draw.rs `build_meshes`.
+fn ball_vertex(i: usize, j: usize) -> [f64; 3] {
+    use std::f64::consts::PI;
+    let lat = -PI / 2.0 + PI * j as f64 / BALL_LAT as f64;
+    let lon = 2.0 * PI * i as f64 / BALL_LON as f64;
+    [lon.sin() * lat.cos(), lat.sin(), lon.cos() * lat.cos()]
+}
+
+fn unit(p: [f64; 3]) -> [f64; 3] {
+    let l = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+    [p[0] / l, p[1] / l, p[2] / l]
+}
+
+fn dot3(a: [f64; 3], b: [f64; 3]) -> f64 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+/// Barycentric weights of `q` in the UV triangle `p0 p1 p2`.
+fn bary(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2], q: [f64; 2]) -> [f64; 3] {
+    let den = (p1[1] - p2[1]) * (p0[0] - p2[0]) + (p2[0] - p1[0]) * (p0[1] - p2[1]);
+    let w0 = ((p1[1] - p2[1]) * (q[0] - p2[0]) + (p2[0] - p1[0]) * (q[1] - p2[1])) / den;
+    let w1 = ((p2[1] - p0[1]) * (q[0] - p2[0]) + (p0[0] - p2[0]) * (q[1] - p2[1])) / den;
+    [w0, w1, 1.0 - w0 - w1]
+}
+
+/// The point on the ball where its facets draw map texel (`u`, `v`).
+///
+/// Facet column `i` covers U 8i..8i+8 and latitude band `j` covers V
+/// `BALL_ROW_V[j]..BALL_ROW_V[j + 1]`. Its corners are a b c d = (i, j)
+/// (i+1, j) (i, j+1) (i+1, j+1), and a pole's two corners take the column's
+/// middle U. The GPU draws the quad as triangles (a, b, c) and (b, c, d) with
+/// texture coordinates interpolated affinely across each, which is what this
+/// inverts; at a pole one of the two has no area. A texel the facet never
+/// reaches (half of each polar cell) extrapolates from the nearest triangle.
+fn ball_texel_direction(u: f64, v: f64) -> [f64; 3] {
+    let cell = (BALL_TEX_W / BALL_LON) as f64;
+    let i = ((u / cell) as usize).min(BALL_LON - 1);
+    let j = (0..BALL_LAT).rev().find(|&j| v >= BALL_ROW_V[j]).unwrap_or(0);
+    let (u0, u1) = (i as f64 * cell, (i + 1) as f64 * cell);
+    let corner = |di: usize, dj: usize| {
+        let row = j + dj;
+        let pole = row == 0 || row == BALL_LAT;
+        let cu = if pole { (u0 + u1) / 2.0 } else if di == 0 { u0 } else { u1 };
+        ([cu, BALL_ROW_V[row]], ball_vertex((i + di) % BALL_LON, row))
     };
-    let r = isqrt(x * x + (d - ARC_CENTRE) * (d - ARC_CENTRE));
-    let arc = (r - ARC_R).abs() <= w && d > BIG_BOX_DEPTH + w;
-    rect(GOAL_BOX_HALF_W, GOAL_BOX_DEPTH) || rect(BIG_BOX_HALF_W, BIG_BOX_DEPTH) || arc
+    let (a, b, c, d) = (corner(0, 0), corner(1, 0), corner(0, 1), corner(1, 1));
+    let tri = if j == 0 {
+        (b, c, d)
+    } else if j == BALL_LAT - 1 {
+        (a, b, c)
+    } else if bary(a.0, b.0, c.0, [u, v]).iter().all(|&w| w >= -1e-9) {
+        (a, b, c)
+    } else {
+        (b, c, d)
+    };
+    let w = bary(tri.0 .0, tri.1 .0, tri.2 .0, [u, v]);
+    unit([0, 1, 2].map(|k| w[0] * tri.0 .1[k] + w[1] * tri.1 .1[k] + w[2] * tri.2 .1[k]))
+}
+
+/// One panel of the ball: its outward normal, its distance from the centre
+/// on a truncated icosahedron of unit edge, and its tone.
+struct BallFace {
+    n: [f64; 3],
+    h: f64,
+    pentagon: bool,
+    tone: u8,
+}
+
+/// The truncated icosahedron's 32 faces: pentagons on the icosahedron's
+/// vertices, hexagons on its faces. The hexagons take three plate greys,
+/// coloured greedily so that no two neighbours match.
+fn ball_faces() -> Vec<BallFace> {
+    let phi = (1.0 + 5f64.sqrt()) / 2.0;
+    let mut v = Vec::new();
+    for a in [-1.0, 1.0] {
+        for b in [-phi, phi] {
+            v.push([0.0, a, b]);
+            v.push([a, b, 0.0]);
+            v.push([b, 0.0, a]);
+        }
+    }
+    // Inradius of each face of a truncated icosahedron with unit edges.
+    const H_PENT: f64 = 2.327_438_436;
+    const H_HEX: f64 = 2.267_283_942;
+    let mut faces: Vec<BallFace> = v
+        .iter()
+        .map(|&p| BallFace { n: unit(p), h: H_PENT, pentagon: true, tone: 1 })
+        .collect();
+    let edge = |p: &[f64; 3], q: &[f64; 3]| {
+        let d = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2);
+        (d - 4.0).abs() < 1e-6
+    };
+    for i in 0..12 {
+        for j in i + 1..12 {
+            for k in j + 1..12 {
+                if edge(&v[i], &v[j]) && edge(&v[j], &v[k]) && edge(&v[i], &v[k]) {
+                    let n = unit([0, 1, 2].map(|c| v[i][c] + v[j][c] + v[k][c]));
+                    faces.push(BallFace { n, h: H_HEX, pentagon: false, tone: 0 });
+                }
+            }
+        }
+    }
+    assert_eq!(faces.len(), 32, "a truncated icosahedron has 32 faces");
+    // Neighbouring hexagons' normals are 41.8 degrees apart; the next
+    // nearest are 70.5.
+    const TONES: [u8; 3] = [12, 10, 2];
+    for f in 12..32 {
+        let used: Vec<u8> = (12..f)
+            .filter(|&g| dot3(faces[f].n, faces[g].n) > 0.6)
+            .map(|g| faces[g].tone)
+            .collect();
+        faces[f].tone = *TONES.iter().find(|t| !used.contains(t)).unwrap_or(&TONES[0]);
+    }
+    faces
+}
+
+/// The palette index for the ball at direction `d`.
+fn ball_style(faces: &[BallFace], d: [f64; 3]) -> u8 {
+    // The face a ray from the centre meets first is the one with the
+    // largest `d . n / h`.
+    let mut best = (f64::MIN, 0usize);
+    let mut second = (f64::MIN, 0usize);
+    for (k, f) in faces.iter().enumerate() {
+        let s = dot3(d, f.n) / f.h;
+        if s > best.0 {
+            second = best;
+            best = (s, k);
+        } else if s > second.0 {
+            second = (s, k);
+        }
+    }
+    let (f1, f2) = (&faces[best.1], &faces[second.1]);
+    // Degrees to the seam: the score gap over its rate of change across the
+    // boundary.
+    let g = [0, 1, 2].map(|c| f1.n[c] / f1.h - f2.n[c] / f2.h);
+    let rate = dot3(g, g).sqrt();
+    let seam = ((best.0 - second.0) / rate).to_degrees();
+    let from_centre = dot3(d, f1.n).clamp(-1.0, 1.0).acos().to_degrees();
+    if seam < 0.9 {
+        9
+    } else if seam < 2.0 {
+        0
+    } else if f1.pentagon {
+        if from_centre < 3.2 {
+            14
+        } else if from_centre < 5.4 {
+            7
+        } else if from_centre < 6.6 {
+            3
+        } else if seam < 3.6 {
+            6
+        } else {
+            1
+        }
+    } else if seam < 3.6 {
+        15
+    } else {
+        f1.tone
+    }
 }
 
 fn honeycomb_index(px: i32, py: i32) -> u8 {
@@ -555,10 +674,14 @@ fn validate(blob: &[u8]) {
         0,
         "a spent pad is an opaque plate"
     );
-    for row in [PAD_CLUT_ROW, GLOW_CLUT_ROW] {
-        let offset = (row * CLUT_ENTRIES + 15) * 2;
+    let offset = (GLOW_CLUT_ROW * CLUT_ENTRIES + 15) * 2;
+    let value = u16::from_le_bytes([clut[offset], clut[offset + 1]]);
+    assert_ne!(value & 0x8000, 0, "glow rings must carry STP");
+    for entry in 0..CLUT_ENTRIES {
+        let offset = (BALL_CLUT_ROW * CLUT_ENTRIES + entry) * 2;
         let value = u16::from_le_bytes([clut[offset], clut[offset + 1]]);
-        assert_ne!(value & 0x8000, 0, "glow rings must carry STP");
+        assert_eq!(value & 0x8000, 0, "the ball is opaque");
+        assert_ne!(value, 0, "no ball colour may be a hole");
     }
     let chalk_offset = (MARKED_CLUT_ROW * CLUT_ENTRIES + CHALK_INDEX as usize) * 2;
     let chalk = u16::from_le_bytes([clut[chalk_offset], clut[chalk_offset + 1]]);
@@ -600,23 +723,84 @@ mod tests {
         assert_eq!(marked_pitch_index(0, 620, &grass), 3);
     }
 
-    #[test]
-    fn end_tiles_carry_the_boxes_and_arc() {
-        // Every chalk texel an end needs lies in the six unique tiles:
-        // columns 1..=3, rows 0..=1, and nothing reaches row 2.
-        for x in -PITCH_HALF_X..0 {
-            for d in 0..3 * PITCH_TILE_UU {
-                if end_chalk(x, d) {
-                    let (col, row) = ((x + PITCH_HALF_X) / PITCH_TILE_UU, d / PITCH_TILE_UU);
-                    assert!((1..=3).contains(&col) && row <= 1, "chalk at x {x} d {d}");
-                }
+    /// Whether a facet draws map point (`u`, `v`): everywhere but the half
+    /// of each polar cell outside its one triangle.
+    fn ball_texel_drawn(u: f64, v: f64) -> bool {
+        let cell = (BALL_TEX_W / BALL_LON) as f64;
+        let (u0, um) = ((u / cell).floor() * cell, (u / cell).floor() * cell + cell / 2.0);
+        let polar = if v < BALL_ROW_V[1] {
+            Some((BALL_ROW_V[0], BALL_ROW_V[1]))
+        } else if v >= BALL_ROW_V[BALL_LAT - 1] {
+            Some((BALL_ROW_V[BALL_LAT], BALL_ROW_V[BALL_LAT - 1]))
+        } else {
+            None
+        };
+        match polar {
+            None => true,
+            Some((pole_v, row_v)) => {
+                let w = bary([um, pole_v], [u0, row_v], [u0 + cell, row_v], [u, v]);
+                w.iter().all(|&x| x >= 0.0)
             }
         }
-        let grass = vec![3u8; GRASS_W * GRASS_W];
-        // The goal box's front line crosses tile (3, 0) at d = 700, texel 43.
-        let (u0, v0) = END_TILE_ORIGINS[2];
-        assert_eq!(end_marked_index(u0 + 32, v0 + 43, &grass), Some(CHALK_INDEX));
-        assert_eq!(end_marked_index(u0 + 32, v0 + 30, &grass), Some(3));
-        assert_eq!(end_marked_index(0, 0, &grass), None);
+    }
+
+    #[test]
+    fn ball_texels_land_on_the_facet_that_draws_them() {
+        // A non-polar facet corner maps to its own mesh vertex.
+        let d = ball_texel_direction(8.0 * 3.0 + 1e-6, BALL_ROW_V[2] + 1e-6);
+        let v = ball_vertex(3, 2);
+        assert!(dot3(d, v) > 0.9999, "{d:?} vs {v:?}");
+        // The middle of a polar cell's top edge is the pole itself.
+        let pole = ball_texel_direction(8.0 * 5.0 + 4.0, 1e-6);
+        assert!(pole[1] < -0.9999, "{pole:?}");
+    }
+
+    #[test]
+    fn ball_panels_are_evenly_sized_on_the_sphere() {
+        // Every panel is drawn, and each hexagon covers about the same share
+        // of the sphere: count texels by panel, weighted by the solid angle
+        // each texel covers on the ball.
+        let faces = ball_faces();
+        let mut area = vec![0.0f64; faces.len()];
+        let step = 0.25;
+        let mut u = step / 2.0;
+        while u < BALL_TEX_W as f64 {
+            let mut v = step / 2.0;
+            while v < BALL_TEX_H as f64 {
+                let (c, du, dv) = (
+                    ball_texel_direction(u, v),
+                    ball_texel_direction(u + 0.01, v),
+                    ball_texel_direction(u, v + 0.01),
+                );
+                let e1 = [0, 1, 2].map(|k| (du[k] - c[k]) / 0.01);
+                let e2 = [0, 1, 2].map(|k| (dv[k] - c[k]) / 0.01);
+                let cross = [
+                    e1[1] * e2[2] - e1[2] * e2[1],
+                    e1[2] * e2[0] - e1[0] * e2[2],
+                    e1[0] * e2[1] - e1[1] * e2[0],
+                ];
+                // Only texels a facet actually draws.
+                let inside = ball_texel_drawn(u, v);
+                if inside {
+                    let mut best = (f64::MIN, 0);
+                    for (k, f) in faces.iter().enumerate() {
+                        let s = dot3(c, f.n) / f.h;
+                        if s > best.0 {
+                            best = (s, k);
+                        }
+                    }
+                    area[best.1] += dot3(cross, cross).sqrt() * step * step;
+                }
+                v += step;
+            }
+            u += step;
+        }
+        let total: f64 = area.iter().sum();
+        assert!((total - 4.0 * std::f64::consts::PI).abs() < 0.5, "sphere area {total}");
+        let hex: Vec<f64> = area[12..].to_vec();
+        let (lo, hi) = hex.iter().fold((f64::MAX, 0f64), |(a, b), &x| (a.min(x), b.max(x)));
+        assert!(hi / lo < 1.35, "hexagon areas range {lo}..{hi}");
+        let map = ball_texture();
+        assert!(map.contains(&14) && map.contains(&9) && map.contains(&12));
     }
 }
