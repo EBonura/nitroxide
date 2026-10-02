@@ -322,6 +322,21 @@ static mut CAMERA_TICK: u32 = 0;
 pub fn set_camera_tick(tick: u32) {
     unsafe { CAMERA_TICK = tick };
 }
+/// Drop the ordering table `render` built last frame without drawing it. A
+/// frame that draws nothing (the attract demo's cuts) must call this, or the
+/// next `render` submits a table from before the cut, whose packets a split
+/// frame may since have overwritten.
+pub fn drop_pending() {
+    unsafe { PENDING = false };
+}
+
+/// Forget both chase cameras' history, so the next frame frames its car
+/// from scratch instead of easing in from wherever the last match left it.
+/// The attract demo calls it at the start of each match so every run of it
+/// draws the same frames.
+pub fn reset_cameras() {
+    unsafe { CHASE_CAMERAS = [CameraState::EMPTY; 2] };
+}
 const DEPTH_RANGE: DepthRange = DepthRange::new(120, 14000);
 const SKY_SLOT: usize = OT_DEPTH - 1;
 /// Horizontal centre of the scoreboard's dark middle panel, which is what the
@@ -6439,11 +6454,13 @@ fn draw_cars(
 }
 
 /// How many rows the front end has, and where they sit on screen.
-pub const MENU_ROWS: usize = 3;
+pub const MENU_ROWS: usize = 4;
 const MENU_X: i16 = 10;
 const MENU_W: i16 = 164;
-const MENU_TOP: i16 = 156;
-const MENU_STEP: i16 = 25;
+/// Four rows since DEMO joined: the list moved up a row's height less a
+/// pixel per gap so the bottom row keeps its old margin.
+const MENU_TOP: i16 = 135;
+const MENU_STEP: i16 = 24;
 
 /// Ordering-table slots the front end reserves for itself. The pitch and the
 /// car both map through `DEPTH_RANGE` into the low slots at this camera
