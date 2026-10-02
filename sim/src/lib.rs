@@ -603,6 +603,100 @@ enum AiTarget {
     Position(i32, i32),
 }
 
+/// Rocket League's 1v1 kickoff spots for the blue car, in uu; orange takes
+/// the same spot turned half a turn round the centre. The first, back centre,
+/// is the only one an ordinary match uses; the attract demo picks others so
+/// its kickoffs are not all the same race.
+pub const KICKOFF_SPOTS: [(i32, i32); 5] = [
+    (0, -4608),
+    (-256, -3840),
+    (256, -3840),
+    (-2048, -2560),
+    (2048, -2560),
+];
+
+/// One attract-demo match: a kickoff spot (index into [`KICKOFF_SPOTS`]) and
+/// a seed for both bots. Picked off the bot-against-bot survey for a goal
+/// that comes out of open play, with jumps and flips on the way;
+/// `first_goal` and `scorer` are what that seed plays out to, checked by the
+/// tests so a physics change that alters the demo cannot go unnoticed.
+#[derive(Copy, Clone, Debug)]
+pub struct DemoMatch {
+    pub spot: usize,
+    pub seed: u32,
+    /// Tick of live play the first goal goes in on, counted from 1.
+    pub first_goal: u32,
+    pub scorer: Team,
+}
+
+/// The attract demo's matches, in the order it plays them.
+pub const DEMO_MATCHES: [DemoMatch; 4] = [
+    DemoMatch { spot: 0, seed: 3, first_goal: 1066, scorer: Team::Blue },
+    DemoMatch { spot: 3, seed: 11, first_goal: 1577, scorer: Team::Orange },
+    DemoMatch { spot: 2, seed: 5, first_goal: 1090, scorer: Team::Blue },
+    DemoMatch { spot: 4, seed: 3, first_goal: 1380, scorer: Team::Blue },
+];
+
+/// The demo bots' flair (see `Sim::flair`), in uu relative to the car: how
+/// high above the car's centre a ball is worth jumping for, how far ahead of
+/// the nose it may be, how far off the nose's line, and how close a floor ball
+/// must be for a flip into it. Tuned on the bot-against-bot survey for jumps
+/// that connect rather than jumps for show.
+const FLAIR_JUMP_LO: i32 = 140;
+const FLAIR_JUMP_HI: i32 = 420;
+const FLAIR_NEAR: i32 = 60;
+const FLAIR_FAR: i32 = 420;
+const FLAIR_SIDE: i32 = 120;
+const FLAIR_FLIP_NEAR: i32 = 170;
+const FLAIR_FLIP_FAR: i32 = 260;
+/// A second press turns into a forward dodge once the ball is this close.
+const FLAIR_DODGE_REACH: i32 = 240;
+
+/// What the bot remembers between ticks: everything [`Sim::drive_ai`] carries
+/// over besides the world itself. Held per side, so blue's bot (the attract
+/// demo's) cannot disturb orange's.
+#[derive(Copy, Clone, Debug)]
+struct BotMemory {
+    target: AiTarget,
+    target_ticks: u16,
+    rng: u32,
+    escape: u8,
+}
+
+/// For each pad, the index of the pad half a turn round the centre spot.
+/// The layout is symmetric that way, which is what lets blue's bot run on the
+/// arena turned round (see [`Sim::drive_blue_ai`]).
+const PAD_TURNED: [u8; PADS.len()] = {
+    let mut out = [0u8; PADS.len()];
+    let mut i = 0;
+    while i < PADS.len() {
+        let mut j = 0;
+        while !(PADS[j].x == -PADS[i].x && PADS[j].z == -PADS[i].z && PADS[j].big == PADS[i].big) {
+            j += 1; // runs past the end, failing the build, if a pad has no twin
+        }
+        out[i] = j as u8;
+        i += 1;
+    }
+    out
+};
+
+/// A car seen from the arena turned half a turn about the centre spot. A
+/// rotation, not a mirror, so steering keeps its sign and an input that is
+/// right for the turned car is right for the real one.
+fn turned_car(c: &Car) -> Car {
+    let mut t = *c;
+    t.p = turned(c.p);
+    t.v = turned(c.v);
+    t.up = turned(c.up);
+    t.jump_normal = turned(c.jump_normal);
+    t.yaw = c.yaw.wrapping_add(2048);
+    t
+}
+
+fn turned(v: V3) -> V3 {
+    V3::new(-v.x, v.y, -v.z)
+}
+
 /// Ticks the world holds still after a goal before kickoff.
 pub const GOAL_FREEZE_TICKS: u16 = 150;
 /// How close the opponent has to be to the kickoff ball before it burns.
@@ -1179,6 +1273,18 @@ pub struct Sim {
     /// oscillates there for the rest of the match. Latching it long enough to
     /// clear the mouth is what turns a reverse into an exit.
     ai_escape: u8,
+    /// Whether the blue car drives itself too, ignoring the input handed to
+    /// [`Sim::tick`]: the attract demo. Off in every ordinary match.
+    pub blue_ai: bool,
+    /// Blue's bot, when [`Sim::blue_ai`] is on.
+    blue_bot: BotMemory,
+    /// Index into [`KICKOFF_SPOTS`] for every kickoff of this match. Zero,
+    /// back centre, except in the attract demo.
+    pub kickoff_spot: usize,
+    /// Both bots jump at lofted balls and flip into the ball (see
+    /// [`Sim::flair`]). The attract demo's, so it shows what the game can do;
+    /// off for the opponent a player faces.
+    pub bot_flair: bool,
     /// Sub-units of gravity owed but not yet spent, `0..GRAVITY_DEN`. One
     /// phase for the whole world, so every body falls under the same gravity
     /// on the same tick. Reset when a match is built, never at kickoff, so a
@@ -1226,6 +1332,15 @@ impl Sim {
             ai_rng: 0x5EED_1234,
             gravity_phase: 0,
             ai_escape: 0,
+            blue_ai: false,
+            blue_bot: BotMemory {
+                target: AiTarget::None,
+                target_ticks: 0,
+                rng: 0xB1E0_5EED,
+                escape: 0,
+            },
+            bot_flair: false,
+            kickoff_spot: 0,
         };
         sim.kickoff();
         sim
@@ -1241,9 +1356,12 @@ impl Sim {
         self.ball.w = V3::ZERO;
         self.ball.grounded = true;
         // RL's back-middle kickoff spot.
-        self.car.p = V3::new(0, uu(CAR_REST_Y), -uu(4608));
+        let (sx, sz) = KICKOFF_SPOTS[self.kickoff_spot % KICKOFF_SPOTS.len()];
+        self.car.p = V3::new(uu(sx), uu(CAR_REST_Y), uu(sz));
         self.car.v = V3::ZERO;
-        self.car.yaw = 0; // facing +Z, toward the ball and the far goal
+        // Facing the ball: +Z from the back-centre spot, toward the centre
+        // spot from the others.
+        self.car.yaw = atan2_q12(-sx, -sz);
         self.car.boost = BOOST_MAX / 3; // RL spawns you with a third of a tank
         self.car.grounded = true;
         self.car.up = V3::new(0, 4096, 0);
@@ -1253,9 +1371,9 @@ impl Sim {
         self.car.suspension_velocity = [0; 2];
 
         // Mirrored: same spot at the other end, facing back down the pitch.
-        self.opponent.p = V3::new(0, uu(CAR_REST_Y), uu(4608));
+        self.opponent.p = V3::new(-uu(sx), uu(CAR_REST_Y), -uu(sz));
         self.opponent.v = V3::ZERO;
-        self.opponent.yaw = 2048; // half a turn, facing -Z
+        self.opponent.yaw = self.car.yaw.wrapping_add(2048); // half a turn round
         self.opponent.boost = BOOST_MAX / 3;
         self.opponent.grounded = true;
         self.opponent.up = V3::new(0, 4096, 0);
@@ -1571,7 +1689,7 @@ impl Sim {
             };
         }
 
-        Input {
+        let mut input = Input {
             // Full throttle at the ball, eased over the last stretch into a
             // positional target so it settles instead of overshooting and
             // having to come back.
@@ -1608,6 +1726,43 @@ impl Sim {
             // for it with a turning circle it could not fit through.
             handbrake: delta.abs() > AI_ALIGN_SLIDE || quick < AI_SLIDE_CRAWL,
             ..Input::default()
+        };
+        if self.bot_flair && matches!(self.ai_target, AiTarget::Ball) && !self.untouched_kickoff() {
+            self.flair(&mut input);
+        }
+        input
+    }
+
+    /// The attract demo's jump shots and flips, on top of the bot's
+    /// driving: a jump at a ball bouncing ahead at car-roof height or above,
+    /// held while it rises, and a forward dodge into the ball once it is in
+    /// reach, from the ground or the air. Ordinary bots never jump; this only
+    /// runs with [`Sim::bot_flair`] on. Every move is an ordinary input.
+    fn flair(&self, input: &mut Input) {
+        let car = &self.opponent;
+        let (sn, cs) = heading(car.yaw);
+        let (dx, dz) = ((self.ball.p.x - car.p.x) >> FP, (self.ball.p.z - car.p.z) >> FP);
+        let ahead = (dx * sn + dz * cs) >> 12;
+        let side = ((dx * cs - dz * sn) >> 12).abs();
+        let high = (self.ball.p.y - car.p.y) >> FP;
+        let reach = isqrt_i32(dx * dx + dz * dz + high * high);
+        if car.grounded && car.up.y > 3500 {
+            // Up for a ball that will come down on the roof, or a flip into
+            // a ball on the floor right ahead.
+            let lofted = (FLAIR_JUMP_LO..=FLAIR_JUMP_HI).contains(&high)
+                && (FLAIR_NEAR..=FLAIR_FAR).contains(&ahead);
+            let flip = high < FLAIR_JUMP_LO && (FLAIR_FLIP_NEAR..=FLAIR_FLIP_FAR).contains(&ahead);
+            if side < FLAIR_SIDE && (lofted || flip) {
+                input.jump_pressed = true;
+                input.jump_held = lofted;
+            }
+        } else if !car.grounded {
+            input.jump_held = car.jump_holding && high > 0;
+            let in_reach = ahead > 0 && reach < FLAIR_DODGE_REACH;
+            if car.jumps_used == 1 && car.dodge_window > 0 && in_reach {
+                input.jump_pressed = true;
+                input.pitch = 128;
+            }
         }
     }
 
@@ -1629,6 +1784,61 @@ impl Sim {
         // Both cars spawn mirrored and both drive from tick one.
         self.ai_update_target();
         self.ai_handling()
+    }
+
+    /// A bot-against-bot match for the attract demo: both cars driven by the
+    /// bot with its flair on, kicking off from `m.spot`, scattering from
+    /// `m.seed`. Nothing else differs from an ordinary match, so what it shows
+    /// is the game's own physics.
+    pub fn demo(m: &DemoMatch) -> Sim {
+        let mut sim = Sim::new();
+        sim.blue_ai = true;
+        sim.bot_flair = true;
+        sim.kickoff_spot = m.spot;
+        sim.kickoff();
+        sim.seed_ai(m.seed.wrapping_mul(0x9E37_79B9), m.seed.wrapping_mul(0x85EB_CA6B));
+        sim
+    }
+
+    /// Seed both bots' scatter. A fixed pair replays the same match, which is
+    /// how the attract demo picks matches worth watching. Zero is replaced,
+    /// since xorshift sticks there.
+    pub fn seed_ai(&mut self, orange: u32, blue: u32) {
+        self.ai_rng = orange.max(1);
+        self.blue_bot.rng = blue.max(1);
+    }
+
+    /// One tick of blue intent from the same bot that drives orange.
+    ///
+    /// The bot is written for orange's end: it attacks -Z. Blue attacks +Z, so
+    /// the bot runs on a copy of the world turned half a turn about the centre
+    /// spot, with blue standing where orange would and blue's own memory in
+    /// orange's slots. Every input is relative to the car, and a half turn is
+    /// a rotation, so the input it returns drives the real blue car. Orange's
+    /// bot is untouched, and runs exactly as it does in a one-player match.
+    fn drive_blue_ai(&mut self) -> Input {
+        let mut view = *self;
+        view.opponent = turned_car(&self.car);
+        view.car = turned_car(&self.opponent);
+        view.ball.p = turned(self.ball.p);
+        view.ball.v = turned(self.ball.v);
+        view.ball.w = turned(self.ball.w);
+        for (i, &j) in PAD_TURNED.iter().enumerate() {
+            view.pad_timers[i] = self.pad_timers[j as usize];
+        }
+        let m = self.blue_bot;
+        view.ai_target = m.target;
+        view.ai_target_ticks = m.target_ticks;
+        view.ai_rng = m.rng;
+        view.ai_escape = m.escape;
+        let input = view.drive_ai();
+        self.blue_bot = BotMemory {
+            target: view.ai_target,
+            target_ticks: view.ai_target_ticks,
+            rng: view.ai_rng,
+            escape: view.ai_escape,
+        };
+        input
     }
 
     /// Ticks of live play since the cars were last placed for kickoff,
@@ -1726,6 +1936,12 @@ impl Sim {
             self.clock -= 1;
         }
         self.kickoff_ticks = self.kickoff_ticks.saturating_add(1);
+        let blue = if self.blue_ai {
+            self.drive_blue_ai()
+        } else {
+            *input
+        };
+        let input = &blue;
         let ai = match p2 {
             Some(pad) => pad,
             None if self.opponent_ai => self.drive_ai(),
@@ -3711,6 +3927,151 @@ mod tests {
                     end,
                     side,
                     sim.car.p
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_pad_has_a_twin_half_a_turn_round() {
+        for (i, &j) in PAD_TURNED.iter().enumerate() {
+            let (a, b) = (&PADS[i], &PADS[j as usize]);
+            assert_eq!((b.x, b.z, b.big), (-a.x, -a.z, a.big), "pad {}", i);
+            assert_eq!(PAD_TURNED[j as usize] as usize, i);
+        }
+    }
+
+    #[test]
+    fn the_blue_bot_is_the_orange_bot_turned_round() {
+        // The kickoff is symmetric about the centre spot, so with the same
+        // seed on both sides the two bots must ask for the same thing.
+        let mut sim = Sim::new();
+        sim.blue_ai = true;
+        sim.seed_ai(77, 77);
+        let blue = sim.drive_blue_ai();
+        let orange = sim.drive_ai();
+        assert_eq!(
+            (blue.throttle, blue.steer, blue.boost, blue.handbrake),
+            (orange.throttle, orange.steer, orange.boost, orange.handbrake)
+        );
+        // And the turned view puts blue exactly where orange stands.
+        let t = turned_car(&sim.car);
+        assert_eq!((t.p, t.yaw), (sim.opponent.p, sim.opponent.yaw));
+    }
+
+    #[test]
+    fn the_blue_bot_ignores_the_pad_and_leaves_orange_alone() {
+        // Orange's bot must play exactly as it does in a one-player match
+        // whatever blue does: the same seed, the same first decisions.
+        let mut a = Sim::new();
+        a.blue_ai = true;
+        let mut b = a;
+        a.tick(&Input::default());
+        b.tick(&Input { throttle: -128, steer: 128, boost: true, ..Input::default() });
+        assert_eq!((a.car.p, a.car.v), (b.car.p, b.car.v), "blue read the pad");
+        assert_eq!(a.ai_target, b.ai_target);
+    }
+
+    #[test]
+    fn every_demo_match_plays_out_as_picked() {
+        for (n, m) in DEMO_MATCHES.iter().enumerate() {
+            let mut sim = Sim::demo(m);
+            let mut tick = 0;
+            let (mut jumps, mut used) = (0, [0u8; 2]);
+            while sim.goal_freeze == 0 {
+                tick += 1;
+                assert!(tick <= 60 * 60, "demo {}: no goal in a minute", n);
+                sim.tick(&Input::default());
+                let ball = sim.ball.p;
+                assert!(in_bounds(ball, BALL_R), "demo {} tick {}: ball {:?}", n, tick, ball);
+                for (k, car) in [&sim.car, &sim.opponent].into_iter().enumerate() {
+                    if car.jumps_used > used[k] {
+                        jumps += 1;
+                    }
+                    used[k] = car.jumps_used;
+                }
+            }
+            let scorer = sim.last_scorer;
+            std::println!("demo {}: goal on tick {} by {:?}, {} jumps", n, tick, scorer, jumps);
+            assert_eq!((tick, sim.last_scorer), (m.first_goal, m.scorer), "demo {}", n);
+            assert!(jumps > 0, "demo {}: nobody left the ground", n);
+        }
+        // And nothing changes in the default kickoff: spot 0 is where an
+        // ordinary match has always started.
+        let plain = Sim::new();
+        let spot = V3::new(0, uu(CAR_REST_Y), -uu(4608));
+        assert_eq!((plain.car.p, plain.car.yaw, plain.opponent.yaw), (spot, 0, 2048));
+    }
+
+    #[test]
+    fn bot_matches_stay_inside_the_arena() {
+        for seed in [1u32, 2, 3] {
+            let mut sim = Sim::new();
+            sim.blue_ai = true;
+            sim.seed_ai(seed, seed.wrapping_mul(2_654_435_761));
+            for tick in 0..3600 {
+                sim.tick(&Input::default());
+                let ball = sim.ball.p;
+                assert!(in_bounds(ball, BALL_R), "seed {} tick {}: ball {:?}", seed, tick, ball);
+                for car in [&sim.car, &sim.opponent] {
+                    if !car.wrecked() {
+                        let p = car.p;
+                        assert!(in_bounds(p, CAR_R), "seed {} tick {}: car {:?}", seed, tick, p);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Survey of bot-against-bot matches for the attract demo: goals per
+    /// seed pair, with the tick each went in. `cargo test --release --
+    /// --ignored bot_match_survey --nocapture`.
+    #[test]
+    #[ignore]
+    fn bot_match_survey() {
+        let ticks: i32 = std::env::var("TICKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2400);
+        for spot in 0..KICKOFF_SPOTS.len() {
+            for seed in 1u32..=12 {
+                let mut sim = Sim::new();
+                sim.blue_ai = true;
+                sim.bot_flair = true;
+                sim.kickoff_spot = spot;
+                sim.kickoff();
+                sim.seed_ai(seed.wrapping_mul(0x9E37_79B9), seed.wrapping_mul(0x85EB_CA6B));
+                let mut goals = std::vec::Vec::new();
+                let (mut was, mut jumps, mut dodges, mut high, mut saves) = (0, 0, 0, 0, 0);
+                let mut used = [0u8; 2];
+                let mut prev_vz = 0;
+                for tick in 0..ticks {
+                    sim.tick(&Input::default());
+                    if sim.goal_freeze == GOAL_FREEZE_TICKS && was != GOAL_FREEZE_TICKS {
+                        goals.push((tick, if sim.last_scorer == Team::Blue { 'B' } else { 'O' }));
+                    }
+                    was = sim.goal_freeze;
+                    for (k, car) in [&sim.car, &sim.opponent].into_iter().enumerate() {
+                        if car.jumps_used == 1 && used[k] == 0 {
+                            jumps += 1;
+                        }
+                        if car.jumps_used == 2 && used[k] == 1 {
+                            dodges += 1;
+                        }
+                        used[k] = car.jumps_used;
+                    }
+                    if sim.hit > 0 && sim.ball.p.y > uu(250) {
+                        high += 1;
+                    }
+                    if sim.hit > 0
+                        && sim.ball.p.z.abs() > uu(HALF_Z - 2500)
+                        && sim.ball.p.z.signum() * prev_vz > 0
+                        && sim.ball.v.z.signum() * prev_vz < 0
+                    {
+                        saves += 1;
+                    }
+                    prev_vz = sim.ball.v.z;
+                }
+                std::println!(
+                    "spot {} seed {:2}: goals {:?} jumps {} dodges {} high {} saves {}",
+                    spot, seed, goals, jumps, dodges, high, saves
                 );
             }
         }

@@ -27,7 +27,9 @@ use psx_math::sincos::{cos_q12, sin_q12};
 use psx_settings::Profile;
 use psx_vram::{Clut, TexDepth, Tpage};
 
-use nitroxide_sim::{Input, Sim, Team, WinCondition, BOOST_MAX_PIPS, BOOST_SCALE};
+use nitroxide_sim::{
+    Input, Sim, Team, WinCondition, BOOST_MAX_PIPS, BOOST_SCALE, DEMO_MATCHES,
+};
 
 mod assets;
 mod audio;
@@ -99,6 +101,87 @@ enum Phase {
     Select,
     Play,
     Results,
+    /// The attract demo: bot-against-bot matches, back to the main menu on
+    /// any press. See [`DEMO_SHOWS`].
+    Demo,
+}
+
+/// Ticks of no input on a menu page before the attract demo starts:
+/// thirty seconds, about where WipEout's sits.
+const DEMO_IDLE_TICKS: u32 = 30 * 60;
+/// A demo match that has not scored by now moves on anyway. None of the
+/// picked seeds gets near it (`DEMO_MATCHES` records when each scores); it is
+/// there so a physics change cannot leave the demo running forever.
+const DEMO_MAX_TICKS: u32 = 45 * 60;
+/// What the renderer is told the tick is during the demo: the demo's own
+/// clock from here, so the crowd and the cameras animate the same way
+/// whenever the demo starts.
+const DEMO_TICK_BASE: u32 = 1 << 20;
+/// The black cut between demo matches, in ticks, and how far into it the
+/// next match's look goes on: late enough that a black frame is already on
+/// screen, at 60 or at 30 frames a second, when the re-bake starts.
+const DEMO_CUT_TICKS: u32 = 30;
+const DEMO_DRESS_AT: u32 = DEMO_CUT_TICKS - 4;
+
+/// How each demo match is presented, in the order of [`DEMO_MATCHES`]: one
+/// view and split screen alternating, each arena look in turn, and the cars
+/// and paints changing so the garage shows too. Split screen runs both chase
+/// cameras: ball cam down the length of the arena in both halves dropped the
+/// first split match below 30 fps for a quarter of a second (2026-10-02).
+struct DemoShow {
+    split: bool,
+    ball_cam: [bool; 2],
+    arena: draw::ArenaTime,
+    cars: [usize; 2],
+    paints: [usize; 2],
+}
+const DEMO_SHOWS: [DemoShow; DEMO_MATCHES.len()] = [
+    DemoShow {
+        split: false,
+        ball_cam: [true, true],
+        arena: draw::ArenaTime::Night,
+        cars: [0, 1],
+        paints: [0, 5],
+    },
+    DemoShow {
+        split: true,
+        ball_cam: [false, false],
+        arena: draw::ArenaTime::Day,
+        cars: [1, 2],
+        paints: [1, 4],
+    },
+    DemoShow {
+        split: false,
+        ball_cam: [false, false],
+        arena: draw::ArenaTime::Sunset,
+        cars: [2, 0],
+        paints: [2, 6],
+    },
+    DemoShow {
+        split: true,
+        ball_cam: [false, false],
+        arena: draw::ArenaTime::Night,
+        cars: [0, 2],
+        paints: [7, 5],
+    },
+];
+
+/// Where the demo is, and what it borrowed from the player's own setup to
+/// give back afterwards.
+#[derive(Clone, Copy)]
+struct DemoState {
+    /// Index into `DEMO_MATCHES` and `DEMO_SHOWS`.
+    show: usize,
+    /// Ticks into this match, and into the whole demo.
+    t: u32,
+    clock: u32,
+    /// The match's goal has gone in; it ends when the kickoff comes round.
+    scored: bool,
+    /// Ticks left of the black cut before a match, 0 once it plays.
+    cut: u32,
+    saved_arena: draw::ArenaTime,
+    saved_cars: [usize; 2],
+    saved_paints: [usize; 2],
 }
 
 /// Two seat-owned rows plus shared arena and win-condition rows.
@@ -155,12 +238,14 @@ const DEFAULT_MATCH_RULE: usize = 2;
 /// row as well. Versus is decided by whether a second pad answers, which is a
 /// fact about the room rather than something to ask about; the garage was the
 /// select screen with one seat on it.
-const MENU: [&str; draw::MENU_ROWS] = ["MATCH", "PRACTICE", "SETTINGS"];
+const MENU: [&str; draw::MENU_ROWS] = ["MATCH", "PRACTICE", "DEMO", "SETTINGS"];
 
 /// Index of the row that parks the opponent instead of driving it.
 const ROW_PRACTICE: usize = 1;
+/// Index of the row that starts the attract demo straight away.
+const ROW_DEMO: usize = 2;
 /// Index of the row that opens the settings panel instead of a match.
-const ROW_SETTINGS: usize = 2;
+const ROW_SETTINGS: usize = 3;
 
 /// One entry in the in-match pause menu. Which of these are offered depends on
 /// the match: swapping sides means nothing with one pad on one screen. The
@@ -262,6 +347,10 @@ struct NitroXide {
     intro_t: i32,
     profile: Profile<9, 0>,
     settings_dirty: bool,
+    /// Ticks since the last press on a menu page; the demo starts at
+    /// `DEMO_IDLE_TICKS`.
+    idle: u32,
+    demo: DemoState,
 }
 
 impl NitroXide {
@@ -317,7 +406,116 @@ impl NitroXide {
             seed: 0,
             profile: Profile::new(DRIVE_ACTIONS),
             settings_dirty: false,
+            idle: 0,
+            demo: DemoState {
+                show: 0,
+                t: 0,
+                clock: 0,
+                scored: false,
+                cut: 0,
+                saved_arena: draw::ArenaTime::Night,
+                saved_cars: [0, 1],
+                saved_paints: [0, 5],
+            },
         }
+    }
+
+    // ---- attract demo ------------------------------------------------------
+
+    /// A fresh press of anything on either pad: any button, or a stick pushed
+    /// past half travel from rest. Edges only, so a button held down and a
+    /// worn stick resting off centre do not count over and over.
+    fn any_input(ctx: &Ctx) -> bool {
+        fn pushed(p: &PadState) -> bool {
+            let s = p.sticks;
+            [s.left_x, s.left_y, s.right_x, s.right_y]
+                .iter()
+                .any(|&v| (v as i32 - 0x80).abs() > 64)
+        }
+        (0..2).any(|port| {
+            let (now, was) = (ctx.pad_for(port), ctx.previous_pad_for(port));
+            now.buttons.bits() & !was.buttons.bits() != 0 || (pushed(&now) && !pushed(&was))
+        })
+    }
+
+    /// One tick of a menu page's idle clock. True when the demo should start.
+    /// Port 2 must already be refreshed this tick, so a press on either pad
+    /// keeps the menu up.
+    fn idle_tick(&mut self, ctx: &Ctx) -> bool {
+        if Self::any_input(ctx) {
+            self.idle = 0;
+        } else {
+            self.idle += 1;
+        }
+        self.idle >= DEMO_IDLE_TICKS
+    }
+
+    /// Start the demo from its first match, whenever and from wherever it
+    /// was asked for, so every run of it plays and draws the same.
+    fn start_demo(&mut self) {
+        self.demo.saved_arena = self.arena_time;
+        self.demo.saved_cars = self.cars;
+        self.demo.saved_paints = self.paints;
+        self.demo.clock = 0;
+        self.settings = None;
+        self.paused = false;
+        self.swap_seats = false;
+        self.demo_show(0);
+        self.phase = Phase::Demo;
+    }
+
+    /// Cut to demo match `show`: a short black cut while it is set up. The
+    /// sim starts from its seed now; the look (arena, garage, screen layout)
+    /// goes on mid-cut, see [`Self::apply_demo_look`].
+    fn demo_show(&mut self, show: usize) {
+        audio::stop_all();
+        self.sim = Sim::demo(&DEMO_MATCHES[show]);
+        self.demo.show = show;
+        self.demo.t = 0;
+        self.demo.scored = false;
+        self.demo.cut = DEMO_CUT_TICKS;
+    }
+
+    /// Dress the arena and the cars for the current demo match. Changing the
+    /// arena's look re-bakes its light tables, which takes most of a second,
+    /// so this runs while the screen is already black, and the display clock
+    /// debt it leaves is dropped rather than caught up: the sim ticks after
+    /// it are the same ticks whether the bake took 40 vblanks or 45.
+    fn apply_demo_look(&mut self, ctx: &mut Ctx) {
+        let s = &DEMO_SHOWS[self.demo.show];
+        self.two_player = s.split;
+        self.ball_cam = s.ball_cam;
+        self.arena_time = s.arena;
+        self.cars = s.cars;
+        self.paints = s.paints;
+        self.dress(ctx);
+        draw::reset_cameras();
+        self.scoreboard_open = draw::SCOREBOARD_STEPS;
+    }
+
+    /// Push the arena look, paints and cars to the renderer now rather than
+    /// on the next frame, and drop the clock debt the work leaves.
+    fn dress(&mut self, ctx: &mut Ctx) {
+        draw::set_arena_time(self.arena_time);
+        draw::set_seat_paints(self.paints);
+        for seat in 0..2 {
+            draw::set_appearance(seat, self.cars[seat], self.paints[seat]);
+        }
+        ctx.request_timing_realign();
+    }
+
+    /// Back to the main menu, with the player's own arena and garage back.
+    fn end_demo(&mut self, ctx: &mut Ctx) {
+        audio::stop_all();
+        self.arena_time = self.demo.saved_arena;
+        self.cars = self.demo.saved_cars;
+        self.paints = self.demo.saved_paints;
+        self.dress(ctx);
+        self.two_player = false;
+        self.ball_cam = [false; 2];
+        self.sim = Sim::new();
+        self.idle = 0;
+        self.to_title(ctx.sim_tick.as_u32());
     }
 
     /// The pause rows on offer, in order.
@@ -505,6 +703,7 @@ impl NitroXide {
     /// Back to the front end, with the highlight sweeping in from scratch.
     fn to_title(&mut self, tick: u32) {
         self.menu_at = tick;
+        self.idle = 0;
         self.settings = None;
         self.phase = Phase::Title;
     }
@@ -1554,7 +1753,7 @@ impl Scene for NitroXide {
         // Outside the phase machine: the disc's music plays over the front
         // end and the match alike, and a pause holds the game, not the song.
         self.music.update(ctx.sim_tick.as_u32());
-        if self.phase == Phase::Play {
+        if matches!(self.phase, Phase::Play | Phase::Demo) {
             // Ahead of the phase machine, which returns early while paused.
             self.scoreboard_open = if self.scoreboard_wanted_open() {
                 (self.scoreboard_open + 1).min(draw::SCOREBOARD_STEPS)
@@ -1577,6 +1776,12 @@ impl Scene for NitroXide {
                 }
             }
             Phase::Title => {
+                // Port 2 too, so a press on either pad keeps the demo away.
+                ctx.refresh_second_pad();
+                if self.idle_tick(ctx) {
+                    self.start_demo();
+                    return;
+                }
                 // An open settings panel owns the pad until it is closed.
                 if self.settings.is_some() {
                     self.settings_input(
@@ -1607,6 +1812,8 @@ impl Scene for NitroXide {
                 if ctx.just_pressed(button::CROSS) || ctx.just_pressed(button::START) {
                     if self.menu == ROW_SETTINGS {
                         self.settings = Some(0);
+                    } else if self.menu == ROW_DEMO {
+                        self.start_demo();
                     } else {
                         self.open_select(ctx.sim_tick.as_u32());
                     }
@@ -1617,6 +1824,10 @@ impl Scene for NitroXide {
                 // panel come alive while the player is still looking at it.
                 // The count is fixed at `start_match` and not touched again.
                 ctx.refresh_second_pad();
+                if self.idle_tick(ctx) {
+                    self.start_demo();
+                    return;
+                }
                 let was_two = self.two_player;
                 self.two_player = ctx.pad_for(1).is_connected();
                 if self.two_player != was_two {
@@ -1845,11 +2056,50 @@ impl Scene for NitroXide {
                     self.to_title(ctx.sim_tick.as_u32());
                 }
             }
+            Phase::Demo => {
+                // Any press on either pad hands the game back at once.
+                ctx.refresh_second_pad();
+                if Self::any_input(ctx) {
+                    self.end_demo(ctx);
+                    return;
+                }
+                self.demo.clock += 1;
+                if self.demo.cut > 0 {
+                    // The black cut: the match waits at its kickoff.
+                    self.demo.cut -= 1;
+                    if self.demo.cut == DEMO_DRESS_AT {
+                        self.apply_demo_look(ctx);
+                    }
+                    return;
+                }
+                // The pads are not read: both cars are the bot's
+                // (`Sim::blue_ai`), so nothing outside the seed decides
+                // what happens.
+                self.sim.tick(&Input::default());
+                audio::update(&self.sim);
+                self.demo.t += 1;
+                if self.sim.goal_freeze > 0 {
+                    self.demo.scored = true;
+                } else if self.demo.scored || self.demo.t >= DEMO_MAX_TICKS {
+                    // The celebration is over and the kickoff is set: on to
+                    // the next match, or back to the menu after the last.
+                    if self.demo.show + 1 < DEMO_SHOWS.len() {
+                        self.demo_show(self.demo.show + 1);
+                    } else {
+                        self.end_demo(ctx);
+                    }
+                }
+            }
         }
     }
 
     fn render(&mut self, ctx: &mut Ctx) {
-        let tick = ctx.sim_tick.as_u32();
+        // The demo draws on its own clock (see `DEMO_TICK_BASE`).
+        let tick = if self.phase == Phase::Demo {
+            DEMO_TICK_BASE + self.demo.clock
+        } else {
+            ctx.sim_tick.as_u32()
+        };
         draw::set_camera_tick(tick);
         // Where the back buffer starts in VRAM, which is what turns a
         // display-space viewport into the GPU's scissor rectangle.
@@ -1914,8 +2164,10 @@ impl Scene for NitroXide {
                     buffer_y,
                 )
             }
+            // Nothing but the clear colour during a demo cut.
+            Phase::Demo if self.demo.cut > 0 => draw::drop_pending(),
             // Keep the last world frame behind the results overlay.
-            Phase::Play | Phase::Results => {
+            Phase::Play | Phase::Results | Phase::Demo => {
                 if self.two_player {
                     draw::render_split(
                         &self.sim,
@@ -1959,6 +2211,27 @@ impl Scene for NitroXide {
                 }
             }
             Phase::Results => self.draw_results(display, hud),
+            Phase::Demo if self.demo.cut > 0 => return,
+            Phase::Demo => {
+                self.draw_hud(hud);
+                if self.sim.goal_freeze > 0 {
+                    self.draw_goal_banner(display);
+                }
+                // WipEout's way: the match HUD as it is, and one word saying
+                // nobody is playing. Bottom centre, clear of the camera
+                // label on the left and the boost dial on the right.
+                Self::centred(
+                    display,
+                    draw::SCREEN_W / 2,
+                    draw::SCREEN_H - 26,
+                    "DEMO",
+                    (255, 210, 110),
+                );
+                // No now-playing plate: the music runs on from the menu, and
+                // a plate sliding in at a different moment each time would
+                // make every run of the demo look different.
+                return;
+            }
         }
         // Over every phase: the music plays over the front end and the match
         // alike, so its announcement does too.
