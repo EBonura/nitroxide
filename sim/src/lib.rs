@@ -57,6 +57,13 @@ pub const CEIL: i32 = 2044;
 /// The renderer consumes this same value, so the visible curved skirt and the
 /// collision surface cannot quietly drift apart.
 pub const WALL_RAMP_R: i32 = 260;
+/// Radius of the floor-to-wall quarter pipe along the end walls, either side
+/// of the goals. Measured, not published: on the overhead-camera frames used
+/// for the corner joints (`ARENA_SPEC.md`) the pitch's floor edge sits
+/// 518-527 px from the centre along the end walls and 397-404 px along the
+/// side walls at 0.104 px/uu; with the side ramp at its published 256, the
+/// end ramp comes out at about 110 uu, good to about 60.
+pub const END_RAMP_R: i32 = 110;
 /// Radius of the wall-to-ceiling quarter pipe.
 ///
 /// As with [`WALL_RAMP_R`], the renderer consumes this value directly so the
@@ -111,6 +118,24 @@ pub const CORNER_JOINT_PLANES: [(i32, i32, i32); 4] = [
     (2353, 3353, 23261),
     (704, 4035, 21929),
 ];
+
+/// Radius of the floor-to-wall quarter pipe at `ax = |x|` uu across the
+/// pitch. The end walls carry [`END_RAMP_R`] and the side walls and corner
+/// planes [`WALL_RAMP_R`]; the end-wall joints (from the corner plane at
+/// `CORNER_JOINT_PTS[3]` to the end wall at `CORNER_JOINT_PTS[5]`) blend
+/// between the two, so the ramp's foot and lip never step. Only |x| is
+/// needed: nothing within a ramp radius of a wall has |x| under the end
+/// joints except the end walls themselves.
+pub const fn ramp_radius(ax: i32) -> i32 {
+    let (a, b) = (CORNER_JOINT_PTS[5].0, CORNER_JOINT_PTS[3].0);
+    if ax <= a {
+        END_RAMP_R
+    } else if ax >= b {
+        WALL_RAMP_R
+    } else {
+        END_RAMP_R + (WALL_RAMP_R - END_RAMP_R) * (ax - a) / (b - a)
+    }
+}
 
 /// Half the width of a goal mouth (RL: 892.755).
 pub const GOAL_HALF_W: i32 = 893;
@@ -2812,7 +2837,7 @@ fn nearest_arena_wall(x: i32, z: i32, mouth_open: bool) -> WallDistance {
 /// geometry with a different offset.
 fn ball_surface_contact(ball: &mut Ball, mouth_open: bool) -> Option<V3> {
     let wall = nearest_arena_wall(ball.p.x, ball.p.z, mouth_open);
-    let radius = uu(WALL_RAMP_R);
+    let radius = uu(ramp_radius(ball.p.x.abs() >> FP));
     let centre_radius = radius - uu(BALL_R);
 
     // Above the sweep the wall is straight, and `confine` already has it.
@@ -2859,7 +2884,7 @@ fn ball_surface_contact(ball: &mut Ball, mouth_open: bool) -> Option<V3> {
 fn car_surface_contact(car: &mut Car, mouth_open: bool) -> Option<V3> {
     const NEAR: i32 = 8;
     let wall = nearest_arena_wall(car.p.x, car.p.z, mouth_open);
-    let radius = uu(WALL_RAMP_R);
+    let radius = uu(ramp_radius(car.p.x.abs() >> FP));
     let ride = uu(CAR_REST_Y);
     let centre_radius = radius - ride;
 
@@ -3494,6 +3519,224 @@ mod tests {
                 "left the arena: {:?}",
                 sim.ball.p
             );
+        }
+    }
+
+    #[test]
+    fn the_end_ramp_blends_into_the_side_ramp_round_the_end_joints() {
+        let (end, side) = (CORNER_JOINT_PTS[5].0, CORNER_JOINT_PTS[3].0);
+        assert_eq!(ramp_radius(0), END_RAMP_R);
+        assert_eq!(ramp_radius(end), END_RAMP_R);
+        assert_eq!(ramp_radius(side), WALL_RAMP_R);
+        assert_eq!(ramp_radius(HALF_X), WALL_RAMP_R);
+        let mut last = END_RAMP_R;
+        for ax in end..=side {
+            let r = ramp_radius(ax);
+            assert!(r >= last && r - last <= 1, "stepped at |x| {}: {} -> {}", ax, last, r);
+            last = r;
+        }
+        // The ball still fits inside the smaller sweep.
+        assert!(END_RAMP_R > BALL_R);
+    }
+
+    #[test]
+    fn a_ball_rolled_at_either_end_wall_rides_the_smaller_ramp() {
+        for end in [-1, 1] {
+            let mut sim = solo();
+            // Beside the goal, where the end wall is solid.
+            sim.ball.p = V3::new(uu(1800), uu(BALL_R), end * uu(HALF_Z - 700));
+            sim.ball.v = V3::new(0, 0, end * 2200);
+            sim.ball.grounded = true;
+            let mut highest = sim.ball.p.y;
+            for _ in 0..90 {
+                let gap = uu(HALF_Z) - sim.ball.p.z.abs();
+                sim.tick(&Input::default());
+                highest = highest.max(sim.ball.p.y);
+                // Flat until the ball reaches the end ramp: the side walls'
+                // 260-uu sweep would have lifted it 150 uu sooner.
+                if gap > uu(END_RAMP_R + 40) && sim.ball.v.z * end > 0 {
+                    assert!(
+                        sim.ball.p.y <= uu(BALL_R) + 2,
+                        "end {}: lifted {} uu from the wall",
+                        end,
+                        to_uu(gap)
+                    );
+                }
+                assert!(in_bounds(sim.ball.p, BALL_R), "end {}: left the arena: {:?}", end, sim.ball.p);
+            }
+            assert!(
+                highest > uu(BALL_R + 40),
+                "end {}: the ball should ride up the sweep, reached {} uu",
+                end,
+                to_uu(highest)
+            );
+        }
+    }
+
+    #[test]
+    fn the_end_ramp_creates_no_energy() {
+        for end in [-1, 1] {
+            let mut sim = solo();
+            sim.ball.p = V3::new(uu(-1800), uu(BALL_R), end * uu(HALF_Z - 700));
+            sim.ball.v = V3::new(0, 0, end * 2400);
+            sim.ball.grounded = true;
+            let before = sim.ball.v.len();
+            let mut fastest = before;
+            for _ in 0..120 {
+                sim.tick(&Input::default());
+                fastest = fastest.max(sim.ball.v.len());
+            }
+            assert!(
+                fastest <= before,
+                "end {}: the sweep added speed: {} -> {} uu/s",
+                end,
+                to_uu_s(before),
+                to_uu_s(fastest)
+            );
+        }
+    }
+
+    #[test]
+    fn a_car_can_climb_either_end_wall() {
+        for end in [-1, 1] {
+            let mut sim = solo();
+            sim.car.p = V3::new(uu(1800), uu(CAR_REST_Y), end * uu(HALF_Z - END_RAMP_R - 300));
+            sim.car.yaw = if end > 0 { 0 } else { 2048 };
+            sim.car.v = V3::new(0, 0, end * 1500);
+            let input = Input {
+                throttle: 128,
+                boost: true,
+                ..Input::default()
+            };
+            for _ in 0..40 {
+                let gap = uu(HALF_Z) - sim.car.p.z.abs();
+                sim.tick(&input);
+                // Level until the wheels reach the end ramp's foot.
+                if gap > uu(END_RAMP_R + 60) {
+                    assert!(
+                        sim.car.up.y > 4000,
+                        "end {}: tilted {} uu from the wall: {:?}",
+                        end,
+                        to_uu(gap),
+                        sim.car.up
+                    );
+                }
+            }
+            assert!(
+                sim.car.p.y >= uu(END_RAMP_R + 100),
+                "end {}: never reached the wall above the curve: {:?}",
+                end,
+                sim.car.p
+            );
+            assert!(
+                sim.car.up.z * end < -3000,
+                "end {}: did not finish on the end wall: {:?}",
+                end,
+                sim.car.up
+            );
+            assert!(in_bounds(sim.car.p, CAR_R), "end {}: escaped: {:?}", end, sim.car.p);
+        }
+    }
+
+    #[test]
+    fn a_ball_rolled_along_either_end_wall_into_the_corners_stays_inside() {
+        for end in [-1, 1] {
+            for side in [-1, 1] {
+                let mut sim = solo();
+                sim.ball.p = V3::new(side * uu(1500), uu(BALL_R), end * uu(HALF_Z - BALL_R - 20));
+                sim.ball.v = V3::new(side * 2600, 0, end * 600);
+                for _ in 0..240 {
+                    sim.tick(&Input::default());
+                    let d = nearest_arena_wall(sim.ball.p.x, sim.ball.p.z, false).distance;
+                    if sim.ball.p.z.abs() <= uu(HALF_Z) {
+                        assert!(
+                            d >= uu(BALL_R - 2),
+                            "end {} side {}: ball {} uu from the wall: {:?}",
+                            end,
+                            side,
+                            d >> FP,
+                            sim.ball.p
+                        );
+                    }
+                    assert!(
+                        in_bounds(sim.ball.p, BALL_R),
+                        "end {} side {}: left the arena: {:?}",
+                        end,
+                        side,
+                        sim.ball.p
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_car_on_either_end_wall_drives_round_the_corner() {
+        for end in [-1, 1] {
+            for side in [-1, 1] {
+                let mut sim = solo();
+                // Up the end wall beside the goal, then along it into the
+                // corner: through the end joint, where the ramp blends from
+                // the end wall's radius to the side wall's.
+                sim.car.p = V3::new(side * uu(1300), uu(CAR_REST_Y), end * uu(HALF_Z - 200));
+                sim.car.yaw = match (end > 0, side > 0) {
+                    (true, true) => 420,
+                    (true, false) => 4096 - 420,
+                    (false, true) => 2048 - 420,
+                    (false, false) => 2048 + 420,
+                };
+                sim.car.v = V3::new(side * 2000, 0, end * 700);
+                let input = Input {
+                    throttle: 128,
+                    boost: true,
+                    ..Input::default()
+                };
+                let mut on_end = 0;
+                for _ in 0..90 {
+                    sim.tick(&input);
+                    assert!(
+                        in_bounds(sim.car.p, CAR_R),
+                        "end {} side {}: car escaped: {:?}",
+                        end,
+                        side,
+                        sim.car.p
+                    );
+                    if sim.car.grounded && sim.car.up.y < 2048 {
+                        on_end += 1;
+                    }
+                }
+                assert!(
+                    on_end > 0,
+                    "end {} side {}: never drove on the wall: {:?}",
+                    end,
+                    side,
+                    sim.car.p
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn kickoffs_play_out_inside_the_arena() {
+        // The kickoff routes the tapes drive, with the AI opponent on: the
+        // ball and both cars reach the end walls and corners often in a
+        // minute of play, and none of them may leave the arena doing it.
+        for input in [
+            Input { throttle: 128, boost: true, ..Input::default() },
+            Input { throttle: 128, steer: 60, ..Input::default() },
+            Input { throttle: 128, steer: -60, boost: true, ..Input::default() },
+        ] {
+            let mut sim = Sim::new();
+            sim.kickoff();
+            for tick in 0..3600 {
+                sim.tick(&input);
+                assert!(in_bounds(sim.ball.p, BALL_R), "tick {}: ball left: {:?}", tick, sim.ball.p);
+                for car in [&sim.car, &sim.opponent] {
+                    if !car.wrecked() {
+                        assert!(in_bounds(car.p, CAR_R), "tick {}: car left: {:?}", tick, car.p);
+                    }
+                }
+            }
         }
     }
 

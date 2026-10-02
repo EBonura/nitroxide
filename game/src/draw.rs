@@ -618,6 +618,17 @@ const WALL_SEGS: i32 = 6;
 /// box: these transitions are most of why it reads as an arena. Real ones are
 /// about this size; RLBot's field tables ignore them, so this is eyeballed.
 const RAMP_R: i32 = sim::WALL_RAMP_R;
+/// The floor-to-wall curve's radius where a wall column stands at `x`, over
+/// the side walls' [`RAMP_R`], in Q12: the swept profile's curve points are
+/// scaled by it. Exactly 4096 on the side walls, so they sweep as before.
+fn ramp_scale(x: i32) -> i32 {
+    (sim::ramp_radius(x.abs()) << 12) / RAMP_R
+}
+/// A curve point of the swept profile at ramp scale `s` (see [`ramp_scale`]).
+#[inline(always)]
+fn ramp_point(p: (i32, i32), s: i32) -> (i32, i32) {
+    ((p.0 * s) >> 12, (p.1 * s) >> 12)
+}
 const CEIL_R: i32 = sim::CEIL_R;
 /// Segments used for each quarter-circle wall transition.
 ///
@@ -1242,8 +1253,14 @@ fn build_lighting() {
     let profile = Builder::profile();
     for si in 0..SPAN_COUNT {
         let slots = unsafe { SPAN_SLOT[si] };
-        for (ri, &(inset, height)) in profile.iter().enumerate() {
+        for (ri, &point) in profile.iter().enumerate() {
             for (slot, &(sx, sz, nx, nz)) in slots.iter().enumerate() {
+                // Lit where the column's own floor curve puts the point.
+                let (inset, height) = if ri <= CURVE_SEGS {
+                    ramp_point(point, ramp_scale(sx))
+                } else {
+                    point
+                };
                 let at = (sx, sz);
                 let n = (nx, nz);
                 let p = (
@@ -1317,6 +1334,10 @@ struct SpanCols {
     slot: [u8; SLOTS],
     panel_u: [u8; SLOTS],
     cover_u: [u8; SLOTS],
+    /// The floor-to-wall curve's radius at each column over [`RAMP_R`], Q12:
+    /// 4096 along the side walls, less along the end walls (see
+    /// `sim::ramp_radius`).
+    ramp: [u16; SLOTS],
 }
 const EMPTY_COLS: SpanCols = SpanCols {
     count: 0,
@@ -1327,6 +1348,7 @@ const EMPTY_COLS: SpanCols = SpanCols {
     slot: [0; SLOTS],
     panel_u: [0; SLOTS],
     cover_u: [0; SLOTS],
+    ramp: [0; SLOTS],
 };
 /// Per span, the columns at one, two and three splits' worth of detail.
 static mut SPAN_COLS: [[SpanCols; 3]; SPAN_COUNT] = [[EMPTY_COLS; 3]; SPAN_COUNT];
@@ -1383,6 +1405,7 @@ fn build_spans() {
                 out.slot[k] = s as u8;
                 out.panel_u[k] = (64 + 32 * along[s] / total).min(95) as u8;
                 out.cover_u[k] = (COVER_U0 as i32 + cover * along[s] / total) as u8;
+                out.ramp[k] = ramp_scale(slots[s].0) as u16;
             }
             unsafe { SPAN_COLS[i][level] = out };
         }
@@ -1917,10 +1940,11 @@ fn build_lines() {
     for end in [-1, 1] {
         // `end` is the goal's side; `d` runs in from its goal line.
         let z = |d: i32| end * (sim::HALF_Z - d);
-        // The side lines start where the flat pitch does, a ramp radius in.
+        // The side lines start where the flat pitch does, an end-wall ramp
+        // radius in.
         for (half_w, depth) in [(GOAL_BOX_HALF_W, GOAL_BOX_DEPTH), (BIG_BOX_HALF_W, BIG_BOX_DEPTH)] {
             for side in [-half_w, half_w] {
-                strip(&mut straight((side, z(RAMP_R)), (side, z(depth + LINE_HALF_W))), false);
+                strip(&mut straight((side, z(sim::END_RAMP_R)), (side, z(depth + LINE_HALF_W))), false);
             }
             let reach = half_w + LINE_HALF_W;
             strip(&mut straight((-reach, z(depth)), (reach, z(depth))), false);
@@ -4015,6 +4039,9 @@ impl Builder<'_> {
     /// Pull a floor point inside the corner chamfer, so the pitch ends exactly
     /// where the angled wall starts instead of poking through it.
     fn chamfer(x: i32, z: i32) -> (i32, i32) {
+        // How far the pitch may run under the ramp where its outline cannot
+        // follow the ramp's foot exactly (see below).
+        const FLOOR_TUCK: i32 = 48;
         // Stop the flat pitch where the swept wall picks it up.
         //
         // The sweep's first profile point is `(RAMP_R, 0)`: it leaves the
@@ -4027,18 +4054,32 @@ impl Builder<'_> {
         // In front of a goal mouth there is no wall to sweep up into, so the
         // pitch has to run all the way to the line or a strip of nothing
         // appears where the ball goes in.
+        // The end walls' curve is smaller (`sim::END_RAMP_R`), so the pitch
+        // runs closer to them.
+        //
+        // The grid's first point past a post is up to a grid step beyond
+        // the mouth, and the pitch edge from the mouth's last point to it
+        // ran diagonally in front of the post, leaving a sliver of sky at the
+        // post's foot. That point runs out to the line too: the pitch is
+        // drawn before every wall, so the ramp covers what lies under it.
+        const GRID: i32 = sim::HALF_X * 2 / TILES_X / FLOOR_SPLIT_MAX;
         let foot_x = sim::HALF_X - RAMP_R;
-        let foot_z = if x.abs() < sim::GOAL_HALF_W {
+        let foot_z = if x.abs() < sim::GOAL_HALF_W + GRID {
             sim::HALF_Z
         } else {
-            sim::HALF_Z - RAMP_R
+            sim::HALF_Z - sim::END_RAMP_R
         };
         let (x, z) = (x.clamp(-foot_x, foot_x), z.clamp(-foot_z, foot_z));
 
         // The corner planes take the same radius off, measured along their own
         // normal, which is what keeps the join continuous round the chamfer
         // instead of stepping at the two places it meets the straight walls.
-        let limit = sim::CORNER - (RAMP_R * 5793 >> 12); // RAMP_R * sqrt(2)
+        //
+        // Tucked under the ramp by FLOOR_TUCK, like the joints below: the end
+        // joints' smaller curve puts their foot outside the corner plane's
+        // foot line near the plane, and a pitch cut on that line showed a
+        // sliver of sky along the end joint.
+        let limit = sim::CORNER - ((RAMP_R - FLOOR_TUCK) * 5793 >> 12); // sqrt(2)
         let sum = x.abs() + z.abs();
         let (x, z) = if sum <= limit {
             (x, z)
@@ -4054,11 +4095,17 @@ impl Builder<'_> {
         // wall, so it can run under the ramp with nothing to fight: tuck it
         // FLOOR_TUCK further out than the foot along the joints. Only the
         // corner boxes the joints stand in can reach them, so test the box.
-        const FLOOR_TUCK: i32 = 48;
         let (mut x, mut z) = (x, z);
+        // Each chord takes the smaller of the ramp radii at its two ends: the
+        // end joints' curve shrinks towards the end wall, and a pitch edge
+        // that stops short of the ramp's foot shows sky, where one that runs
+        // a little under the ramp is drawn over.
+        const CHORD_ENDS: [(usize, usize); 4] = [(0, 1), (1, 2), (3, 4), (4, 5)];
         if x.abs() > sim::CORNER_JOINT_PTS[5].0 - RAMP_R && z.abs() > sim::CORNER_JOINT_PTS[0].1 - RAMP_R {
-            for &(nx, nz, off) in &sim::CORNER_JOINT_PLANES {
-                let over = ((x.abs() * nx + z.abs() * nz) >> 12) - ((off >> 2) - RAMP_R + FLOOR_TUCK);
+            for (&(nx, nz, off), &(a, b)) in sim::CORNER_JOINT_PLANES.iter().zip(&CHORD_ENDS) {
+                let pts = sim::CORNER_JOINT_PTS;
+                let foot = sim::ramp_radius(pts[a].0).min(sim::ramp_radius(pts[b].0));
+                let over = ((x.abs() * nx + z.abs() * nz) >> 12) - ((off >> 2) - foot + FLOOR_TUCK);
                 if over > 0 {
                     x -= x.signum() * (nx * over >> 12);
                     z -= z.signum() * (nz * over >> 12);
@@ -5144,6 +5191,7 @@ impl Builder<'_> {
             slot: slots,
             panel_u,
             cover_u: cover_us,
+            ramp,
         } = unsafe { SPAN_COLS[si][splits as usize - 1] };
         // Rings of the sweep. Keep every ring in split-screen as well as full
         // screen: skipping alternate samples did not merely reduce detail. It
@@ -5181,29 +5229,39 @@ impl Builder<'_> {
         // Two ring buffers swapped by row parity: copying the upper ring
         // into the lower one every row was a measurable memcpy per span.
         let mut ring_buf: [[Option<(i16, i16, i32)>; SLOTS]; 2] = [[None; SLOTS]; 2];
-        // A straight span sweeps every column along the same normal, so its
-        // inward offset is one pair of multiplies a ring, not a pair a vertex.
-        let straight = (1..columns).all(|k| cnx[k] == cnx[0] && cnz[k] == cnz[0]);
+        // A straight span sweeps every column along the same normal and the
+        // same floor curve, so its inward offset is one pair of multiplies a
+        // ring, not a pair a vertex. A corner span's columns turn, and round
+        // the end joints their floor curve shrinks to the end walls'.
+        let uniform = (1..columns)
+            .all(|k| cnx[k] == cnx[0] && cnz[k] == cnz[0] && ramp[k] == ramp[0]);
         for row in 0..ring_count {
             let top = rings[row];
             let (lower, upper) = {
                 let (a, b) = ring_buf.split_at_mut(1);
                 if row & 1 == 0 { (&a[0], &mut b[0]) } else { (&b[0], &mut a[0]) }
             };
+            let curve = top <= CURVE_SEGS;
             let p = profile[top];
-            let shared = ((cnx[0] * p.0) >> 12, (cnz[0] * p.0) >> 12);
+            let p0 = if curve { ramp_point(p, ramp[0] as i32) } else { p };
+            let shared = ((cnx[0] * p0.0) >> 12, (cnz[0] * p0.0) >> 12, p0.1);
             for k in 0..columns {
                 // Each column sweeps the profile along its own normal: one
                 // normal for a straight span, turning round a corner span's
                 // rounded joints.
                 let (x0, z0) = unsafe { (*sx.get_unchecked(k), *sz.get_unchecked(k)) };
-                let (ox, oz) = if straight {
+                let (ox, oz, height) = if uniform {
                     shared
                 } else {
                     let (nx, nz) = unsafe { (*cnx.get_unchecked(k), *cnz.get_unchecked(k)) };
-                    ((nx * p.0) >> 12, (nz * p.0) >> 12)
+                    let pk = if curve {
+                        ramp_point(p, unsafe { *ramp.get_unchecked(k) } as i32)
+                    } else {
+                        p
+                    };
+                    ((nx * pk.0) >> 12, (nz * pk.0) >> 12, pk.1)
                 };
-                let v = project(Vec3I16::new((x0 + ox) as i16, -p.1 as i16, (z0 + oz) as i16));
+                let v = project(Vec3I16::new((x0 + ox) as i16, -height as i16, (z0 + oz) as i16));
                 upper[k] = if v.sz != 0 {
                     Some((v.sx, v.sy, v.sz as i32))
                 } else {
@@ -5840,7 +5898,11 @@ impl Builder<'_> {
         }
         let (x, z) = (r(s.ball.p.x), r(s.ball.p.z));
         // Over the pitch only: past the foot of the ramp the floor curves
-        // up and a flat hoop would cut through it.
+        // up and a flat hoop would cut through it. The end walls' curve is
+        // smaller (`sim::END_RAMP_R`), but the hoop reaches 188 uu past the
+        // ball: with the side walls' margin there too its edge stays within
+        // a few uu of the end ramp's surface, where the end ramp's own
+        // margin ran it through the wall.
         if x.abs() > sim::HALF_X - RAMP_R || z.abs() > sim::HALF_Z - RAMP_R {
             return;
         }
