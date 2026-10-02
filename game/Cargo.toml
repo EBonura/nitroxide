@@ -52,6 +52,10 @@ boot-roof = []
 # side walls and the far end are in view at once. A perf station: the
 # costliest single-player view, held still for the 60 fps gate.
 boot-roof-length = []
+# Dev: ball cam along the far end wall from near the corner, at a ball held
+# in the air beside the goal post: the end wall's floor curve close up, the
+# post, and the pitch's edge along the end wall, held still.
+boot-end-wall = []
 # Dev: render every second vblank. Not a shipping mode: a build whose frames
 # all fit two vblanks presents on the same ticks as any other such build, so
 # two builds' screenshots can be compared tick for tick to prove a speed-up
