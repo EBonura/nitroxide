@@ -276,6 +276,17 @@ impl NitroXide {
         self.sim.ball.grounded = false;
     }
 
+    /// The `boot-end-wall` station's ball: in the air beside the far goal's
+    /// post, held there after every tick.
+    #[cfg(feature = "boot-end-wall")]
+    fn hold_end_wall_ball(&mut self) {
+        self.sim.ball.p.x = nitroxide_sim::uu(1100);
+        self.sim.ball.p.y = nitroxide_sim::uu(300);
+        self.sim.ball.p.z = nitroxide_sim::uu(4950);
+        self.sim.ball.v = nitroxide_sim::V3::ZERO;
+        self.sim.ball.grounded = false;
+    }
+
     fn new() -> Self {
         NitroXide {
             analog_retry: 0,
@@ -1445,6 +1456,16 @@ impl Scene for NitroXide {
             self.sim.opponent.p.x = nitroxide_sim::uu(3000);
             self.hold_roof_length_ball();
         }
+        #[cfg(feature = "boot-end-wall")]
+        {
+            self.phase = Phase::Play;
+            self.sim.opponent_ai = false;
+            self.ball_cam[0] = true;
+            self.sim.car.p.x = nitroxide_sim::uu(2700);
+            self.sim.car.p.z = nitroxide_sim::uu(4300);
+            self.sim.opponent.p.x = nitroxide_sim::uu(-3000);
+            self.hold_end_wall_ball();
+        }
         #[cfg(feature = "boot-roof")]
         {
             self.phase = Phase::Play;
@@ -1779,6 +1800,8 @@ impl Scene for NitroXide {
                 }
                 #[cfg(feature = "boot-roof-length")]
                 self.hold_roof_length_ball();
+                #[cfg(feature = "boot-end-wall")]
+                self.hold_end_wall_ball();
                 #[cfg(feature = "boot-roof")]
                 {
                     // This is a camera station, not a physics scenario. Keep
