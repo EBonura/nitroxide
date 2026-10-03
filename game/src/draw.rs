@@ -24,7 +24,8 @@
 
 use nitroxide_sim as sim;
 use psx_asset::{Mesh, Texture};
-use psx_engine::{ActorTransform, DepthRange, OtFrame, PrimitiveArena, Vec3World};
+use psx_engine::{ActorTransform, DepthRange, GpuPacket, OtFrame, Vec3World};
+use psx_gpu::frame::PrimitiveArena;
 use psx_gpu::material::{BlendMode, TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
 use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedGouraud, TriGouraud};
@@ -2290,6 +2291,12 @@ struct GlowQuad {
 }
 /// Data words after the tag: the quad's thirteen and the restore.
 const GLOW_WORDS: u8 = 14;
+// SAFETY: `#[repr(C, align(4))]` with the quad first, so the quad's tag is the
+// packet's tag, followed by its thirteen payload words and the restore word:
+// fourteen plain words after the tag, one DMA node.
+unsafe impl GpuPacket for GlowQuad {
+    const WORDS: u8 = GLOW_WORDS;
+}
 const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
 /// Goal halos (four a goal, eight with both goals in view), the ball's disc,
 /// and its hoop at up to sixteen segments of two quads: 41 at most. An
@@ -3590,12 +3597,12 @@ const FAR_CAR_DISTANCE: i32 = 2200;
 /// Eight projected corners and four flat tris against ~350 lit GTE vertices
 /// and ~200 faces for the real mesh.
 #[inline(never)]
-fn draw_far_car(
+fn draw_far_car<'a>(
     seat: usize,
     body: &sim::Car,
     view: &View,
-    tris: &mut PrimitiveArena<'_, TriGouraud>,
-    ot: &mut OtFrame<'_, OT_DEPTH>,
+    tris: &mut PrimitiveArena<'a, TriGouraud>,
+    ot: &mut OtFrame<'a, OT_DEPTH>,
 ) {
     let t = view.camera_space(car_ground(body));
     if t.2 < DEPTH_RANGE.near() as i32 {
@@ -3698,11 +3705,11 @@ fn sort_by_depth(keys: &mut [u32], lo: u32, hi: u32) -> &[u32] {
     spare
 }
 
-fn submit_car_faces(
+fn submit_car_faces<'a>(
     faces: &[[u16; 3]],
     projected: &[CarLit],
-    tris: &mut PrimitiveArena<'_, TriGouraud>,
-    ot: &mut OtFrame<'_, OT_DEPTH>,
+    tris: &mut PrimitiveArena<'a, TriGouraud>,
+    ot: &mut OtFrame<'a, OT_DEPTH>,
 ) {
     // The ordering table has 512 slots over the arena's 14,000 uu of depth,
     // about 27 uu a slot, and a car is 120 uu long: its faces land in four
@@ -4222,7 +4229,7 @@ impl Builder<'_> {
             quad,
             restore: GLOW_RESTORE,
         }) {
-            self.ot.add_depth(DEPTH_RANGE, depth, g, GLOW_WORDS);
+            self.ot.add_packet_depth(DEPTH_RANGE, depth, g);
         } else {
             count_overflow!();
         }
@@ -6766,11 +6773,11 @@ fn car_ground(c: &sim::Car) -> (i32, i32, i32) {
 /// `PrimitiveArena` over the same static rewinds it and overwrites the first
 /// car's packets while the ordering table is still pointing at them, which
 /// renders as a black screen rather than as a missing car.
-fn draw_cars(
+fn draw_cars<'a>(
     s: &Sim,
     cars: [usize; SEATS],
     view: &View,
-    ot: &mut OtFrame<'_, OT_DEPTH>,
+    ot: &mut OtFrame<'a, OT_DEPTH>,
     lights: &LightRig,
 ) {
     let mut tris = unsafe { PrimitiveArena::new(&mut CAR_TRIS_SETS[SET]) };
@@ -7375,7 +7382,11 @@ pub fn render_split(
             render_view(s, cars, cam, subject, vp, camera_slot);
             VIEW_TAIL = false;
             // Last into the first slot walked, so first in the table.
-            OT_SETS[new].add(SKY_SLOT, &mut AREA_HEAD[new], AREA_WORDS);
+            OT_SETS[new].insert(
+                SKY_SLOT,
+                core::ptr::from_mut(&mut AREA_HEAD[new]).cast(),
+                AREA_WORDS,
+            );
         }
         SET = cur;
         SPLIT_PENDING = true;
@@ -7463,7 +7474,11 @@ fn build_view(
             // First into slot 0, so walked after everything else.
             unsafe {
                 if VIEW_TAIL {
-                    b.ot.add(0, &mut AREA_TAIL[SET], AREA_WORDS);
+                    b.ot.add_raw(
+                        0,
+                        core::ptr::from_mut(&mut AREA_TAIL[SET]).cast(),
+                        AREA_WORDS,
+                    );
                 }
             }
             // The crowd's palettes for this frame, loaded before anything in
@@ -7473,7 +7488,11 @@ fn build_view(
                     let load = &mut CROWD_CLUT_LOAD[SET][seat];
                     load.xy = ((clut.y() as u32) << 16) | clut.x() as u32;
                     load.data = crowd_clut(seat, CAMERA_TICK);
-                    b.ot.add(SKY_SLOT, load, CLUT_LOAD_WORDS);
+                    b.ot.add_raw(
+                        SKY_SLOT,
+                        core::ptr::from_mut(load).cast(),
+                        CLUT_LOAD_WORDS,
+                    );
                 }
             }
 
@@ -7587,6 +7606,8 @@ fn build_view(
     }
 
     // Phase 2: the car mesh, appended into the same frame.
+    // SAFETY: phase 1 linked only packets in this set's static arenas, which
+    // nothing rewrites until this set comes round again, after its walk.
     let mut ot = unsafe { OtFrame::resume(&mut OT_SETS[SET]) };
     staged!(S_CARS, { draw_cars(s, cars, &view, &mut ot, &lights) });
 
@@ -7620,7 +7641,10 @@ fn build_view(
 fn submit_detached() {
     staged!(S_SUBMIT, {
         apply_arena_draw_mode();
-        unsafe { OtFrame::resume(&mut OT_SETS[SET]) }.submit_async().detach();
+        // SAFETY: this set's table and packet arenas stay untouched until the
+        // runner drains channel 2 before render_overlay and the flip; the next
+        // frame builds into the other set.
+        unsafe { psx_gpu::submit_linked_list_raw_async(OT_SETS[SET].submit_head()) };
     });
 }
 
@@ -7918,7 +7942,11 @@ impl Builder<'_> {
                     // slot prepends.
                     unsafe {
                         TRACK_MODE_OFF[set].word = GLOW_RESTORE;
-                        self.ot.add(TRACK_SLOT, &mut TRACK_MODE_OFF[set], 1);
+                        self.ot.add_raw(
+                            TRACK_SLOT,
+                            core::ptr::from_mut(&mut TRACK_MODE_OFF[set]).cast(),
+                            1,
+                        );
                     }
                     opened = true;
                 }
@@ -7957,7 +7985,11 @@ impl Builder<'_> {
             if !opened {
                 unsafe {
                     TRACK_MODE_OFF[set].word = GLOW_RESTORE;
-                    self.ot.add(TRACK_SLOT, &mut TRACK_MODE_OFF[set], 1);
+                    self.ot.add_raw(
+                        TRACK_SLOT,
+                        core::ptr::from_mut(&mut TRACK_MODE_OFF[set]).cast(),
+                        1,
+                    );
                 }
                 opened = true;
             }
@@ -7969,7 +8001,11 @@ impl Builder<'_> {
         if opened {
             unsafe {
                 TRACK_MODE_ON[set].word = TRACK_MODE_WORD;
-                self.ot.add(TRACK_SLOT, &mut TRACK_MODE_ON[set], 1);
+                self.ot.add_raw(
+                    TRACK_SLOT,
+                    core::ptr::from_mut(&mut TRACK_MODE_ON[set]).cast(),
+                    1,
+                );
             }
         }
     }
