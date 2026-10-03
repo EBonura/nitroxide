@@ -149,14 +149,17 @@ fn parse_args() -> Result<(PathBuf, Limits), String> {
         args.next()
             .ok_or("usage: frame-check <screenshot-dir> [options]")?,
     );
-    // Defaults: a few dithered crack pixels are what the pitch's underdraw
-    // strips allow. A split view's LOD car is at most ~28 px long, which
-    // covered 106 px at worst over the attract demo once fixed, against
+    // Defaults: a pitch hole beside the camera covered up to 6,073 px of a
+    // view's bottom band before the fix and cracks of 20 to 110 px remain;
+    // a camera level with a car low on a side wall also sees up to ~550 px
+    // of sky through the net there, which is not a hole. A split view's LOD
+    // car is at most ~28 px long, which covered 107 px at worst over the
+    // attract demo once fixed, against
     // ~250 px for the old own-car LOD under the chase camera. A full view
     // keeps the opponent's LOD down to 56 px long, so it gets more room.
     let mut limits = Limits {
         ticks: None,
-        hole: 16,
+        hole: 600,
         lod_split: 150,
         lod_single: 600,
     };
