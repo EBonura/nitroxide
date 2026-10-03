@@ -213,16 +213,16 @@ fn gpu_draws_whole(sp: &[(i16, i16); 4]) -> bool {
 /// a vertex that close lands short of its true place without any sign of it:
 /// a pitch quad with one there met its neighbour at an angle and left a
 /// wedge of sky between them. Zero is behind the near plane altogether.
+///
+/// Split screen only: a full view keeps its old test (in front at all) and
+/// draws exactly what it did, because clipping the near quads cost it 60 fps
+/// on about one frame in sixteen (2026-10-03, attract demo).
 #[inline]
 fn projects_true(sz: i32) -> bool {
-    sz > PROJ_H as i32 / 2
+    sz > if split_view() { PROJ_H as i32 / 2 } else { 0 }
 }
 
-/// How finely [`Builder::quad_pieces`] cuts a quad the GPU cannot draw
-/// whole, per side.
-const PIECES: i32 = 4;
-
-/// What [`Builder::quad_pieces`] draws its pieces as.
+/// What [`Builder::clip_piece`] draws a clipped quad as.
 #[derive(Copy, Clone)]
 enum Pieces {
     Floor,
@@ -236,7 +236,7 @@ enum Pieces {
     },
 }
 
-/// One quad queued for [`Builder::quad_pieces`].
+/// One quad queued for [`Builder::clip_piece`].
 #[derive(Copy, Clone)]
 struct PieceJob {
     world: [(i32, i32, i32); 4],
@@ -244,9 +244,9 @@ struct PieceJob {
     tints: [u32; 4],
     kind: Pieces,
 }
-/// Quads a phase may queue for [`Builder::quad_pieces`]: the few beside or
+/// Quads a phase may queue for [`Builder::clip_piece`]: the few beside or
 /// under the camera, with room to spare.
-const MAX_PIECE_JOBS: usize = 48;
+const MAX_PIECE_JOBS: usize = 128;
 static mut PIECE_JOBS: [PieceJob; MAX_PIECE_JOBS] = [PieceJob {
     world: [(0, 0, 0); 4],
     uvs: [(0, 0); 4],
@@ -4493,7 +4493,7 @@ impl Builder<'_> {
         }
         // A one-quad tile is a whole 1024-uu tile, and the distance band
         // that picks it is measured to the tile's centre, so its near edge
-        // can still pass right by the camera: see `quad_pieces`.
+        // can still pass right by the camera: see `queue_pieces`.
         let whole = behind == 0 && gpu_draws_whole(&sp);
         if whole {
             if !sp.iter().any(|&(x, y)| on_view(x, y)) {
@@ -4547,113 +4547,22 @@ impl Builder<'_> {
         }
     }
 
-    /// Draw a pitch, marking or wall quad the GPU cannot draw whole as a grid of
-    /// smaller pieces.
+    /// Note a pitch, marking or wall quad the GPU cannot draw whole, for
+    /// [`Self::draw_pieces`] to clip once the phase is off the scratchpad
+    /// stack (the pitch and wall phases have no room left on it).
     ///
     /// Near the camera a quad can have a corner behind the near plane or too
     /// near for the GTE to project right (see [`projects_true`]), or a corner
-    /// so close that its projection lands a thousand pixels off
-    /// screen, and the rasteriser drops any triangle with an edge 1024 or
-    /// more pixels wide or 512 tall. Either way the whole quad went, and the
-    /// sky showed through the pitch and the foot of the walls: in split
-    /// screen most of all, where pitch tiles and wall spans are cut coarser
-    /// (Manny's attract demo, 2026-10-03). The pieces lie on the quad's own
-    /// bilinear surface with its UVs and tints carried across, so a picture
-    /// only gains what was missing. A piece that still cannot be drawn is cut
-    /// the same way once more (`fine` is set on that pass), and one still too
-    /// big after that is clipped by [`Self::clip_piece`].
-    ///
-    /// `world`, `uvs` and `tints` are in the corner order the packets use:
-    /// (0, 0), (1, 0), (0, 1), (1, 1). Cold: a handful of quads a frame reach
-    /// it, queued by [`Self::queue_pieces`] and drawn by [`Self::draw_pieces`]
-    /// on the main stack, because the pitch and wall phases leave too little
-    /// of the scratchpad stack for it.
-    #[inline(never)]
-    #[cold]
-    fn quad_pieces(
-        &mut self,
-        world: [(i32, i32, i32); 4],
-        uvs: [(u8, u8); 4],
-        tints: [u32; 4],
-        kind: Pieces,
-        cull: &Cull,
-        fine: bool,
-    ) {
-        const N: i32 = PIECES;
-        let lerp = |a: i32, b: i32, t: i32| a + (b - a) * t / N;
-        // Bilinear over the corners, `i` along (0,0)-(1,0), `j` along (0,0)-(0,1).
-        let at = |c: [i32; 4], i: i32, j: i32| lerp(lerp(c[0], c[1], i), lerp(c[2], c[3], i), j);
-        let point = |i: i32, j: i32| {
-            let axis = |f: fn((i32, i32, i32)) -> i32| at(world.map(f), i, j);
-            (axis(|p| p.0), axis(|p| p.1), axis(|p| p.2))
-        };
-        let uv = |i: i32, j: i32| {
-            let axis = |f: fn((u8, u8)) -> u8| at(uvs.map(|c| f(c) as i32), i, j) as u8;
-            (axis(|c| c.0), axis(|c| c.1))
-        };
-        let tint = |i: i32, j: i32| {
-            let c = tints.map(rgb_of);
-            let ch = |f: fn(Rgb) -> u8| at(c.map(|c| f(c) as i32), i, j) as u8;
-            rgbc((ch(|c| c.0), ch(|c| c.1), ch(|c| c.2)))
-        };
-        let corner = |i: i32, j: i32| {
-            let p = point(i, j);
-            let v = project(Vec3I16::new(p.0 as i16, p.1 as i16, p.2 as i16));
-            projects_true(v.sz as i32).then_some((v.sx, v.sy, v.sz as i32))
-        };
-        let mut below = [None; PIECES as usize + 1];
-        for (i, slot) in below.iter_mut().enumerate() {
-            *slot = corner(i as i32, 0);
-        }
-        for j in 1..=N {
-            let mut above = [None; PIECES as usize + 1];
-            for (i, slot) in above.iter_mut().enumerate() {
-                *slot = corner(i as i32, j);
-            }
-            for i in 0..N {
-                let k = i as usize;
-                let quad = (below[k], below[k + 1], above[k], above[k + 1]);
-                let corners = [(i, j - 1), (i + 1, j - 1), (i, j), (i + 1, j)];
-                let whole = match quad {
-                    (Some(a), Some(b), Some(c), Some(d)) => {
-                        let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
-                        if !quad_overlaps_view(&sp) {
-                            continue;
-                        }
-                        gpu_draws_whole(&sp).then_some((sp, a.2 + b.2 + c.2 + d.2))
-                    }
-                    (None, None, None, None) => continue,
-                    _ => None,
-                };
-                let Some((sp, z_sum)) = whole else {
-                    // The piece at the near corner can still be too big: cut
-                    // it once more, and clip what is left of it after that.
-                    let (w, u, t) = (
-                        corners.map(|(x, y)| point(x, y)),
-                        corners.map(|(x, y)| uv(x, y)),
-                        corners.map(|(x, y)| tint(x, y)),
-                    );
-                    if fine {
-                        self.clip_piece(w, u, t, kind, cull);
-                    } else {
-                        self.quad_pieces(w, u, t, kind, cull, true);
-                    }
-                    continue;
-                };
-                let piece_uvs = corners.map(|(x, y)| {
-                    let (u, v) = uv(x, y);
-                    uvw(u, v)
-                });
-                let piece_tints = corners.map(|(x, y)| tint(x, y));
-                self.emit_piece(kind, sp, z_sum, piece_uvs, piece_tints);
-            }
-            below = above;
-        }
-    }
-
-    /// Note a quad for [`Self::quad_pieces`], which [`Self::draw_pieces`]
-    /// draws once the phase is off the scratchpad stack. A quad past the
-    /// queue's end is dropped, as every such quad used to be.
+    /// so close that its projection lands a thousand pixels off screen, and
+    /// the rasteriser drops any triangle with an edge 1024 or more pixels
+    /// wide or 512 tall. Either way the whole quad went and the sky showed
+    /// through the pitch and the foot of the walls, in split screen most of
+    /// all, where pitch tiles and wall spans are cut coarser (Manny's attract
+    /// demo, 2026-10-03). `world`, `uvs` and `tints` are in the packets'
+    /// corner order: (0, 0), (1, 0), (0, 1), (1, 1). Kept inline and cheap:
+    /// the pitch and wall loops reach it on the scratchpad stack, which has
+    /// no room for more. A quad past the queue's end is dropped, as every
+    /// such quad used to be.
     #[inline(always)]
     fn queue_pieces(
         &mut self,
@@ -4676,27 +4585,51 @@ impl Builder<'_> {
         }
     }
 
-    /// Draw the quads the last phase queued for [`Self::quad_pieces`]. The
-    /// GTE still holds the world view the phase projected with.
+    /// Draw the quads the last phase queued with [`Self::queue_pieces`]. The
+    /// GTE still holds the world view the phase projected with. Only a quad
+    /// whose box is in the view is clipped: most of them straddle the camera
+    /// beside or behind it, out of sight, and clipping every one cost single
+    /// player its 60 fps. A full view clips none at all and so draws what
+    /// it always did: the quads it queues are the ones the GPU dropped.
     #[inline(never)]
     fn draw_pieces(&mut self, cull: &Cull) {
-        let count = unsafe { PIECE_JOB_COUNT };
+        let count = if split_view() {
+            unsafe { PIECE_JOB_COUNT }
+        } else {
+            0
+        };
         for k in 0..count {
             let job = unsafe { PIECE_JOBS[k] };
-            self.quad_pieces(job.world, job.uvs, job.tints, job.kind, cull, false);
+            let w = job.world;
+            let (mut lo, mut hi) = (w[0], w[0]);
+            for p in &w[1..] {
+                lo = (lo.0.min(p.0), lo.1.min(p.1), lo.2.min(p.2));
+                hi = (hi.0.max(p.0), hi.1.max(p.1), hi.2.max(p.2));
+            }
+            let centre = ((lo.0 + hi.0) / 2, (lo.1 + hi.1) / 2, (lo.2 + hi.2) / 2);
+            let half = (
+                (hi.0 - lo.0) / 2 + 1,
+                (hi.1 - lo.1) / 2 + 1,
+                (hi.2 - lo.2) / 2 + 1,
+            );
+            if !cull.visible_box(centre, cull.extents(half)) {
+                continue;
+            }
+            self.clip_piece(w, job.uvs, job.tints, job.kind, cull);
         }
         unsafe { PIECE_JOB_COUNT = 0 };
     }
 
-    /// The last resort for a piece [`Self::quad_pieces`] still cannot draw
-    /// whole, right beside the camera: clip it in camera space to the depth
-    /// the GTE still projects right (see [`projects_true`]),
-    /// and to a guard band around the view (480 pixels either side of
-    /// its centre and 240 above and below), so every corner left projects
-    /// close enough to the others for the GPU, and draw the clipped polygon
-    /// as a fan of triangles (quads with a repeated corner). Clipped corners
-    /// are placed back in the world and projected by the GTE like any other,
-    /// so they land on the same screen line as the edge they were cut from.
+    /// Clip a queued quad in camera space to the depth the GTE still
+    /// projects right (see [`projects_true`]) and to a guard band around the
+    /// view (480 pixels either side of its centre and 240 above and below),
+    /// so every corner left projects close enough to the others for the GPU,
+    /// and draw the clipped polygon as a fan of triangles (quads with a
+    /// repeated corner), UVs and tints carried along the cut edges. Clipped
+    /// corners are placed back in the world and projected by the GTE like
+    /// any other, so they land on the screen line of the edge they were cut
+    /// from. One clip per quad: cutting the quads into grids of pieces first
+    /// cost single player its 60 fps (2026-10-03, train tape).
     #[inline(never)]
     #[cold]
     fn clip_piece(
@@ -4707,49 +4640,41 @@ impl Builder<'_> {
         kind: Pieces,
         cull: &Cull,
     ) {
-        /// A polygon corner: world position, then u, v, r, g, b.
-        #[derive(Copy, Clone)]
-        struct Corner {
-            p: [i32; 3],
-            a: [i32; 5],
-        }
+        // A polygon corner: world position, camera-space position, then u,
+        // v, r, g, b, all carried along a cut edge by the same fraction.
+        type Corner = [i32; 11];
         // Four corners, and one more for each of the five planes at most.
         const MAX: usize = 9;
         const H: i32 = PROJ_H as i32;
         const GUARD_X: i32 = 480;
         const GUARD_Y: i32 = 240;
         const NEAR: i32 = PROJ_H as i32 / 2 + 8;
-        let corner = |k: usize| {
-            let c = rgb_of(tints[k]);
-            Corner {
-                p: [world[k].0, world[k].1, world[k].2],
-                a: [
-                    uvs[k].0 as i32,
-                    uvs[k].1 as i32,
-                    c.0 as i32,
-                    c.1 as i32,
-                    c.2 as i32,
-                ],
-            }
+        let corner = |k: usize| -> Corner {
+            let (p, c) = (world[k], rgb_of(tints[k]));
+            let d = (p.0 - cull.pos.0, p.1 - cull.pos.1, p.2 - cull.pos.2);
+            [
+                p.0,
+                p.1,
+                p.2,
+                Cull::dot(cull.right, d),
+                Cull::dot(cull.vertical, d),
+                Cull::dot(cull.fwd, d),
+                uvs[k].0 as i32,
+                uvs[k].1 as i32,
+                c.0 as i32,
+                c.1 as i32,
+                c.2 as i32,
+            ]
         };
         // The packets' corner order is a zigzag; walk the quad's outline.
         let mut poly = [corner(0); MAX];
         (poly[1], poly[2], poly[3]) = (corner(1), corner(3), corner(2));
         let mut n = 4;
         for plane in 0..5 {
-            // Signed distance outside the plane: in camera space, scaled by
+            // Signed distance outside the plane, in camera space, scaled by
             // the projection plane for the four guard-band sides.
             let outside = |c: &Corner| {
-                let d = (
-                    c.p[0] - cull.pos.0,
-                    c.p[1] - cull.pos.1,
-                    c.p[2] - cull.pos.2,
-                );
-                let (x, y, z) = (
-                    Cull::dot(cull.right, d),
-                    Cull::dot(cull.vertical, d),
-                    Cull::dot(cull.fwd, d),
-                );
+                let (x, y, z) = (c[3], c[4], c[5]);
                 match plane {
                     0 => NEAR - z,
                     1 => x * H - GUARD_X * z,
@@ -4758,13 +4683,22 @@ impl Builder<'_> {
                     _ => -y * H - GUARD_Y * z,
                 }
             };
+            let mut d = [0i32; MAX];
+            let mut cut = false;
+            for i in 0..n {
+                d[i] = outside(&poly[i]);
+                cut |= d[i] > 0;
+            }
+            if !cut {
+                continue;
+            }
             let mut out = [poly[0]; MAX];
             let mut m = 0;
             for i in 0..n {
-                let (a, b) = (poly[i], poly[(i + 1) % n]);
-                let (da, db) = (outside(&a), outside(&b));
+                let j = if i + 1 == n { 0 } else { i + 1 };
+                let (da, db) = (d[i], d[j]);
                 if da <= 0 && m < MAX {
-                    out[m] = a;
+                    out[m] = poly[i];
                     m += 1;
                 }
                 if (da <= 0) != (db <= 0) && m < MAX {
@@ -4776,11 +4710,8 @@ impl Builder<'_> {
                         den >>= 1;
                     }
                     let t = (num << 12) / den.max(1);
-                    let mix = |u: i32, v: i32| u + (((v - u) * t) >> 12);
-                    out[m] = Corner {
-                        p: core::array::from_fn(|k| mix(a.p[k], b.p[k])),
-                        a: core::array::from_fn(|k| mix(a.a[k], b.a[k])),
-                    };
+                    let (a, b) = (&poly[i], &poly[j]);
+                    out[m] = core::array::from_fn(|k| a[k] + (((b[k] - a[k]) * t) >> 12));
                     m += 1;
                 }
             }
@@ -4792,17 +4723,15 @@ impl Builder<'_> {
         }
         let mut screen = [(0i16, 0i16, 0i32); MAX];
         for (s, c) in screen.iter_mut().zip(&poly[..n]) {
-            let v = project(Vec3I16::new(c.p[0] as i16, c.p[1] as i16, c.p[2] as i16));
+            let v = project(Vec3I16::new(c[0] as i16, c[1] as i16, c[2] as i16));
             if !projects_true(v.sz as i32) {
                 return;
             }
             *s = (v.sx, v.sy, v.sz as i32);
         }
-        let uv = |c: &Corner| uvw(c.a[0].clamp(0, 255) as u8, c.a[1].clamp(0, 255) as u8);
-        let tint = |c: &Corner| {
-            let ch = |k: usize| c.a[k].clamp(0, 255) as u8;
-            rgbc((ch(2), ch(3), ch(4)))
-        };
+        let ch = |v: i32| v.clamp(0, 255) as u8;
+        let uv = |c: &Corner| uvw(ch(c[6]), ch(c[7]));
+        let tint = |c: &Corner| rgbc((ch(c[8]), ch(c[9]), ch(c[10])));
         for i in 1..n - 1 {
             let tri = [0, i, i + 1, i + 1];
             let sp = tri.map(|k| (screen[k].0, screen[k].1));
@@ -4816,7 +4745,7 @@ impl Builder<'_> {
         }
     }
 
-    /// One piece from [`Self::quad_pieces`] or [`Self::clip_piece`], as the
+    /// One triangle from [`Self::clip_piece`], as the
     /// packet the whole quad would have been.
     fn emit_piece(
         &mut self,
@@ -5009,7 +4938,7 @@ impl Builder<'_> {
                         };
                         let Some(sp) = whole else {
                             // Too near the camera to draw whole: the same
-                            // quad from its world corners, in pieces.
+                            // quad from its world corners, clipped.
                             let at = |di: usize, dj: usize| {
                                 let (x, z) = unsafe {
                                     *FLOOR_POS
@@ -5118,7 +5047,7 @@ impl Builder<'_> {
                 if behind > 0 || !gpu_draws_whole(&sp) {
                     // The cut beside the camera, too near to draw whole: the
                     // pitch's edge line drops out there and leaves a wedge of
-                    // sky along the foot of the wall. See `quad_pieces`.
+                    // sky along the foot of the wall. See `queue_pieces`.
                     if behind > 0 || quad_overlaps_view(&sp) {
                         let at = |p: (i16, i16)| (p.0 as i32, 0, p.1 as i32);
                         self.queue_pieces(
