@@ -61,7 +61,7 @@ PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
 .PHONY: help test assets textures bake compile build pack disc run shot clean psoxide \
-	pgo-collect pgo-choose pgo-order
+	pgo-collect pgo-choose pgo-order demo-check
 
 help:
 	@echo "NitroXide targets:"
@@ -72,6 +72,7 @@ help:
 	@echo "  make disc      - build + pack the disc into '$(OUT)'"
 	@echo "  make run       - disc + boot it in the PSoXide frontend"
 	@echo "  make shot      - headless capture to $(SHOT) (no window)"
+	@echo "  make demo-check FRONTEND=x  - check the attract demo for pitch holes and big LOD cars"
 	@echo "  make pgo-collect FRONTEND=x - regenerate the committed PGO profile"
 	@echo "  make pgo-order FRONTEND=x   - regenerate the committed I-cache layout profile"
 	@echo "  make pgo-choose  FRONTEND=x - build and gate every PGO variant"
@@ -300,6 +301,22 @@ shot: psoxide $(ARENA_PSXT)
 	"$(FRONTEND)" launch \
 		--path "$(SHOT_DISC_CUE)" --steps $(STEPS) --pad-pulses "$(PULSES)" --dump-hw $(SHOT)
 	@echo "SHOT -> $(SHOT)"
+
+# Headless check of the whole attract demo (both split-screen matches) for the
+# two split-screen regressions of 2026-10-03: sky showing through holes in the
+# pitch and the walls near the camera, and cars drawn big from the 60-face LOD.
+# The diag-keys image paints the sky and LOD cars in key colours and changes
+# nothing else; tools/frame-check reads the screenshots and fails on either.
+# About 800 screenshots (~190 MB) land in build/demo-check/shots.
+DEMO_CHECK     := $(ROOT)/build/demo-check
+DEMO_CHECK_STEPS ?= 3000000000
+demo-check: psoxide $(ARENA_PSXT)
+	@$(MAKE) --no-print-directory compile FEATURES=diag-keys
+	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(DEMO_CHECK)/NitroXide.bin" CDDA_DIR=
+	@rm -rf "$(DEMO_CHECK)/shots"
+	"$(FRONTEND)" launch --path "$(DEMO_CHECK)/NitroXide.cue" --steps $(DEMO_CHECK_STEPS) \
+		--route-screenshot-dir "$(DEMO_CHECK)/shots" --route-screenshot-interval 10
+	cargo run -q --release --manifest-path "$(ROOT)/tools/frame-check/Cargo.toml" -- "$(DEMO_CHECK)/shots"
 
 clean:
 	cd $(GAME) && cargo clean

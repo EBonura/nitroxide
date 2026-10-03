@@ -1,0 +1,10 @@
+[package]
+name = "frame-check"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/EBonura/nitroxide"
+
+[workspace]
+
+[dependencies]
