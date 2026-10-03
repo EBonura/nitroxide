@@ -382,6 +382,44 @@ struct NitroXide {
     demo: DemoState,
 }
 
+/// The now-playing disc's three fans as rim offsets from its centre, in
+/// order round the rim with the first point repeated at the end: the body
+/// (twelve segments, r=9; twelve keep it within a quarter pixel of round),
+/// the hub ring (eight, r=4) and the spindle hole (eight, r=2).
+struct DiscRims {
+    body: [(i8, i8); 13],
+    hub: [(i8, i8); 9],
+    hole: [(i8, i8); 9],
+}
+
+static mut DISC_RIMS: Option<DiscRims> = None;
+
+/// [`DiscRims`], worked out on first use with the rounding the disc always
+/// used: angle `k * 4096 / segs`, offset `(cos * r + 2048) >> 12`.
+fn disc_rims() -> &'static DiscRims {
+    fn rim<const N: usize>(r: i32) -> [(i8, i8); N] {
+        let segs = (N - 1) as u32;
+        let mut out = [(0, 0); N];
+        for (k, o) in out.iter_mut().enumerate() {
+            let a = (k as u32 * 4096 / segs) as u16;
+            *o = (
+                ((cos_q12(a) * r + 2048) >> 12) as i8,
+                ((sin_q12(a) * r + 2048) >> 12) as i8,
+            );
+        }
+        out
+    }
+    // SAFETY: the game is single-threaded and this is only ever read once
+    // written.
+    unsafe {
+        (*core::ptr::addr_of_mut!(DISC_RIMS)).get_or_insert_with(|| DiscRims {
+            body: rim(9),
+            hub: rim(4),
+            hole: rim(2),
+        })
+    }
+}
+
 impl NitroXide {
     /// The `boot-roof-length` station's ball: high over the far end, held
     /// there after every tick so gravity cannot level the camera.
@@ -1320,7 +1358,9 @@ impl NitroXide {
         /// highlight's own sweep time, so the two animations feel related.
         const SLIDE: u32 = draw::MENU_SWEEP_TICKS;
 
-        let tw = font.text_width("NOW PLAYING").max(font.text_width(name)) as i16;
+        // Each width once: measuring a string walks its glyphs.
+        let (w_label, w_name) = (font.text_width("NOW PLAYING"), font.text_width(name));
+        let tw = w_label.max(w_name) as i16;
         // Sheared left end, then the disc, then the type, right-aligned at
         // the same margin the old text-only banner used. The plate leads the
         // disc by enough that the shear never crowds it.
@@ -1356,14 +1396,14 @@ impl NitroXide {
         Self::draw_disc(x0 + 23 + off, y0 + h / 2, tick);
         Self::shadowed(
             font,
-            RIGHT - font.text_width("NOW PLAYING") as i16 + off,
+            RIGHT - w_label as i16 + off,
             Y,
             "NOW PLAYING",
             (146, 202, 255),
         );
         Self::shadowed(
             font,
-            RIGHT - font.text_width(name) as i16 + off,
+            RIGHT - w_name as i16 + off,
             Y + 12,
             name,
             (255, 255, 255),
@@ -1381,8 +1421,6 @@ impl NitroXide {
         /// seconds -- quick enough to read as a spinning disc, slow enough
         /// that the 30 Hz overlay shows the sweep rather than strobing.
         const SPIN: u32 = 85;
-        /// Twelve segments keep an r=9 fan within a quarter pixel of round.
-        const SEGS: u32 = 12;
         const R_BODY: i32 = 9;
 
         let point = |a: u16, r: i32| {
@@ -1391,20 +1429,19 @@ impl NitroXide {
                 (cy as i32 + ((sin_q12(a) * r + 2048) >> 12)) as i16,
             )
         };
-        let fan = |r: i32, segs: u32, tint: (u8, u8, u8)| {
-            for i in 0..segs {
-                let a0 = (i * 4096 / segs) as u16;
-                let a1 = ((i + 1) * 4096 / segs) as u16;
-                psx_gpu::draw_tri_flat(
-                    [(cx, cy), point(a0, r), point(a1, r)],
-                    tint.0,
-                    tint.1,
-                    tint.2,
-                );
+        // The three fans never turn, so their rims are worked out once, as
+        // offsets rounded exactly the way `point` rounds them: per frame
+        // that was two divides and two table lookups a rim point, 56 of
+        // them, on the frames a song starts.
+        let rims = disc_rims();
+        let fan = |rim: &[(i8, i8)], tint: (u8, u8, u8)| {
+            for w in rim.windows(2) {
+                let p = |o: (i8, i8)| (cx + o.0 as i16, cy + o.1 as i16);
+                psx_gpu::draw_tri_flat([(cx, cy), p(w[0]), p(w[1])], tint.0, tint.1, tint.2);
             }
         };
 
-        fan(R_BODY, SEGS, (170, 178, 196));
+        fan(&rims.body, (170, 178, 196));
         // The sheen: two opposed wedges from the hub ring to the rim, the
         // only part that moves. Single quads; at this radius the chord of
         // a 40-degree arc is indistinguishable from the arc.
@@ -1424,8 +1461,8 @@ impl NitroXide {
                 255,
             );
         }
-        fan(4, 8, (226, 232, 244));
-        fan(2, 8, (24, 28, 44));
+        fan(&rims.hub, (226, 232, 244));
+        fan(&rims.hole, (24, 28, 44));
     }
 
     /// The select screen: one panel a seat, under the car that seat drives.

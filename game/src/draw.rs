@@ -169,6 +169,24 @@ fn on_view(sx: i16, sy: i16) -> bool {
     sx >= min_x && sx < max_x && sy >= min_y && sy < max_y
 }
 
+/// Project a quad's four corners: three through one RTPT and the fourth
+/// through RTPS, the same per-vertex projection as four RTPS with half the
+/// GTE round trips. `None` when any corner is behind the near plane;
+/// otherwise the screen corners and the sum of their depths.
+#[inline(always)]
+fn project_quad(c: &[(i32, i32, i32); 4]) -> Option<([(i16, i16); 4], i32)> {
+    let v = |k: usize| Vec3I16::new(c[k].0 as i16, c[k].1 as i16, c[k].2 as i16);
+    let t = scene::project_triangle_scheduled(v(0), v(1), v(2));
+    let d = project(v(3));
+    if t[0].sz == 0 || t[1].sz == 0 || t[2].sz == 0 || d.sz == 0 {
+        return None;
+    }
+    Some((
+        [(t[0].sx, t[0].sy), (t[1].sx, t[1].sy), (t[2].sx, t[2].sy), (d.sx, d.sy)],
+        t[0].sz as i32 + t[1].sz as i32 + t[2].sz as i32 + d.sz as i32,
+    ))
+}
+
 /// Does a projected quad's bounding box overlap the current view?
 ///
 /// Testing only whether one corner is inside is not conservative. A roof
@@ -3693,10 +3711,23 @@ fn submit_car_faces(
     let mut n = 0usize;
     let mut first: *mut TriGouraud = core::ptr::null_mut();
     let (mut lo, mut hi) = (u32::MAX, 0u32);
+    // Every face index is below the mesh's vertex count, which `projected`
+    // covers: `decode_car_geometry` drops any face that is not, once at
+    // boot, and `draw_cars` passes no faces if fewer vertices were
+    // projected. Checking all three again on every face of every frame was
+    // nine instructions of the loop that runs most.
+    debug_assert!(faces
+        .iter()
+        .take(CAR_FACE_CAP)
+        .all(|f| f.iter().all(|&i| (i as usize) < projected.len())));
     for face in faces.iter().take(CAR_FACE_CAP) {
-        let a = &projected[face[0] as usize];
-        let b = &projected[face[1] as usize];
-        let c = &projected[face[2] as usize];
+        let (a, b, c) = unsafe {
+            (
+                projected.get_unchecked(face[0] as usize),
+                projected.get_unchecked(face[1] as usize),
+                projected.get_unchecked(face[2] as usize),
+            )
+        };
         if car_back_facing(a, b, c) {
             continue;
         }
@@ -3736,6 +3767,75 @@ fn submit_car_faces(
     }
 }
 
+/// RTPT then NCCT for three vertices that share a material, as one asm
+/// block: positions `p` and normals `n` as packed (XY, Z) register words,
+/// `rgbc` the material. Returns (SXY0-2, SZ1-3, RGB0-2).
+///
+/// The GTE sees exactly what the separate `mtc2!`/`mfc2!` sequence gave it:
+/// the same register writes in the same order, RTPT straight after the last
+/// vertex write and NCCT straight after RGBC, as before. What goes is the
+/// glue around each transfer, a `move` into `$8` before every write and a
+/// NOP plus a `move` after every read: consecutive reads fill one another's
+/// load delay, and one NOP closes the last. About thirty instructions a
+/// triple, on the pass that projects every car vertex every frame.
+#[cfg(target_arch = "mips")]
+#[inline(always)]
+fn rtpt_ncct(p: [u32; 6], n: [u32; 6], rgbc: u32) -> ([u32; 3], [u32; 3], [u32; 3]) {
+    let (s0, s1, s2, z1, z2, z3): (u32, u32, u32, u32, u32, u32);
+    let (c0, c1, c2): (u32, u32, u32);
+    unsafe {
+        core::arch::asm!(
+            // MTC2 $8..$13 into VXY0, VZ0, VXY1, VZ1, VXY2, VZ2.
+            ".word 0x48880000",
+            ".word 0x48890800",
+            ".word 0x488a1000",
+            ".word 0x488b1800",
+            ".word 0x488c2000",
+            ".word 0x488d2800",
+            // RTPT.
+            ".word 0x4a080030",
+            // MFC2 SXY0-2 and SZ1-3 into $8..$13.
+            ".word 0x48086000",
+            ".word 0x48096800",
+            ".word 0x480a7000",
+            ".word 0x480b8800",
+            ".word 0x480c9000",
+            ".word 0x480d9800",
+            // MTC2 the normals ($14, $15, $24, $25, $2, $3) into V0-V2 and
+            // the material ($4) into RGBC.
+            ".word 0x488e0000",
+            ".word 0x488f0800",
+            ".word 0x48981000",
+            ".word 0x48991800",
+            ".word 0x48822000",
+            ".word 0x48832800",
+            ".word 0x48843000",
+            // NCCT.
+            ".word 0x4a08003f",
+            // MFC2 RGB0-2 into $14, $15, $24, then the last read's delay.
+            ".word 0x480ea000",
+            ".word 0x480fa800",
+            ".word 0x4818b000",
+            ".word 0",
+            inlateout("$8") p[0] => s0,
+            inlateout("$9") p[1] => s1,
+            inlateout("$10") p[2] => s2,
+            inlateout("$11") p[3] => z1,
+            inlateout("$12") p[4] => z2,
+            inlateout("$13") p[5] => z3,
+            inlateout("$14") n[0] => c0,
+            inlateout("$15") n[1] => c1,
+            inlateout("$24") n[2] => c2,
+            in("$25") n[3],
+            in("$2") n[4],
+            in("$3") n[5],
+            in("$4") rgbc,
+            options(nostack, nomem, preserves_flags),
+        );
+    }
+    ([s0, s1, s2], [z1 & 0xffff, z2 & 0xffff, z3 & 0xffff], [c0, c1, c2])
+}
+
 /// Project and light one car mesh into `CAR_PROJ`, returning how many vertices
 /// landed there. The batched GTE path (RTPT + NCCT for a run of three) is the
 /// same one the engine uses, so this is the engine's `submit_lit_mesh` with
@@ -3771,6 +3871,21 @@ fn project_car_animated(which: usize, materials: &[u32; CAR_MAX_VERTS], slots: &
         let a = vertex(vi);
         let b = vertex(vi + 1);
         let c = vertex(vi + 2);
+        let (ma, mb, mc) = (materials[vi], materials[vi + 1], materials[vi + 2]);
+        #[cfg(target_arch = "mips")]
+        if ma == mb && mb == mc {
+            let (sxy, sz, rgb) =
+                rtpt_ncct([a.0, a.1, b.0, b.1, c.0, c.1], [a.2, a.3, b.2, b.3, c.2, c.3], ma);
+            for k in 0..3 {
+                proj[vi + k] = CarLit {
+                    xy: sxy[k],
+                    rgb: rgb[k],
+                    sz: sz[k],
+                };
+            }
+            vi += 3;
+            continue;
+        }
         mtc2!(0, a.0);
         mtc2!(1, a.1);
         mtc2!(2, b.0);
@@ -3782,7 +3897,6 @@ fn project_car_animated(which: usize, materials: &[u32; CAR_MAX_VERTS], slots: &
         unsafe { psx_gte::ops::rtpt() };
         let sxy = [mfc2!(12), mfc2!(13), mfc2!(14)];
         let sz = [mfc2!(17) & 0xffff, mfc2!(18) & 0xffff, mfc2!(19) & 0xffff];
-        let (ma, mb, mc) = (materials[vi], materials[vi + 1], materials[vi + 2]);
         let rgb = if ma == mb && mb == mc {
             mtc2!(0, a.2);
             mtc2!(1, a.3);
@@ -3961,16 +4075,9 @@ impl Builder<'_> {
     /// shadows, which are nearly coplanar with what casts them.
     fn quad_biased(&mut self, corners: [(i32, i32, i32); 4], colors: [Rgb; 4], bias: i32) {
         count_offered!();
-        let mut sp = [(0i16, 0i16); 4];
-        let mut z_sum = 0i32;
-        for (k, &(x, y, z)) in corners.iter().enumerate() {
-            let p = project(Vec3I16::new(x as i16, y as i16, z as i16));
-            if p.sz == 0 {
-                return;
-            }
-            sp[k] = (p.sx, p.sy);
-            z_sum += p.sz as i32;
-        }
+        let Some((sp, z_sum)) = project_quad(&corners) else {
+            return;
+        };
         if !quad_overlaps_view(&sp) {
             return;
         }
@@ -3990,16 +4097,9 @@ impl Builder<'_> {
     /// As [`Builder::quad_biased`], but semi-transparent: the GPU averages the
     /// quad with what is behind it. What the boost plume is made of.
     fn quad_blended(&mut self, corners: [(i32, i32, i32); 4], colors: [Rgb; 4], bias: i32) {
-        let mut sp = [(0i16, 0i16); 4];
-        let mut z_sum = 0i32;
-        for (k, &(x, y, z)) in corners.iter().enumerate() {
-            let p = project(Vec3I16::new(x as i16, y as i16, z as i16));
-            if p.sz == 0 {
-                return;
-            }
-            sp[k] = (p.sx, p.sy);
-            z_sum += p.sz as i32;
-        }
+        let Some((sp, z_sum)) = project_quad(&corners) else {
+            return;
+        };
         if !quad_overlaps_view(&sp) {
             return;
         }
@@ -4023,16 +4123,9 @@ impl Builder<'_> {
         blended: bool,
     ) {
         count_offered!();
-        let mut sp = [(0i16, 0i16); 4];
-        let mut z_sum = 0i32;
-        for (k, &(x, y, z)) in corners.iter().enumerate() {
-            let p = project(Vec3I16::new(x as i16, y as i16, z as i16));
-            if p.sz == 0 {
-                return;
-            }
-            sp[k] = (p.sx, p.sy);
-            z_sum += p.sz as i32;
-        }
+        let Some((sp, z_sum)) = project_quad(&corners) else {
+            return;
+        };
         if !quad_overlaps_view(&sp) {
             return;
         }
@@ -4139,16 +4232,9 @@ impl Builder<'_> {
         packet: TexturedGouraudPacketMaterial,
     ) {
         count_offered!();
-        let mut sp = [(0i16, 0i16); 4];
-        let mut z_sum = 0i32;
-        for (k, &(x, y, z)) in corners.iter().enumerate() {
-            let p = project(Vec3I16::new(x as i16, y as i16, z as i16));
-            if p.sz == 0 {
-                return;
-            }
-            sp[k] = (p.sx, p.sy);
-            z_sum += p.sz as i32;
-        }
+        let Some((sp, z_sum)) = project_quad(&corners) else {
+            return;
+        };
         if !quad_overlaps_view(&sp) {
             return;
         }
@@ -5149,7 +5235,6 @@ impl Builder<'_> {
         // corners are halfway from the centre to the outer plate's on screen
         // (a 46-uu plate is too small for perspective to tell), and the two
         // orb diamonds share their tips.
-        let proj = |x: i32, y: i32, z: i32| project(Vec3I16::new(x as i16, y as i16, z as i16));
         // The two pad sizes' cull boxes, (r, top / 2, r) below.
         let pad_e = [cull.extents((42, 50, 42)), cull.extents((62, 70, 62))];
         for (i, pad) in sim::PADS.iter().enumerate() {
@@ -5181,13 +5266,20 @@ impl Builder<'_> {
             // Past 3500 in a full view the plates are a sliver a pixel tall.
             if far <= if split_view() { 2000 } else { 3500 } {
                 let g = r * 3 / 4;
-                let c = proj(px, -4, pz);
-                let o = [
-                    proj(px - g, -4, pz),
-                    proj(px, -4, pz - g),
-                    proj(px, -4, pz + g),
-                    proj(px + g, -4, pz),
-                ];
+                // Five corners through two RTPTs (the second repeats its
+                // last): the same per-vertex projection, fewer GTE round trips.
+                let v = |x: i32, z: i32| Vec3I16::new(x as i16, -4, z as i16);
+                let [c, o0, o1] = scene::project_triangle_scheduled(
+                    v(px, pz),
+                    v(px - g, pz),
+                    v(px, pz - g),
+                );
+                let [o2, o3, _] = scene::project_triangle_scheduled(
+                    v(px, pz + g),
+                    v(px + g, pz),
+                    v(px + g, pz),
+                );
+                let o = [o0, o1, o2, o3];
                 if c.sz != 0 && o.iter().all(|p| p.sz != 0) {
                     let sp = [(o[0].sx, o[0].sy), (o[1].sx, o[1].sy), (o[2].sx, o[2].sy), (o[3].sx, o[3].sy)];
                     if quad_overlaps_view(&sp) {
@@ -5207,10 +5299,6 @@ impl Builder<'_> {
             if !live {
                 continue;
             }
-            let (t, b) = (proj(px, -(lift + r), pz), proj(px, -(lift - r), pz));
-            if t.sz == 0 || b.sz == 0 {
-                continue;
-            }
             let mid = -lift;
             // Far away the orb is a few pixels of diamond whichever way it
             // is built, so it is one flat diamond facing the camera, in the
@@ -5223,8 +5311,30 @@ impl Builder<'_> {
                 [(r, 0), (0, r)]
             };
             let flat = sides[1] == (0, 0);
-            for &(ax, az) in sides.iter().take(if flat { 1 } else { 2 }) {
-                let (l, rr) = (proj(px - ax, mid, pz - az), proj(px + ax, mid, pz + az));
+            // Both tips and the first diamond's left corner through one RTPT,
+            // the remaining corners through a second (or RTPS for the flat
+            // orb's one): the same per-vertex projection as one at a time.
+            let w = |x: i32, y: i32, z: i32| Vec3I16::new(x as i16, y as i16, z as i16);
+            let (a0, a1) = (sides[0], sides[1]);
+            let [t, b, l0] = scene::project_triangle_scheduled(
+                w(px, -(lift + r), pz),
+                w(px, -(lift - r), pz),
+                w(px - a0.0, mid, pz - a0.1),
+            );
+            if t.sz == 0 || b.sz == 0 {
+                continue;
+            }
+            let (r0, l1, r1) = if flat {
+                (project(w(px + a0.0, mid, pz + a0.1)), l0, l0)
+            } else {
+                let [r0, l1, r1] = scene::project_triangle_scheduled(
+                    w(px + a0.0, mid, pz + a0.1),
+                    w(px - a1.0, mid, pz - a1.1),
+                    w(px + a1.0, mid, pz + a1.1),
+                );
+                (r0, l1, r1)
+            };
+            for (l, rr) in [(l0, r0), (l1, r1)].into_iter().take(if flat { 1 } else { 2 }) {
                 if l.sz == 0 || rr.sz == 0 {
                     continue;
                 }
@@ -5616,11 +5726,20 @@ impl Builder<'_> {
                 if near { (&[0, 1, 2, 3], &[0, 1, 2]) } else { (&[0, 3], &[0, 2]) };
             let packet = CROWD_PACKETS[st.team as usize];
             let mut g = [[None; 4]; 3];
+            // A row's first three columns through one RTPT, any fourth through
+            // RTPS: the same per-vertex projection, fewer GTE round trips.
             for &j in rows {
-                for &i in cols {
-                    let v = project(st.grid[j][i]);
+                let at = |n: usize| st.grid[j][cols[n.min(cols.len() - 1)]];
+                let t = scene::project_triangle_scheduled(at(0), at(1), at(2));
+                for (n, v) in t.iter().enumerate().take(cols.len()) {
                     if v.sz != 0 {
-                        g[j][i] = Some((v.sx, v.sy));
+                        g[j][cols[n]] = Some((v.sx, v.sy));
+                    }
+                }
+                if cols.len() > 3 {
+                    let v = project(at(3));
+                    if v.sz != 0 {
+                        g[j][cols[3]] = Some((v.sx, v.sy));
                     }
                 }
             }
@@ -6295,7 +6414,8 @@ impl Builder<'_> {
         // all, and the moment it reaches past the bodywork a patch pointing the
         // wrong way is the first thing you see.
         let (ys, yc) = (sin_q12(yaw) as i32, cos_q12(yaw) as i32);
-        for (side, p) in sp.iter_mut().enumerate() {
+        let rim = |side: usize| {
+            let side = side.min(SHADOW_SIDES - 1);
             let a = ((4096 * side) / SHADOW_SIDES) as u16;
             let (ox, oz) = (
                 (ex * cos_q12(a) as i32) >> 12,
@@ -6303,15 +6423,27 @@ impl Builder<'_> {
             );
             let px = x + ((ox * yc + oz * ys) >> 12);
             let pz = z + ((oz * yc - ox * ys) >> 12);
-            let v = project(Vec3I16::new(px as i16, -2, pz as i16));
-            if v.sz == 0 {
-                return;
+            Vec3I16::new(px as i16, -2, pz as i16)
+        };
+        // Three rim points to an RTPT (the last triple repeats the final
+        // point): the same per-vertex projection as one RTPS each.
+        let mut side = 0;
+        while side < SHADOW_SIDES {
+            let t = scene::project_triangle_scheduled(rim(side), rim(side + 1), rim(side + 2));
+            for (j, v) in t.iter().enumerate() {
+                if side + j >= SHADOW_SIDES {
+                    break;
+                }
+                if v.sz == 0 {
+                    return;
+                }
+                sp[side + j] = (v.sx, v.sy);
+                z_sum += v.sz as i32;
+                if on_view(v.sx, v.sy) {
+                    on_screen = true;
+                }
             }
-            *p = (v.sx, v.sy);
-            z_sum += v.sz as i32;
-            if on_view(v.sx, v.sy) {
-                on_screen = true;
-            }
+            side += 3;
         }
         if !on_screen {
             return;
@@ -6417,12 +6549,35 @@ impl Builder<'_> {
             // Project only the columns the quad loop below reads: a split
             // view was projecting all sixteen and then drawing every other
             // one, throwing half the GTE work away.
-            for i in (0..BALL_LON).step_by(lon_step) {
+            // Three columns to an RTPT: the same per-vertex projection, a
+            // third of the GTE round trips. Both column counts (16 and 8)
+            // leave one column for RTPS.
+            let at = |i: usize| {
                 let v = mesh[j][i];
-                let p = project(Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16));
-                sp[i] = (p.sx, p.sy);
-                sz[i] = p.sz as i32;
-                tint[i] = vertex_tint(v);
+                Vec3I16::new(v.0 as i16, v.1 as i16, v.2 as i16)
+            };
+            let mut i = 0;
+            while i < BALL_LON {
+                if i + 2 * lon_step < BALL_LON {
+                    let t = scene::project_triangle_scheduled(
+                        at(i),
+                        at(i + lon_step),
+                        at(i + 2 * lon_step),
+                    );
+                    for (n, p) in t.iter().enumerate() {
+                        let c = i + n * lon_step;
+                        sp[c] = (p.sx, p.sy);
+                        sz[c] = p.sz as i32;
+                        tint[c] = vertex_tint(mesh[j][c]);
+                    }
+                    i += 3 * lon_step;
+                } else {
+                    let p = project(at(i));
+                    sp[i] = (p.sx, p.sy);
+                    sz[i] = p.sz as i32;
+                    tint[i] = vertex_tint(mesh[j][i]);
+                    i += lon_step;
+                }
             }
         };
         project_row(0, &mut sp[0], &mut sz[0], &mut tint[0]);
@@ -6700,7 +6855,15 @@ fn draw_cars(
             on_scratchpad(|| project_car_animated(which, materials, CAR_WHEELS[which]))
         });
         let projected = unsafe { &mut CAR_PROJ[..n] };
-        let faces = unsafe { &CAR_FACES[which][..CAR_FACE_COUNT[which] as usize] };
+        // The faces were checked against the full vertex count at boot, so
+        // the face loop reads `projected` unchecked: refuse a wheel table
+        // shorter than the mesh rather than let it read past what was
+        // projected this frame.
+        let faces = if n == unsafe { CAR_VERT_COUNT[which] } as usize {
+            unsafe { &CAR_FACES[which][..CAR_FACE_COUNT[which] as usize] }
+        } else {
+            &[]
+        };
         staged!(S_CAR_FACES, {
             on_scratchpad(|| submit_car_faces(faces, projected, &mut tris, ot))
         });
@@ -7586,6 +7749,8 @@ static mut TRACK_CLOCK: u16 = 1;
 /// One chunk's vertices on their way through the GTE: two edges per point,
 /// for the chunk's points and the one before it.
 const TRACK_VERTS: usize = (TRACK_CHUNK + 1) * 2;
+// `track_chunk` projects exactly five points.
+const _: () = assert!(TRACK_CHUNK == 4);
 
 /// A draw-mode word as an ordering-table packet: the tracks switch the GPU to
 /// subtractive blending in front of themselves and back to the arena's
@@ -7613,7 +7778,13 @@ pub fn track_tick(s: &Sim) {
     // One wheel a tick: a chunk outlives its marks by three ticks at most,
     // which the per-point age test already hides.
     unsafe { TRACKS[clock as usize % TRACK_WHEELS].expire(clock) };
+    // One car a tick, alternating: a point is still laid every 128 uu (a car
+    // covers under 40 uu a tick), and the live segment's end trails the tyre
+    // by a tick at most, under the car.
     for (c, car) in [&s.car, &s.opponent].into_iter().enumerate() {
+        if c != (clock & 1) as usize {
+            continue;
+        }
         // On the floor and in play, before anything is worked out: most
         // ticks most cars are not sliding.
         let on_floor = car.grounded && !car.wrecked() && car.up.y > 3900;
@@ -7788,38 +7959,24 @@ impl Builder<'_> {
     fn track_chunk(&mut self, w: usize, c: usize, clock: u16) {
         let ring = unsafe { &TRACKS[w] };
         let first = c * TRACK_CHUNK + TRACK_LEN - 1;
-        let vert = |i: usize| {
-            let p = &ring.pts[(first + i / 2) % TRACK_LEN];
-            let (x, z) = if i & 1 == 0 { p.l } else { p.r };
-            Vec3I16::new(x, 0, z)
-        };
-        let mut sxy = [(0i16, 0i16); TRACK_VERTS];
-        let mut sz = [0u16; TRACK_VERTS];
-        let mut i = 0;
-        while i < TRACK_VERTS {
-            // The last triple repeats the final vertex rather than read past
-            // the chunk.
-            let last = TRACK_VERTS - 1;
-            let tri = scene::project_triangle_scheduled(
-                vert(i),
-                vert((i + 1).min(last)),
-                vert((i + 2).min(last)),
-            );
-            for (j, v) in tri.iter().enumerate() {
-                if i + j <= last {
-                    sxy[i + j] = (v.sx, v.sy);
-                    sz[i + j] = v.sz;
-                }
-            }
-            i += 3;
-        }
+        // The chunk's five points (the one before it and its own four), both
+        // edges each: three RTPTs and an RTPS, written out rather than looped
+        // so no vertex pays for an index sum, a modulo and an edge select.
+        let pt = |k: usize| &ring.pts[(first + k) % TRACK_LEN];
+        let (p0, p1, p2, p3, p4) = (pt(0), pt(1), pt(2), pt(3), pt(4));
+        let v = |e: (i16, i16)| Vec3I16::new(e.0, 0, e.1);
+        let t0 = scene::project_triangle_scheduled(v(p0.l), v(p0.r), v(p1.l));
+        let t1 = scene::project_triangle_scheduled(v(p1.r), v(p2.l), v(p2.r));
+        let t2 = scene::project_triangle_scheduled(v(p3.l), v(p3.r), v(p4.l));
+        let t3 = project(v(p4.r));
+        let all = [t0[0], t0[1], t0[2], t1[0], t1[1], t1[2], t2[0], t2[1], t2[2], t3];
         let head = ring.head as usize;
         // One shade for the chunk, from its newest point and its middle
         // depth: four segments laid within a few ticks of each other fade
         // together, and the depth fade only acts far off where a mark is a
         // pixel or two wide. A flat quad is a quarter of a Gouraud one's
         // setup on the GPU and a third fewer words to build.
-        let tint = track_tint(clock.wrapping_sub(ring.newest[c]), sz[TRACK_VERTS / 2]);
+        let tint = track_tint(clock.wrapping_sub(ring.newest[c]), all[TRACK_VERTS / 2].sz);
         if tint == (0, 0, 0) {
             return;
         }
@@ -7836,12 +7993,13 @@ impl Builder<'_> {
                 continue;
             }
             let (n0, n1) = (2 * k - 2, 2 * k);
-            if sz[n0] == 0 || sz[n0 + 1] == 0 || sz[n1] == 0 || sz[n1 + 1] == 0 {
+            let (a, b, e, f) = (all[n0], all[n0 + 1], all[n1], all[n1 + 1]);
+            if a.sz == 0 || b.sz == 0 || e.sz == 0 || f.sz == 0 {
                 continue;
             }
             // No per-segment view test: the chunk passed the frustum, and a
             // segment hanging off the edge is the GPU's to clip.
-            let sp = [sxy[n0], sxy[n0 + 1], sxy[n1], sxy[n1 + 1]];
+            let sp = [(a.sx, a.sy), (b.sx, b.sy), (e.sx, e.sy), (f.sx, f.sy)];
             if let Some(quad) = self.flats.push(QuadFlat::new(sp, tint.0, tint.1, tint.2)) {
                 quad.color_cmd |= SEMI_TRANSPARENT;
                 self.ot.add_packet(TRACK_SLOT, quad);
