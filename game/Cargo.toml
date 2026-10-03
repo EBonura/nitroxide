@@ -60,6 +60,13 @@ boot-end-wall = []
 # (ball cam in both halves, cars close under the chase cameras), straight
 # from boot. The gate route for split screen at 30.
 boot-split-stress = []
+# Dev: paint the sky (while the camera is close to level) and every car drawn
+# from its LOD in key colours (sky magenta, LOD cars pure green) and change
+# nothing else, so a headless capture of the attract demo can be checked by
+# tools/frame-check (`make demo-check`): sky along the bottom of a level view
+# is a hole in the pitch or a wall, and a large green car is the LOD drawn
+# where its missing detail shows.
+diag-keys = []
 # Dev: render every second vblank. Not a shipping mode: a build whose frames
 # all fit two vblanks presents on the same ticks as any other such build, so
 # two builds' screenshots can be compared tick for tick to prove a speed-up
