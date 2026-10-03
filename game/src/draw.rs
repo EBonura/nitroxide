@@ -7885,6 +7885,9 @@ const FX_SMOKE_COUNT: i32 = 7;
 const FX_SMOKE_LIFE: i32 = 56;
 /// Everything is over by this age.
 const FX_LIFE: i32 = 80;
+/// The nearest a demolition's blast is ever drawn from, in uu of camera
+/// depth; a goal's scales with it. See [`Builder::burst`].
+const FX_NEAR: i32 = 700;
 /// White-hot, then the flame colour fire cools through.
 const FX_HOT: Rgb = (255, 246, 214);
 const FX_FLAME: Rgb = (240, 128, 34);
@@ -7970,6 +7973,19 @@ impl Builder<'_> {
         // rather than the CPU then missed the frame. Further out, where a
         // blast is normally seen, none of them is near it.
         let cap = if big { 96 } else { 64 };
+        // Never nearer than FX_NEAR (times the blast's own scale): closer
+        // in, the whole blast shrinks about its centre, so on screen it is
+        // the size it would be from there. Ten fireballs at the ceiling
+        // overlapping across the screen were most of a frame of blended
+        // fill, and the GPU missed the frame; from FX_NEAR out nothing
+        // changes.
+        let near = (FX_NEAR * scale) >> 12;
+        let o = project(Vec3I16::new(origin.0 as i16, origin.1 as i16, origin.2 as i16));
+        let scale = if o.sz != 0 && (o.sz as i32) < near {
+            (scale >> 4) * o.sz as i32 / (near >> 4).max(1)
+        } else {
+            scale
+        };
         let s = |v: i32| (v * scale) >> 12;
 
         // Smoke first in code, last on screen: it sorts a little behind the
