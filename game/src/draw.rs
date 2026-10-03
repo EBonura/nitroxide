@@ -7426,7 +7426,7 @@ type PhaseStack = psx_rt::scratchpad::ScratchpadStack<0, { psx_rt::scratchpad::S
 fn on_scratchpad<R>(f: impl FnOnce() -> R) -> R {
     // SAFETY: nothing else in this game keeps data in the scratchpad, the
     // phases install no exception handler (psx-rt's vblank handler leaves
-    // $sp alone), and tools/stack_guard.py proves each phase's call tree
+    // $sp alone), and the SDK's stack-guard proves each phase's call tree
     // fits PhaseStack::BUDGET after every link.
     unsafe { PhaseStack::run(f) }
 }

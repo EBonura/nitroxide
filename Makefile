@@ -147,14 +147,20 @@ bake:
 	done
 
 # Exact SDK, engine/cookers and emulator-library sources are locked separately.
-# PSOXIDE_FROM remains an explicit demo-disc override.
+# psoxide-components (the SDK's tools/psoxide-link) brings .psoxide to the lock;
+# it is installed once per SDK revision, from the revision the lock pins, under
+# target/. PSOXIDE_FROM remains an explicit demo-disc override.
+SDK_REV    := $(shell sed -n '/"sdk": *{/,/"revision"/s/.*"revision": *"\([0-9a-f]*\)".*/\1/p' "$(ROOT)/components.lock.json")
+COMPONENTS := $(ROOT)/target/psoxide-components/$(SDK_REV)
 PSOXIDE_FROM ?=
 psoxide:
 	@if [ -n "$(PSOXIDE_FROM)" ]; then \
 		cargo run -q --manifest-path "$(PSOXIDE_FROM)/tools/psoxide-link/Cargo.toml" -- \
 			--from "$(PSOXIDE_FROM)" --into "$(PSOXIDE)"; \
 	else \
-		python3 "$(ROOT)/tools/bootstrap-components.py" --root "$(PSOXIDE)" --lock "$(ROOT)/components.lock.json"; \
+		[ -x "$(COMPONENTS)/bin/psoxide-components" ] || cargo install -q --locked \
+			--git https://github.com/EBonura/PSoXide --rev $(SDK_REV) --root "$(COMPONENTS)" psoxide-link; \
+		"$(COMPONENTS)/bin/psoxide-components" --root "$(PSOXIDE)" --lock "$(ROOT)/components.lock.json"; \
 	fi
 
 # LLVM's MIPS delay-slot filler searches backwards only by default, which left
@@ -163,7 +169,7 @@ psoxide:
 # calls (PSX_DELAY_SLOT_FLAGS in the hydrated tools/sdk-examples.mk), so every
 # guest builds with one set; they are read from there rather than copied.
 # Every search can leave a load in a slot whose consumer runs inside the load
-# delay, so the link is always followed by hazard_patch.py, which reroutes
+# delay, so the link is always followed by the SDK's hazard-patch, which reroutes
 # those branches through psx-rt's HAZARD_TRAMPOLINES and rescans (46 of the
 # default 96 words in the shipping PGO build; psx-rt's hazard-trampolines-256
 # feature is the room to grow into). `--config` appends to game/.cargo/config.toml; an exported
@@ -178,7 +184,7 @@ DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rust
 # applies it with no emulator: `make build`, `make disc`, CI and the demo disc.
 # PGO_VARIANT is the winner of `make pgo-choose`; PGO_VARIANT=off builds the
 # plain image. Either way the driver runs the hazard patcher, the scanner and
-# the stack guard (tools/stack_guard.py, which proves every scratchpad stack
+# the stack guard (psoxide-hazard's stack-guard, which proves every scratchpad stack
 # call tree in draw.rs fits its region) with the link map, stops on a failure,
 # and the exe lands at $(EXE) as before.
 #

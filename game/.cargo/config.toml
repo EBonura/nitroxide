@@ -16,5 +16,5 @@ build-std-features = ["compiler-builtins-mem"]
 # `-C llvm-args=-disable-mips-df-backward-search`, which left a nop in nearly
 # every delay slot of the image. The filler now runs and the Makefile reroutes
 # the hazards it creates through PSoXide's post-link trampoline patcher
-# (`$(PSOXIDE)/tools/hazard_patch.py`, HAZARD_TRAMPOLINES in psx-rt), as
+# (the SDK's hazard-patch, HAZARD_TRAMPOLINES in psx-rt), as
 # Cortex, hl-psx and quake-psx build.
