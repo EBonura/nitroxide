@@ -208,18 +208,25 @@ fn gpu_draws_whole(sp: &[(i16, i16); 4]) -> bool {
     fits([sp[0], sp[1], sp[2]]) && fits([sp[1], sp[2], sp[3]])
 }
 
-/// Did the GTE project this vertex where it belongs? RTPS saturates its
-/// divide once the depth is half the projection plane distance or less, and
-/// a vertex that close lands short of its true place without any sign of it:
-/// a pitch quad with one there met its neighbour at an angle and left a
-/// wedge of sky between them. Zero is behind the near plane altogether.
-///
-/// Split screen only: a full view keeps its old test (in front at all) and
-/// draws exactly what it did, because clipping the near quads cost it 60 fps
-/// on about one frame in sixteen (2026-10-03, attract demo).
+/// The nearest depth (SZ) at which the GTE still projects a vertex where it
+/// belongs. RTPS saturates its divide once the depth is half the projection
+/// plane distance or less, and a vertex that close lands short of its true
+/// place without any sign of it: a pitch quad with one there met its
+/// neighbour at an angle and left a wedge of sky between them.
+const GTE_TRUE_SZ: i32 = PROJ_H as i32 / 2;
+
+/// The depth a projected vertex must be past to count as drawn where it
+/// belongs: [`GTE_TRUE_SZ`] in split screen, and in a full view only in
+/// front at all, its old test, so a full view draws exactly what it did and
+/// pays for none of the near-camera fix (it cost 60 fps on about one frame
+/// in sixteen, train tape 2026-10-03). Read once per pass, not per vertex.
 #[inline]
-fn projects_true(sz: i32) -> bool {
-    sz > if split_view() { PROJ_H as i32 / 2 } else { 0 }
+fn near_sz() -> i32 {
+    if split_view() {
+        GTE_TRUE_SZ
+    } else {
+        0
+    }
 }
 
 /// What [`Builder::clip_piece`] draws a clipped quad as.
@@ -229,10 +236,6 @@ enum Pieces {
     Wall {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
-    },
-    /// A pitch marking, untextured: one colour, or shaded along the line.
-    Line {
-        flat: bool,
     },
 }
 
@@ -4476,6 +4479,7 @@ impl Builder<'_> {
         count_offered!();
         let mut sp = [(0i16, 0i16); 4];
         let mut behind = 0;
+        let (split, near) = (split_view(), near_sz());
         let step = FLOOR_SPLIT_MAX as usize;
         let at = [
             (gx, gz),
@@ -4486,7 +4490,11 @@ impl Builder<'_> {
         for (k, &(ix, iz)) in at.iter().enumerate() {
             let (cx, cz) = unsafe { *FLOOR_POS.get_unchecked(ix).get_unchecked(iz) };
             let p = project(Vec3I16::new(cx, 0, cz));
-            if !projects_true(p.sz as i32) {
+            if p.sz as i32 <= near {
+                // A full view drops the tile, as it always did.
+                if !split {
+                    return;
+                }
                 behind += 1;
             }
             sp[k] = (p.sx, p.sy);
@@ -4494,7 +4502,7 @@ impl Builder<'_> {
         // A one-quad tile is a whole 1024-uu tile, and the distance band
         // that picks it is measured to the tile's centre, so its near edge
         // can still pass right by the camera: see `queue_pieces`.
-        let whole = behind == 0 && gpu_draws_whole(&sp);
+        let whole = behind == 0 && (!split || gpu_draws_whole(&sp));
         if whole {
             if !sp.iter().any(|&(x, y)| on_view(x, y)) {
                 return;
@@ -4520,7 +4528,7 @@ impl Builder<'_> {
                 (x as i32, 0, z as i32)
             });
             let uvs = [(0, 0), (last, 0), (0, last), (last, last)];
-            self.queue_pieces(world, uvs, tints, Pieces::Floor);
+            Self::queue_pieces(world, uvs, tints, Pieces::Floor);
             return;
         }
         let uvs = [uvw(0, 0), uvw(last, 0), uvw(0, last), uvw(last, last)];
@@ -4547,12 +4555,12 @@ impl Builder<'_> {
         }
     }
 
-    /// Note a pitch, marking or wall quad the GPU cannot draw whole, for
+    /// Note a pitch or wall quad the GPU cannot draw whole, for
     /// [`Self::draw_pieces`] to clip once the phase is off the scratchpad
     /// stack (the pitch and wall phases have no room left on it).
     ///
     /// Near the camera a quad can have a corner behind the near plane or too
-    /// near for the GTE to project right (see [`projects_true`]), or a corner
+    /// near for the GTE to project right (see [`GTE_TRUE_SZ`]), or a corner
     /// so close that its projection lands a thousand pixels off screen, and
     /// the rasteriser drops any triangle with an edge 1024 or more pixels
     /// wide or 512 tall. Either way the whole quad went and the sky showed
@@ -4565,7 +4573,6 @@ impl Builder<'_> {
     /// such quad used to be.
     #[inline(always)]
     fn queue_pieces(
-        &mut self,
         world: [(i32, i32, i32); 4],
         uvs: [(u8, u8); 4],
         tints: [u32; 4],
@@ -4574,7 +4581,9 @@ impl Builder<'_> {
         unsafe {
             let n = PIECE_JOB_COUNT;
             if n < MAX_PIECE_JOBS {
-                PIECE_JOBS[n] = PieceJob {
+                // Unchecked: `n` was just checked, and a panic path here
+                // costs the scratchpad stack bytes it does not have.
+                *PIECE_JOBS.get_unchecked_mut(n) = PieceJob {
                     world,
                     uvs,
                     tints,
@@ -4583,6 +4592,29 @@ impl Builder<'_> {
                 PIECE_JOB_COUNT = n + 1;
             }
         }
+    }
+
+    /// [`Self::queue_pieces`] for one pitch sub-quad, by its first grid corner
+    /// in `FLOOR_POS`. Out of line and cold so the pitch loop, which runs on
+    /// the scratchpad stack, does not carry its frame.
+    #[inline(never)]
+    #[cold]
+    fn queue_floor_quad(corner: (usize, usize), step: usize, uv: [u8; 4], tints: [u32; 4]) {
+        let at = |di: usize, dj: usize| {
+            let (x, z) = unsafe {
+                *FLOOR_POS
+                    .get_unchecked(corner.0 + di * step)
+                    .get_unchecked(corner.1 + dj * step)
+            };
+            (x as i32, 0, z as i32)
+        };
+        let [ua, ub, va, vb] = uv;
+        Self::queue_pieces(
+            [at(0, 0), at(1, 0), at(0, 1), at(1, 1)],
+            [(ua, va), (ub, va), (ua, vb), (ub, vb)],
+            tints,
+            Pieces::Floor,
+        );
     }
 
     /// Draw the quads the last phase queued with [`Self::queue_pieces`]. The
@@ -4621,7 +4653,7 @@ impl Builder<'_> {
     }
 
     /// Clip a queued quad in camera space to the depth the GTE still
-    /// projects right (see [`projects_true`]) and to a guard band around the
+    /// projects right (see [`GTE_TRUE_SZ`]) and to a guard band around the
     /// view (480 pixels either side of its centre and 240 above and below),
     /// so every corner left projects close enough to the others for the GPU,
     /// and draw the clipped polygon as a fan of triangles (quads with a
@@ -4648,7 +4680,7 @@ impl Builder<'_> {
         const H: i32 = PROJ_H as i32;
         const GUARD_X: i32 = 480;
         const GUARD_Y: i32 = 240;
-        const NEAR: i32 = PROJ_H as i32 / 2 + 8;
+        const NEAR: i32 = GTE_TRUE_SZ + 8;
         let corner = |k: usize| -> Corner {
             let (p, c) = (world[k], rgb_of(tints[k]));
             let d = (p.0 - cull.pos.0, p.1 - cull.pos.1, p.2 - cull.pos.2);
@@ -4724,7 +4756,7 @@ impl Builder<'_> {
         let mut screen = [(0i16, 0i16, 0i32); MAX];
         for (s, c) in screen.iter_mut().zip(&poly[..n]) {
             let v = project(Vec3I16::new(c[0] as i16, c[1] as i16, c[2] as i16));
-            if !projects_true(v.sz as i32) {
+            if v.sz as i32 <= GTE_TRUE_SZ {
                 return;
             }
             *s = (v.sx, v.sy, v.sz as i32);
@@ -4760,23 +4792,15 @@ impl Builder<'_> {
             Pieces::Wall { packet, blended } => {
                 self.quad_tex_words(sp, z_sum, uvs, tints, 0, packet, blended)
             }
-            Pieces::Line { flat: true } => {
-                let c = rgb_of(tints[0]);
-                if let Some(quad) = self.flats.push(QuadFlat::new(sp, c.0, c.1, c.2)) {
-                    self.ot.add_packet(LINE_SLOT, quad);
-                }
-            }
-            Pieces::Line { flat: false } => {
-                if let Some(quad) = self.arena.push(QuadGouraud::new(sp, tints.map(rgb_of))) {
-                    self.ot.add_packet(LINE_SLOT, quad);
-                }
-            }
         }
     }
 
     fn floor(&mut self, cull: &Cull) {
         let step_x = sim::HALF_X * 2 / TILES_X;
         let step_z = sim::HALF_Z * 2 / TILES_Z;
+        // Split screen draws the near-camera quads the GPU would drop; a full
+        // view draws what it always did (see `near_sz`).
+        let near = near_sz();
         // The pitch is flat, so a tile's box is its footprint with no height.
         // The chamfer only ever pulls corners inward, so this stays generous.
         let tile_e = cull.extents((step_x / 2, 0, step_z / 2));
@@ -4845,7 +4869,7 @@ impl Builder<'_> {
                                 .get_unchecked(gz + sz * grid_step)
                         };
                         let p = project(Vec3I16::new(cx, 0, cz));
-                        if projects_true(p.sz as i32) {
+                        if p.sz as i32 > near {
                             *corner = Some((p.sx, p.sy, p.sz as i32));
                         }
                     }
@@ -4911,7 +4935,7 @@ impl Builder<'_> {
                         let whole = match quad {
                             (Some(a), Some(b), Some(c), Some(d)) => {
                                 let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
-                                if gpu_draws_whole(&sp) {
+                                if near == 0 || gpu_draws_whole(&sp) {
                                     if !sp.iter().any(|&(x, y)| on_view(x, y)) {
                                         continue;
                                     }
@@ -4923,7 +4947,8 @@ impl Builder<'_> {
                                 }
                             }
                             (None, None, None, None) => continue,
-                            _ => None,
+                            _ if near != 0 => None,
+                            _ => continue,
                         };
                         count_kept!();
                         let (va, vb) = (u(sz as i32), u(sz as i32 + 1));
@@ -4939,20 +4964,8 @@ impl Builder<'_> {
                         let Some(sp) = whole else {
                             // Too near the camera to draw whole: the same
                             // quad from its world corners, clipped.
-                            let at = |di: usize, dj: usize| {
-                                let (x, z) = unsafe {
-                                    *FLOOR_POS
-                                        .get_unchecked(gx + (sx + di) * grid_step)
-                                        .get_unchecked(gz + (sz + dj) * grid_step)
-                                };
-                                (x as i32, 0, z as i32)
-                            };
-                            self.queue_pieces(
-                                [at(0, 0), at(1, 0), at(0, 1), at(1, 1)],
-                                [(ua, va), (ub, va), (ua, vb), (ub, vb)],
-                                tints,
-                                Pieces::Floor,
-                            );
+                            let corner = (gx + sx * grid_step, gz + sz * grid_step);
+                            Self::queue_floor_quad(corner, grid_step, [ua, ub, va, vb], tints);
                             continue;
                         };
                         let uvs = [uvw(ua, va), uvw(ub, va), uvw(ua, vb), uvw(ub, vb)];
@@ -5016,9 +5029,7 @@ impl Builder<'_> {
                 let mut next = cut(unsafe { sections.get_unchecked(j) });
                 // A long step that reaches behind the camera would drop the
                 // whole quad, visible part and all: take one cut instead.
-                if j > i + 1
-                    && !(projects_true(next.0.sz as i32) && projects_true(next.1.sz as i32))
-                {
+                if j > i + 1 && (next.0.sz == 0 || next.1.sz == 0) {
                     j = i + 1;
                     next = cut(unsafe { sections.get_unchecked(j) });
                 }
@@ -5026,37 +5037,7 @@ impl Builder<'_> {
                 let (a, b, cc, dd) = (prev.0, prev.1, next.0, next.1);
                 prev = next;
                 i = j;
-                let sj = unsafe { sections.get_unchecked(j) };
-                // Flat where the light barely moves along the quad: a
-                // Gouraud quad costs the GPU four times the setup and twice
-                // the fill. Shaded where it does move, in the goal pools and
-                // down a long far step, or the chalk steps visibly from quad
-                // to quad.
-                let (c0, c1) = (s.c, sj.c);
-                let dif = |u: u8, v: u8| (u as i32 - v as i32).abs();
-                let flat =
-                    dif(c0.0, c1.0).max(dif(c0.1, c1.1)).max(dif(c0.2, c1.2)) <= LINE_FLAT_SPREAD;
-                let behind = [a.sz, b.sz, cc.sz, dd.sz]
-                    .iter()
-                    .filter(|&&z| !projects_true(z as i32))
-                    .count();
-                let sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
-                if behind == 4 {
-                    continue;
-                }
-                if behind > 0 || !gpu_draws_whole(&sp) {
-                    // The cut beside the camera, too near to draw whole: the
-                    // pitch's edge line drops out there and leaves a wedge of
-                    // sky along the foot of the wall. See `queue_pieces`.
-                    if behind > 0 || quad_overlaps_view(&sp) {
-                        let at = |p: (i16, i16)| (p.0 as i32, 0, p.1 as i32);
-                        self.queue_pieces(
-                            [at(s.a), at(s.b), at(sj.a), at(sj.b)],
-                            [(0, 0); 4],
-                            [rgbc(c0), rgbc(c0), rgbc(c1), rgbc(c1)],
-                            Pieces::Line { flat },
-                        );
-                    }
+                if a.sz == 0 || b.sz == 0 || cc.sz == 0 || dd.sz == 0 {
                     continue;
                 }
                 let min_x = a.sx.min(b.sx).min(cc.sx).min(dd.sx);
@@ -5067,7 +5048,15 @@ impl Builder<'_> {
                     continue;
                 }
                 count_kept!();
-                if !flat {
+                // Flat where the light barely moves along the quad: a
+                // Gouraud quad costs the GPU four times the setup and twice
+                // the fill. Shaded where it does move, in the goal pools and
+                // down a long far step, or the chalk steps visibly from quad
+                // to quad.
+                let sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
+                let (c0, c1) = (s.c, unsafe { sections.get_unchecked(j) }.c);
+                let dif = |u: u8, v: u8| (u as i32 - v as i32).abs();
+                if dif(c0.0, c1.0).max(dif(c0.1, c1.1)).max(dif(c0.2, c1.2)) > LINE_FLAT_SPREAD {
                     if let Some(quad) = self.arena.push(QuadGouraud::new(sp, [c0, c0, c1, c1])) {
                         self.ot.add_packet(LINE_SLOT, quad);
                     } else {
@@ -5627,6 +5616,8 @@ impl Builder<'_> {
             return;
         }
         let profile = unsafe { &WALL_PROFILE };
+        // See `near_sz`: split screen alone draws the near quads the GPU drops.
+        let (split, near_z) = (split_view(), near_sz());
         // Same distance bands as the floor. A wall is the surface you see at
         // the most glancing angle of anything in here, because you drive along
         // it, so it warps for exactly the same reason and takes the same fix.
@@ -5739,7 +5730,7 @@ impl Builder<'_> {
                     ((nx * pk.0) >> 12, (nz * pk.0) >> 12, pk.1)
                 };
                 let v = project(Vec3I16::new((x0 + ox) as i16, -height as i16, (z0 + oz) as i16));
-                upper[k] = if projects_true(v.sz as i32) {
+                upper[k] = if v.sz as i32 > near_z {
                     Some((v.sx, v.sy, v.sz as i32))
                 } else {
                     None
@@ -5765,10 +5756,11 @@ impl Builder<'_> {
                         if !quad_overlaps_view(&sp) {
                             continue;
                         }
-                        gpu_draws_whole(&sp).then_some((sp, a.2 + b.2 + c.2 + d.2))
+                        (!split || gpu_draws_whole(&sp)).then_some((sp, a.2 + b.2 + c.2 + d.2))
                     }
                     (None, None, None, None) => continue,
-                    _ => None,
+                    _ if split => None,
+                    _ => continue,
                 };
                 count_kept!();
                 // The wall tile starts at texel 64 now that grass owns the
@@ -5814,7 +5806,7 @@ impl Builder<'_> {
                             sz[col] + ((cnz[col] * pk.0) >> 12),
                         )
                     };
-                    self.queue_pieces(
+                    Self::queue_pieces(
                         [
                             point(k, ri),
                             point(k + 1, ri),
