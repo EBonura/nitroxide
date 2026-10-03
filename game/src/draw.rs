@@ -769,12 +769,7 @@ const CORNER_X: i32 = sim::CORNER - sim::HALF_Z; // 2944
 // + pads(34, up to 4 each now that each stands on a two-ring plate), with slack.
 // The pads were never in this tally and the plate pushed them past the old 448.
 // The pitch markings add the quads they shade (see LINE_FLAT_SPREAD).
-const MAX_QUADS: usize = 576 + 48 + FX_QUADS;
-/// Room for the prototype tyre tracks: every point of every wheel joined.
-#[cfg(feature = "fx-tracks")]
-const FX_QUADS: usize = TRACK_WHEELS * TRACK_LEN;
-#[cfg(not(feature = "fx-tracks"))]
-const FX_QUADS: usize = 0;
+const MAX_QUADS: usize = 576 + 48;
 
 /// GP0 polygon-command bit 25: blend this primitive with what is already in
 /// the framebuffer instead of overwriting it.
@@ -806,51 +801,6 @@ const BALL_DISC_TINT: Rgb = (84, 94, 76);
 /// pixel of chord error each. Twelve sides cost two more quads to remove
 /// something already invisible.
 const SHADOW_SIDES: usize = 8;
-
-/// How many pieces an explosion throws, how long they last in ticks, how fast
-/// they leave in uu a tick, how big they start in uu, and what pulls them back
-/// down in uu per tick squared, Q8.
-///
-/// The gravity is not the arena's. Debris under 650 uu/s^2 barely moves in the
-/// half second it is alive; this is the value that makes sixteen pieces read as
-/// thrown rather than as drifting.
-/// How much bigger a goal explosion is than a demolition. The camera stays
-/// behind your car through the celebration, so the blast is most of an arena
-/// away and at life size it is a few pixels of confetti.
-const GOAL_BURST_SCALE: i32 = 4096 * 7 / 2;
-
-/// The flash: how long it lasts in ticks and how wide it gets in uu.
-const FLASH_LIFE: i32 = 8;
-const FLASH_R: i32 = 70;
-/// Screen half-size ceilings, in pixels, for the two soft layers. A blast goes
-/// off under the bumper of the car that caused it, so perspective alone will
-/// hand either of them the whole frame if it is allowed to.
-const FLASH_MAX_PX: i16 = 26;
-const SMOKE_MAX_PX: i16 = 16;
-/// Sparks: how many, how long each lives, how fast it leaves in uu a tick,
-/// how thick its streak is in uu, and how far back the streak reaches.
-const SPARK_COUNT: i32 = 18;
-const SPARK_LIFE: i32 = 30;
-const SPARK_SPEED: i32 = 26;
-const SPARK_W: i32 = 6;
-/// The fire half of the spray: brighter, faster, thinner, and over in a fifth
-/// of a second.
-const FIRE_LIFE: i32 = 13;
-const FIRE_SPEED: i32 = 46;
-const FIRE_W: i32 = 5;
-const STREAK_TICKS: i32 = 3;
-/// Screen ceilings for one streak, across and along, in pixels.
-const STREAK_MAX_PX: i32 = 5;
-const STREAK_MAX_LEN: i32 = 26;
-/// Smoke: how many puffs, how fast they drift out and up in uu a tick, and
-/// how big they start and grow in uu.
-const SMOKE_COUNT: i32 = 9;
-const SMOKE_SPEED: i32 = 5;
-const SMOKE_RISE: i32 = 26;
-const SMOKE_R: i32 = 12;
-const SMOKE_GROW: i32 = 13;
-const BURST_LIFE: i32 = 40;
-const BURST_GRAVITY: i32 = 128;
 
 // ---- the light rig ---------------------------------------------------------
 //
@@ -2284,7 +2234,8 @@ static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; SET_COUNT] = [QUADS_INIT; SET_
 /// and, per pad, the two plates and the far orb's one diamond. A flat quad
 /// costs the GPU a quarter of a Gouraud one's setup and half its fill, so
 /// nothing that is one colour anyway pays for shading.
-const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS + 3 * sim::PADS.len();
+/// The tyre tracks add one flat quad per joined pair of points, at most.
+const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS + 3 * sim::PADS.len() + TRACK_WHEELS * TRACK_LEN;
 static mut FLAT_QUADS_SETS: [[QuadFlat; MAX_FLAT_QUADS]; SET_COUNT] = [FLAT_QUADS_INIT; SET_COUNT];
 const FLAT_QUADS_INIT: [QuadFlat; MAX_FLAT_QUADS] =
     [const { QuadFlat::new([(0, 0); 4], 0, 0, 0) }; MAX_FLAT_QUADS];
@@ -2323,13 +2274,9 @@ struct GlowQuad {
 const GLOW_WORDS: u8 = 14;
 const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
 /// Goal halos (four a goal, eight with both goals in view), the ball's disc,
-/// and its hoop at up to sixteen segments of two quads: 41 at most.
-#[cfg(not(feature = "fx-v2"))]
-const MAX_GLOWS: usize = 64;
-/// The prototype explosion draws its fire, sparks, smoke and ring as glows:
-/// up to 34 a blast, and a goal and a demolition can overlap.
-#[cfg(feature = "fx-v2")]
-const MAX_GLOWS: usize = 128;
+/// and its hoop at up to sixteen segments of two quads: 41 at most. An
+/// explosion is up to 34 more, and a goal and a demolition can overlap.
+const MAX_GLOWS: usize = 112;
 static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; SET_COUNT] = [GLOW_INIT; SET_COUNT];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
     GlowQuad {
@@ -5340,258 +5287,6 @@ impl Builder<'_> {
         }
     }
 
-    /// The goal celebration: a shockwave ring off the ball and a wash of the
-    /// scoring team's colour over the whole screen, both fading out.
-    ///
-    /// Drawn only while the world is frozen after a goal, so it costs nothing
-    /// during play. The ring is built from the same wedge trick the turntable
-    /// uses, expanded by how long ago the goal went in.
-    /// One piece of debris, as a screen-space streak from where it was to
-    /// where it is.
-    ///
-    /// A square is the wrong shape for something moving fast: sixteen of them
-    /// read as confetti, whichever way they are flying. Stretching each piece
-    /// along its own travel is what makes it debris, and it costs a second
-    /// projection rather than any state.
-    fn streak(
-        &mut self,
-        head: (i32, i32, i32),
-        tail: (i32, i32, i32),
-        w: i32,
-        hot: Rgb,
-        cold: Rgb,
-    ) {
-        let h = project(Vec3I16::new(head.0 as i16, head.1 as i16, head.2 as i16));
-        let t = project(Vec3I16::new(tail.0 as i16, tail.1 as i16, tail.2 as i16));
-        if h.sz == 0 || t.sz == 0 || !on_view(h.sx, h.sy) {
-            return;
-        }
-        // Width in pixels, from a width in uu at the head's depth, never less
-        // than the pixel it would otherwise round away to.
-        let half = ((w * PROJ_H as i32 / h.sz.max(1) as i32).max(1)).min(STREAK_MAX_PX) as i16;
-        let (mut dx, mut dy) = (h.sx as i32 - t.sx as i32, h.sy as i32 - t.sy as i32);
-        // And a ceiling on the length as well as the width. A piece thrown
-        // past the lens covers most of the screen in three ticks, and a streak
-        // that long stops reading as speed and starts reading as a plank.
-        let mut len = isqrt_i32(dx * dx + dy * dy).max(1);
-        if len > STREAK_MAX_LEN {
-            dx = dx * STREAK_MAX_LEN / len;
-            dy = dy * STREAK_MAX_LEN / len;
-            len = STREAK_MAX_LEN;
-        }
-        let (tx, ty) = ((h.sx as i32 - dx) as i16, (h.sy as i32 - dy) as i16);
-        // Across the streak, so the quad has thickness whichever way it points.
-        let (px, py) = (
-            (-dy * half as i32 / len) as i16,
-            (dx * half as i32 / len) as i16,
-        );
-        // A degenerate streak still wants to be visible, so a piece that has
-        // barely moved falls back to a square.
-        let (px, py) = if px == 0 && py == 0 {
-            (half, 0)
-        } else {
-            (px, py)
-        };
-        self.emit(
-            [
-                (h.sx + px, h.sy + py),
-                (h.sx - px, h.sy - py),
-                (tx + px, ty + py),
-                (tx - px, ty - py),
-            ],
-            h.sz as i32,
-            [hot, hot, cold, cold],
-        );
-    }
-
-    /// A burst of debris thrown out of `origin`, its whole flight a function of
-    /// `age` alone.
-    ///
-    /// Stateless on purpose. There is no particle pool and nothing to update:
-    /// each piece's position is computed from its index and the tick count, so
-    /// a split frame draws the same explosion twice from two cameras without
-    /// either pass advancing it, and a dropped frame does not lose a piece.
-    /// The cost of that is that the pieces cannot collide or be disturbed,
-    /// which nothing here wants them to do.
-    ///
-    /// Three layers, because one is not an explosion. A flash that is over
-    /// almost before you see it, sparks that fly and fall, and smoke that
-    /// outlives both and drifts up. Everything is camera-facing: a flat quad
-    /// in the world disappears when you see it edge on, and at this size that
-    /// is most of the time.
-    /// `scale` is Q12 and multiplies every distance: a demolition happens
-    /// under your bumper and wants life size, a goal happens at the far end of
-    /// the arena where life size is four pixels.
-    fn burst(&mut self, origin: (i32, i32, i32), age: i32, colour: Rgb, scale: i32) {
-        #[cfg(feature = "fx-v2")]
-        {
-            self.burst_v2(origin, age, colour, scale);
-            return;
-        }
-        #[allow(unreachable_code)]
-        if !(0..BURST_LIFE).contains(&age) {
-            return;
-        }
-        // Halved in a split pass, the same trade the floor and the walls make:
-        // the effect keeps its shape with half the pieces, and a split frame
-        // draws it twice.
-        let half_detail = split_view();
-
-        // The flash. Two quads, a wide dim one under a small white one, both
-        // growing fast and gone in a fifth of a second. This is what reads as
-        // the bang; everything after it is the aftermath.
-        if age < FLASH_LIFE {
-            let grow = (age + 2) * 4096 / FLASH_LIFE;
-            let fade = (FLASH_LIFE - age) * 4096 / FLASH_LIFE;
-            for (r, tint) in [
-                (
-                    (FLASH_R * scale >> 12) * grow >> 12,
-                    mix(colour, (255, 236, 170), 10),
-                ),
-                ((FLASH_R * scale >> 12) * grow >> 13, (255, 250, 226)),
-            ] {
-                let v = project(Vec3I16::new(
-                    origin.0 as i16,
-                    origin.1 as i16,
-                    origin.2 as i16,
-                ));
-                if v.sz == 0 || !on_view(v.sx, v.sy) {
-                    continue;
-                }
-                let h = ((r * PROJ_H as i32 / v.sz.max(1) as i32).max(1) as i16).min(FLASH_MAX_PX);
-                let c = shade(tint, fade, 4096);
-                // Blended, not opaque. A flat quad this size laid over the
-                // pitch is a hole in the picture; averaged with what is behind
-                // it, it is light.
-                self.emit_blended(
-                    [
-                        (v.sx - h, v.sy - h),
-                        (v.sx + h, v.sy - h),
-                        (v.sx - h, v.sy + h),
-                        (v.sx + h, v.sy + h),
-                    ],
-                    v.sz as i32,
-                    [c; 4],
-                );
-            }
-        }
-
-        // Sparks. Fast, thrown out on a spread of headings, pulled down hard,
-        // and burning from white through the team colour as they go.
-        let sparks = if half_detail {
-            SPARK_COUNT / 2
-        } else {
-            SPARK_COUNT
-        };
-        for i in 0..sparks {
-            // Two kinds in one loop. Every other piece is fire: bright, quick,
-            // and gone before the smoke arrives. The rest is debris, which
-            // leaves slower, stays the colour of the car it came off, and is
-            // still falling when the fire has burnt out. One layer doing both
-            // jobs is what made this read as tumbling wood.
-            let fire = i & 1 == 0;
-            let life = if fire { FIRE_LIFE } else { SPARK_LIFE };
-            let born = (i * 3) % 5;
-            if age < born || age - born >= life {
-                continue;
-            }
-            let t = age - born;
-            let left = life - t;
-            // Spread from the index rather than a table: a ring of headings
-            // with an elevation that walks around it, which at this many
-            // pieces is indistinguishable from a scattered one and costs no
-            // bytes.
-            let yaw = ((4096 * i / sparks) + ((i * 1013) & 255)) as u16;
-            let elev = (((i * 577) & 1023) + 128) as u16;
-            let (ce, se) = (cos_q12(elev), sin_q12(elev));
-            let dir = ((sin_q12(yaw) * ce) >> 12, se, (cos_q12(yaw) * ce) >> 12);
-            // Slower pieces near the middle, so the cloud has a front and a
-            // tail instead of being one expanding shell.
-            let speed =
-                ((if fire { FIRE_SPEED } else { SPARK_SPEED } - ((i * 7) & 15)) * scale) >> 12;
-            let at = |t: i32| {
-                // Eased out rather than linear: a blast throws everything at
-                // once and the air takes it back, so the spread is nearly all
-                // in the first few ticks. Travelling at a constant rate for a
-                // third of a second is what a firework does, not an explosion.
-                let travel = speed * t * ((2 * life) - t) / (2 * life);
-                let drop = (t * t * BURST_GRAVITY) >> 8;
-                (
-                    origin.0 + ((dir.0 * travel) >> 12),
-                    // Render space has +Y down, so rising is negative and the
-                    // gravity term is what brings a piece back.
-                    origin.1 - ((dir.1 * travel) >> 12) + drop,
-                    origin.2 + ((dir.2 * travel) >> 12),
-                )
-            };
-            // Held bright for most of the flight and dropped only over the
-            // last third. Fading linearly from the first tick turned every
-            // spark brown before it had gone anywhere.
-            let fade = (left * 3).min(life);
-            let hot = if fire {
-                // Fire runs white to the team colour over its short life, so
-                // the first frames of a blast are light rather than paint.
-                shade(mix(colour, (255, 248, 226), 14 * left / life), fade, life)
-            } else {
-                shade(mix(colour, (40, 36, 36), 8), fade, life)
-            };
-            self.streak(
-                at(t),
-                at((t - STREAK_TICKS).max(0)),
-                ((if fire { FIRE_W } else { SPARK_W }) * scale) >> 12,
-                hot,
-                shade(hot, 1, 3),
-            );
-        }
-
-        // Smoke. Slow, rising, growing rather than shrinking, and outliving
-        // the sparks so the explosion has something left after the light has
-        // gone out of it.
-        let puffs = if half_detail {
-            SMOKE_COUNT / 2
-        } else {
-            SMOKE_COUNT
-        };
-        for i in 0..puffs {
-            let born = i * 2;
-            if age < born {
-                continue;
-            }
-            let t = age - born;
-            let left = (BURST_LIFE - born - t).max(0);
-            if left == 0 {
-                continue;
-            }
-            let yaw = ((4096 * i / puffs) + 400) as u16;
-            let travel = ((SMOKE_SPEED * scale) >> 12) * t;
-            let p = (
-                origin.0 + ((sin_q12(yaw) * travel) >> 12),
-                origin.1 - ((SMOKE_RISE * scale) >> 12) * t / 8,
-                origin.2 + ((cos_q12(yaw) * travel) >> 12),
-            );
-            let v = project(Vec3I16::new(p.0 as i16, p.1 as i16, p.2 as i16));
-            if v.sz == 0 || !on_view(v.sx, v.sy) {
-                continue;
-            }
-            let r = ((SMOKE_R + SMOKE_GROW * t / 8) * scale) >> 12;
-            let h = ((r * PROJ_H as i32 / v.sz.max(1) as i32).max(1) as i16).min(SMOKE_MAX_PX);
-            // Dark and getting darker, so it settles into the pitch instead of
-            // ending as a grey square that suddenly is not there. Blended for
-            // the same reason as the flash: opaque smoke is a grey box.
-            let c = shade((132, 128, 132), left * left / (BURST_LIFE / 2), BURST_LIFE);
-            self.emit_blended(
-                [
-                    (v.sx - h, v.sy - h),
-                    (v.sx + h, v.sy - h),
-                    (v.sx - h, v.sy + h),
-                    (v.sx + h, v.sy + h),
-                ],
-                v.sz as i32,
-                [c; 4],
-            );
-        }
-    }
-
     /// The explosion a demolished car leaves behind, at the point of contact.
     ///
     /// The sim keeps a wreck where it was hit until its timer runs out, so the
@@ -5612,57 +5307,21 @@ impl Builder<'_> {
         }
     }
 
+    /// The goal celebration: the explosion between the posts, team coloured,
+    /// for as long as the world is frozen after a goal.
     fn goal_burst(&mut self, s: &Sim) {
         if s.goal_freeze == 0 {
             return;
         }
-        const SEGS: usize = 10;
         // Ticks since the goal, counting up from zero.
         let age = (sim::GOAL_FREEZE_TICKS - s.goal_freeze) as i32;
         let team = match s.last_scorer {
             sim::Team::Blue => seat_signal(0),
             sim::Team::Orange => seat_signal(1),
         };
-
-        // No full-screen wash. A quad at the front of the ordering table is
-        // opaque on this hardware, so it does not tint the frame, it replaces
-        // it: the first version blacked the screen out for forty-five ticks.
-        // Doing it properly needs a semi-transparent primitive, and the
-        // shockwave alone reads well enough that it can wait.
-
-        // Shockwave: a ring on the floor under the ball, expanding and fading.
-        // The prototype explosion carries its own ring.
-        if age < 70 && !cfg!(feature = "fx-v2") {
-            let radius = 120 + age * 26;
-            let fade = (70 - age) * 4096 / 70;
-            let c = shade(team, fade, 4096);
-            let (bx, bz) = (r(s.ball.p.x), r(s.ball.p.z));
-            for i in 0..SEGS {
-                let a0 = (4096 * i as i32 / SEGS as i32) as u16;
-                let a1 = (4096 * (i as i32 + 1) / SEGS as i32) as u16;
-                let p = |a: u16, rad: i32| {
-                    (
-                        bx + ((sin_q12(a) * rad) >> 12),
-                        -5,
-                        bz + ((cos_q12(a) * rad) >> 12),
-                    )
-                };
-                self.quad_biased(
-                    [
-                        p(a0, radius - 40),
-                        p(a0, radius),
-                        p(a1, radius - 40),
-                        p(a1, radius),
-                    ],
-                    [c; 4],
-                    -80,
-                );
-            }
-        }
-        // And the debris, between the posts, where the original detonates it
-        // rather than at whoever scored. On the goal line, not at the ball:
-        // the ball carries on into the back of the net, and an explosion in
-        // there happens behind the mesh where none of it can be seen.
+        // On the goal line, not at the ball: the ball carries on into the
+        // back of the net, and an explosion in there happens behind the mesh
+        // where none of it can be seen.
         self.burst(
             (
                 r(s.ball.p.x),
@@ -5671,11 +5330,7 @@ impl Builder<'_> {
             ),
             age,
             team,
-            if cfg!(feature = "fx-v2") {
-                GOAL_BURST_SCALE_V2
-            } else {
-                GOAL_BURST_SCALE
-            },
+            GOAL_BURST_SCALE,
         );
     }
 
@@ -7675,8 +7330,7 @@ fn build_view(
                     b.floor::<false>(&cull);
                 }
                 b.lines(&cull);
-                #[cfg(feature = "fx-tracks")]
-                b.tracks();
+                b.tracks(&cull);
             });
             b.draw_pieces(&cull);
         });
@@ -7785,51 +7439,55 @@ fn submit_detached() {
     });
 }
 
-// ---- tyre tracks (prototype, `fx-tracks`) ----------------------------------
+// ---- tyre tracks -----------------------------------------------------------
 //
 // A ring of floor points per rear wheel, laid by the sim tick while a wheel is
 // sliding, and drawn as a strip of thin quads that darken the pitch. Drawn in
 // their own slot just in front of the markings: the pitch is not depth-sorted,
 // so nothing that lies on it can z-fight it, and everything standing on the
 // pitch draws after the tracks.
+//
+// Paid for per chunk of four points rather than per point. Each chunk keeps
+// the box its points (and the point before it, which its first segment starts
+// from) cover, so a chunk behind the camera, off to the side or past the far
+// fade costs one box test; a kept chunk projects its points three vertices to
+// an RTPT.
 
 /// Points kept per wheel. The oldest is overwritten first.
-#[cfg(feature = "fx-tracks")]
-const TRACK_LEN: usize = 24;
+const TRACK_LEN: usize = 16;
+/// Points per culling chunk, and chunks per wheel.
+const TRACK_CHUNK: usize = 4;
+const TRACK_CHUNKS: usize = TRACK_LEN / TRACK_CHUNK;
 /// Two cars, two rear wheels each.
-#[cfg(feature = "fx-tracks")]
 const TRACK_WHEELS: usize = 4;
-/// How far a wheel travels, in uu, between two points of its track.
-#[cfg(feature = "fx-tracks")]
-const TRACK_STEP: i32 = 48;
+/// How far a wheel travels, in uu, between two points of its track. Long,
+/// because a mark is drawn a segment at a time and a 128 uu chord of a
+/// powerslide arc sits under a pixel from the arc itself; the gap it would
+/// leave behind the tyre is closed by a live segment to where the wheel is.
+const TRACK_STEP: i32 = 128;
 /// Past this a wheel has been teleported (kickoff, respawn), not driven.
-#[cfg(feature = "fx-tracks")]
 const TRACK_JUMP: i32 = 400;
 /// Ticks a point lives, and how many of them it spends fading out.
-#[cfg(feature = "fx-tracks")]
 const TRACK_LIFE: u16 = 360;
-#[cfg(feature = "fx-tracks")]
 const TRACK_FADE: u16 = 180;
+/// Camera depth, in uu, at which a mark starts to fade, and past which it is
+/// gone. Past the fade a mark is under two pixels wide: the fade is so that
+/// it leaves gradually rather than at a line.
+const TRACK_NEAR: i32 = 2600;
+const TRACK_FAR: i32 = 3800;
 /// Half the width of one tyre's mark, in uu.
-#[cfg(feature = "fx-tracks")]
 const TRACK_HALF_W: i32 = 12;
 /// Where the rear wheels touch the pitch, from the car's centre, in uu.
-#[cfg(feature = "fx-tracks")]
 const TRACK_AXLE_Z: i32 = -50;
-#[cfg(feature = "fx-tracks")]
 const TRACK_WHEEL_X: i32 = 44;
 /// Sideways speed, in sim sub-units a tick, past which a tyre is scrubbing.
 /// About 250 uu/s.
-#[cfg(feature = "fx-tracks")]
 const TRACK_SLIP: i32 = 260;
 /// How dark a fresh mark is: subtracted from the pitch.
-#[cfg(feature = "fx-tracks")]
 const TRACK_DARK: Rgb = (46, 50, 42);
 /// The track slot: one in front of the markings.
-#[cfg(feature = "fx-tracks")]
 const TRACK_SLOT: usize = LINE_SLOT - 1;
 
-#[cfg(feature = "fx-tracks")]
 #[derive(Clone, Copy)]
 struct TrackPoint {
     /// The two edges of the mark, in render uu on the floor plane.
@@ -7841,76 +7499,135 @@ struct TrackPoint {
     joined: bool,
 }
 
-#[cfg(feature = "fx-tracks")]
+const TRACK_POINT_NONE: TrackPoint = TrackPoint {
+    l: (0, 0),
+    r: (0, 0),
+    born: 0,
+    joined: false,
+};
+
 #[derive(Clone, Copy)]
 struct TrackRing {
     pts: [TrackPoint; TRACK_LEN],
+    /// Per chunk: the floor box (min x, min z, max x, max z) of its points
+    /// and of the point before it, or `None` while it holds no point.
+    boxes: [Option<(i16, i16, i16, i16)>; TRACK_CHUNKS],
+    /// Per chunk: when its newest point was laid. Once that is older than
+    /// a mark lives, the whole chunk is skipped without a box test.
+    newest: [u16; TRACK_CHUNKS],
+    /// Bit `c` set while chunk `c` has a box: a wheel with nothing on the
+    /// pitch costs the renderer one test.
+    chunks: u8,
     /// Next slot to write.
     head: u8,
     /// Whether the wheel was marking at its last point.
     open: bool,
     /// The wheel's position at its last point.
     last: (i16, i16),
+    /// Where the tyre is now, as the edges of a mark, while it is marking
+    /// and has not yet gone far enough for its next point.
+    live: Option<((i16, i16), (i16, i16))>,
 }
 
-#[cfg(feature = "fx-tracks")]
+impl TrackRing {
+    /// Rebuild chunk `c`'s box from its points and the one before it.
+    fn rebox(&mut self, c: usize) {
+        let mut b: Option<(i16, i16, i16, i16)> = None;
+        for k in 0..=TRACK_CHUNK {
+            let slot = (c * TRACK_CHUNK + TRACK_LEN + k - 1) % TRACK_LEN;
+            let p = &self.pts[slot];
+            if p.born == 0 {
+                continue;
+            }
+            for (x, z) in [p.l, p.r] {
+                b = Some(match b {
+                    None => (x, z, x, z),
+                    Some((x0, z0, x1, z1)) => (x0.min(x), z0.min(z), x1.max(x), z1.max(z)),
+                });
+            }
+        }
+        self.boxes[c] = b;
+        if b.is_some() {
+            self.chunks |= 1 << c;
+        } else {
+            self.chunks &= !(1 << c);
+        }
+    }
+
+    /// Forget every chunk whose newest point has outlived a mark, points and
+    /// all. Nothing is left to draw there, and a `born` left behind would
+    /// come back to life when the 16-bit clock wraps.
+    fn expire(&mut self, clock: u16) {
+        for c in 0..TRACK_CHUNKS {
+            if self.chunks & (1 << c) != 0 && clock.wrapping_sub(self.newest[c]) >= TRACK_LIFE {
+                self.boxes[c] = None;
+                self.chunks &= !(1 << c);
+                for p in &mut self.pts[c * TRACK_CHUNK..(c + 1) * TRACK_CHUNK] {
+                    p.born = 0;
+                }
+            }
+        }
+    }
+}
+
 static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TrackRing {
-    pts: [TrackPoint {
-        l: (0, 0),
-        r: (0, 0),
-        born: 0,
-        joined: false,
-    }; TRACK_LEN],
+    pts: [TRACK_POINT_NONE; TRACK_LEN],
+    boxes: [None; TRACK_CHUNKS],
+    newest: [0; TRACK_CHUNKS],
+    chunks: 0,
     head: 0,
     open: false,
     last: (0, 0),
+    live: None,
 }; TRACK_WHEELS];
 /// Ticks since boot, from 1, so a `born` of 0 can mean "never".
-#[cfg(feature = "fx-tracks")]
 static mut TRACK_CLOCK: u16 = 1;
+
+/// One chunk's vertices on their way through the GTE: two edges per point,
+/// for the chunk's points and the one before it.
+const TRACK_VERTS: usize = (TRACK_CHUNK + 1) * 2;
 
 /// A draw-mode word as an ordering-table packet: the tracks switch the GPU to
 /// subtractive blending in front of themselves and back to the arena's
 /// average behind themselves.
-#[cfg(feature = "fx-tracks")]
 #[repr(C, align(4))]
 struct ModePacket {
     tag: u32,
     word: u32,
 }
-#[cfg(feature = "fx-tracks")]
 static mut TRACK_MODE_ON: [ModePacket; SET_COUNT] =
     [const { ModePacket { tag: 0, word: 0 } }; SET_COUNT];
-#[cfg(feature = "fx-tracks")]
 static mut TRACK_MODE_OFF: [ModePacket; SET_COUNT] =
     [const { ModePacket { tag: 0, word: 0 } }; SET_COUNT];
-#[cfg(feature = "fx-tracks")]
 const TRACK_MODE_WORD: u32 = ARENA_MATERIAL
     .with_blend_mode(BlendMode::Subtract)
     .draw_mode_word();
 
 /// Advance the tracks one sim tick: lay a point under every rear wheel that
 /// is scrubbing and has moved far enough since its last one.
-#[cfg(feature = "fx-tracks")]
 pub fn track_tick(s: &Sim) {
     let clock = unsafe {
         TRACK_CLOCK = TRACK_CLOCK.wrapping_add(1).max(1);
         TRACK_CLOCK
     };
+    // One wheel a tick: a chunk outlives its marks by three ticks at most,
+    // which the per-point age test already hides.
+    unsafe { TRACKS[clock as usize % TRACK_WHEELS].expire(clock) };
     for (c, car) in [&s.car, &s.opponent].into_iter().enumerate() {
-        let (fx, fz) = sim::heading(car.yaw);
+        // On the floor and in play, before anything is worked out: most
+        // ticks most cars are not sliding.
+        let on_floor = car.grounded && !car.wrecked() && car.up.y > 3900;
+        let (fx, fz) = if on_floor { sim::heading(car.yaw) } else { (0, 0) };
         // Right of the nose, on the floor.
         let (rx, rz) = (fz, -fx);
-        let slip = ((car.v.x * rx + car.v.z * rz) >> 12).abs();
-        let marking = car.grounded
-            && !car.wrecked()
-            && car.up.y > 3900
-            && (slip > TRACK_SLIP || car.slide > 512);
+        let marking = on_floor
+            && (car.slide > 512 || ((car.v.x * rx + car.v.z * rz) >> 12).abs() > TRACK_SLIP);
         let (cx, cz) = (r(car.p.x), r(car.p.z));
         for (w, side) in [-1i32, 1].into_iter().enumerate() {
             let ring = unsafe { &mut TRACKS[c * 2 + w] };
             if !marking {
                 ring.open = false;
+                ring.live = None;
                 continue;
             }
             let ox = side * TRACK_WHEEL_X;
@@ -7918,18 +7635,31 @@ pub fn track_tick(s: &Sim) {
             let pz = cz + ((rz * ox + fz * TRACK_AXLE_Z) >> 12);
             let (dx, dz) = (px - ring.last.0 as i32, pz - ring.last.1 as i32);
             let d = dx.abs().max(dz.abs());
+            let (hx, hz) = ((rx * TRACK_HALF_W) >> 12, (rz * TRACK_HALF_W) >> 12);
+            let edges = (
+                ((px - hx) as i16, (pz - hz) as i16),
+                ((px + hx) as i16, (pz + hz) as i16),
+            );
             if ring.open && d < TRACK_STEP {
+                ring.live = Some(edges);
                 continue;
             }
+            ring.live = None;
             let joined = ring.open && d < TRACK_JUMP;
-            let (hx, hz) = ((rx * TRACK_HALF_W) >> 12, (rz * TRACK_HALF_W) >> 12);
             let slot = ring.head as usize;
             ring.pts[slot] = TrackPoint {
-                l: ((px - hx) as i16, (pz - hz) as i16),
-                r: ((px + hx) as i16, (pz + hz) as i16),
+                l: edges.0,
+                r: edges.1,
                 born: clock,
                 joined,
             };
+            // The slot's own chunk, and the next one when this is the point
+            // that chunk's first segment starts from.
+            ring.newest[slot / TRACK_CHUNK] = clock;
+            ring.rebox(slot / TRACK_CHUNK);
+            if slot % TRACK_CHUNK == TRACK_CHUNK - 1 {
+                ring.rebox((slot / TRACK_CHUNK + 1) % TRACK_CHUNKS);
+            }
             ring.head = ((slot + 1) % TRACK_LEN) as u8;
             ring.open = true;
             ring.last = (px as i16, pz as i16);
@@ -7937,65 +7667,190 @@ pub fn track_tick(s: &Sim) {
     }
 }
 
-#[cfg(feature = "fx-tracks")]
+/// How dark a mark of age `age` is at camera depth `sz`: the age fade times
+/// the distance fade.
+fn track_tint(age: u16, sz: u16) -> Rgb {
+    let left = TRACK_LIFE.saturating_sub(age) as i32;
+    let by_age = left.min(TRACK_FADE as i32) * 4096 / TRACK_FADE as i32;
+    let by_depth = ((TRACK_FAR - sz as i32) * 4096 / (TRACK_FAR - TRACK_NEAR)).clamp(0, 4096);
+    shade(TRACK_DARK, (by_age * by_depth) >> 12, 4096)
+}
+
+/// Is any of a floor box `(min x, min z, max x, max z)` in this view, and
+/// nearer than the far fade? [`Cull::visible`] and
+/// [`Cull::visible_vertically`] in one pass, with the box flat on the pitch
+/// so its height terms drop out.
+fn track_box_visible(cull: &Cull, b: (i16, i16, i16, i16)) -> bool {
+    let (cx, cz) = ((b.0 as i32 + b.2 as i32) >> 1, (b.1 as i32 + b.3 as i32) >> 1);
+    let (hx, hz) = ((b.2 as i32 - b.0 as i32) >> 1, (b.3 as i32 - b.1 as i32) >> 1);
+    let d = (cx - cull.pos.0, -cull.pos.1, cz - cull.pos.2);
+    let ext = |n: [i16; 3]| ((n[0] as i32).abs() * hx + (n[2] as i32).abs() * hz) >> 12;
+    let (z, ef) = (Cull::dot(cull.fwd, d), ext(cull.fwd));
+    if z + ef <= 0 || z - ef > TRACK_FAR {
+        return false;
+    }
+    let reach = z + ef;
+    let x = Cull::dot(cull.right, d);
+    if x.abs() - ext(cull.right) > reach * cull_half_w() / PROJ_H as i32 {
+        return false;
+    }
+    let y = Cull::dot(cull.vertical, d);
+    y.abs() - ext(cull.vertical) <= reach * unsafe { VIEW_HALF_H } / PROJ_H as i32
+}
+
 impl Builder<'_> {
     /// Draw every live track as a strip of subtractive quads on the pitch.
-    fn tracks(&mut self) {
+    #[inline(never)]
+    fn tracks(&mut self, cull: &Cull) {
         let clock = unsafe { TRACK_CLOCK };
         let set = unsafe { SET };
-        // Inserted before the quads, so drawn after them: the slot prepends.
-        unsafe {
-            TRACK_MODE_OFF[set].word = GLOW_RESTORE;
-            self.ot.add(TRACK_SLOT, &mut TRACK_MODE_OFF[set], 1);
-        }
-        let mut drawn = 0;
+        let mut opened = false;
         for w in 0..TRACK_WHEELS {
             let ring = unsafe { &TRACKS[w] };
-            let head = ring.head as usize;
-            let mut prev: Option<([(i16, i16); 2], Rgb)> = None;
-            for k in 0..TRACK_LEN {
-                let p = &ring.pts[(head + k) % TRACK_LEN];
-                let age = clock.wrapping_sub(p.born);
-                if p.born == 0 || age >= TRACK_LIFE {
-                    prev = None;
+            if ring.chunks == 0 && ring.live.is_none() {
+                continue;
+            }
+            for c in 0..TRACK_CHUNKS {
+                if ring.chunks & (1 << c) == 0 {
                     continue;
                 }
-                let left = TRACK_LIFE - age;
-                let c = if left < TRACK_FADE {
-                    shade(TRACK_DARK, left as i32, TRACK_FADE as i32)
-                } else {
-                    TRACK_DARK
+                let Some((x0, z0, x1, z1)) = ring.boxes[c] else {
+                    continue;
                 };
-                let a = project(Vec3I16::new(p.l.0, 0, p.l.1));
-                let b = project(Vec3I16::new(p.r.0, 0, p.r.1));
-                if a.sz == 0 || b.sz == 0 {
-                    prev = None;
+                if !track_box_visible(cull, (x0, z0, x1, z1)) {
                     continue;
                 }
-                let here = [(a.sx, a.sy), (b.sx, b.sy)];
-                if let (true, Some((back, bc))) = (p.joined, prev) {
-                    let sp = [back[0], back[1], here[0], here[1]];
-                    if quad_overlaps_view(&sp) {
-                        if let Some(q) = self.arena.push(QuadGouraud::new(sp, [bc, bc, c, c])) {
-                            q.color0_cmd |= SEMI_TRANSPARENT;
-                            self.ot.add_packet(TRACK_SLOT, q);
-                            drawn += 1;
-                        }
+                if !opened {
+                    // Inserted before the quads, so drawn after them: the
+                    // slot prepends.
+                    unsafe {
+                        TRACK_MODE_OFF[set].word = GLOW_RESTORE;
+                        self.ot.add(TRACK_SLOT, &mut TRACK_MODE_OFF[set], 1);
                     }
+                    opened = true;
                 }
-                prev = Some((here, c));
+                self.track_chunk(w, c, clock);
+            }
+            // The live segment, from the newest point to the tyre.
+            let Some((ll, lr)) = ring.live else {
+                continue;
+            };
+            let p = &ring.pts[(ring.head as usize + TRACK_LEN - 1) % TRACK_LEN];
+            if p.born == 0 {
+                continue;
+            }
+            let (mut x0, mut z0, mut x1, mut z1) = (i16::MAX, i16::MAX, i16::MIN, i16::MIN);
+            for (x, z) in [p.l, p.r, ll, lr] {
+                (x0, x1) = (x0.min(x), x1.max(x));
+                (z0, z1) = (z0.min(z), z1.max(z));
+            }
+            if !track_box_visible(cull, (x0, z0, x1, z1)) {
+                continue;
+            }
+            let t = scene::project_triangle_scheduled(
+                Vec3I16::new(p.l.0, 0, p.l.1),
+                Vec3I16::new(p.r.0, 0, p.r.1),
+                Vec3I16::new(ll.0, 0, ll.1),
+            );
+            let e = project(Vec3I16::new(lr.0, 0, lr.1));
+            if t[0].sz == 0 || t[1].sz == 0 || t[2].sz == 0 || e.sz == 0 {
+                continue;
+            }
+            let sp = [(t[0].sx, t[0].sy), (t[1].sx, t[1].sy), (t[2].sx, t[2].sy), (e.sx, e.sy)];
+            let c = track_tint(0, e.sz);
+            if c == (0, 0, 0) || !quad_overlaps_view(&sp) {
+                continue;
+            }
+            if !opened {
+                unsafe {
+                    TRACK_MODE_OFF[set].word = GLOW_RESTORE;
+                    self.ot.add(TRACK_SLOT, &mut TRACK_MODE_OFF[set], 1);
+                }
+                opened = true;
+            }
+            if let Some(quad) = self.flats.push(QuadFlat::new(sp, c.0, c.1, c.2)) {
+                quad.color_cmd |= SEMI_TRANSPARENT;
+                self.ot.add_packet(TRACK_SLOT, quad);
             }
         }
-        if drawn > 0 {
+        if opened {
             unsafe {
                 TRACK_MODE_ON[set].word = TRACK_MODE_WORD;
                 self.ot.add(TRACK_SLOT, &mut TRACK_MODE_ON[set], 1);
             }
         }
     }
+
+    /// One chunk of one track: project its points and the one before it in
+    /// RTPT triples, then lay a quad for every joined, live pair. The
+    /// projected corners stay in this frame, which is on the scratchpad.
+    #[inline(never)]
+    fn track_chunk(&mut self, w: usize, c: usize, clock: u16) {
+        let ring = unsafe { &TRACKS[w] };
+        let first = c * TRACK_CHUNK + TRACK_LEN - 1;
+        let vert = |i: usize| {
+            let p = &ring.pts[(first + i / 2) % TRACK_LEN];
+            let (x, z) = if i & 1 == 0 { p.l } else { p.r };
+            Vec3I16::new(x, 0, z)
+        };
+        let mut sxy = [(0i16, 0i16); TRACK_VERTS];
+        let mut sz = [0u16; TRACK_VERTS];
+        let mut i = 0;
+        while i < TRACK_VERTS {
+            // The last triple repeats the final vertex rather than read past
+            // the chunk.
+            let last = TRACK_VERTS - 1;
+            let tri = scene::project_triangle_scheduled(
+                vert(i),
+                vert((i + 1).min(last)),
+                vert((i + 2).min(last)),
+            );
+            for (j, v) in tri.iter().enumerate() {
+                if i + j <= last {
+                    sxy[i + j] = (v.sx, v.sy);
+                    sz[i + j] = v.sz;
+                }
+            }
+            i += 3;
+        }
+        let head = ring.head as usize;
+        // One shade for the chunk, from its newest point and its middle
+        // depth: four segments laid within a few ticks of each other fade
+        // together, and the depth fade only acts far off where a mark is a
+        // pixel or two wide. A flat quad is a quarter of a Gouraud one's
+        // setup on the GPU and a third fewer words to build.
+        let tint = track_tint(clock.wrapping_sub(ring.newest[c]), sz[TRACK_VERTS / 2]);
+        if tint == (0, 0, 0) {
+            return;
+        }
+        for k in 1..=TRACK_CHUNK {
+            let slot = (first + k) % TRACK_LEN;
+            let p = &ring.pts[slot];
+            // The oldest point's predecessor is the newest one.
+            if !p.joined || slot == head {
+                continue;
+            }
+            let q = &ring.pts[(first + k - 1) % TRACK_LEN];
+            let (age_p, age_q) = (clock.wrapping_sub(p.born), clock.wrapping_sub(q.born));
+            if p.born == 0 || q.born == 0 || age_p >= TRACK_LIFE || age_q >= TRACK_LIFE {
+                continue;
+            }
+            let (n0, n1) = (2 * k - 2, 2 * k);
+            if sz[n0] == 0 || sz[n0 + 1] == 0 || sz[n1] == 0 || sz[n1 + 1] == 0 {
+                continue;
+            }
+            // No per-segment view test: the chunk passed the frustum, and a
+            // segment hanging off the edge is the GPU's to clip.
+            let sp = [sxy[n0], sxy[n0 + 1], sxy[n1], sxy[n1 + 1]];
+            if let Some(quad) = self.flats.push(QuadFlat::new(sp, tint.0, tint.1, tint.2)) {
+                quad.color_cmd |= SEMI_TRANSPARENT;
+                self.ot.add_packet(TRACK_SLOT, quad);
+            }
+        }
+    }
 }
 
-// ---- explosion v2 (prototype, `fx-v2`) -------------------------------------
+// ---- explosions ------------------------------------------------------------
 //
 // The PS1 way: every layer is a soft round sprite cut from the radial glow
 // tile already in VRAM, drawn additively (fire, flash, sparks, the ring) or
@@ -8006,46 +7861,34 @@ impl Builder<'_> {
 
 /// A goal's blast against a demolition's. The camera is most of an arena
 /// away from the net, and the original blast is goal-sized only at this.
-#[cfg(feature = "fx-v2")]
-const GOAL_BURST_SCALE_V2: i32 = 4096 * 7;
-#[cfg(not(feature = "fx-v2"))]
-const GOAL_BURST_SCALE_V2: i32 = GOAL_BURST_SCALE;
+const GOAL_BURST_SCALE: i32 = 4096 * 7;
+/// What pulls a spark back down, in uu per tick squared, Q8. Not the arena's:
+/// a spark under 650 uu/s^2 barely moves in the half second it is alive.
+const BURST_GRAVITY: i32 = 128;
 
-#[cfg(feature = "fx-v2")]
 const FX_SMOKE_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(GLOW_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_blend_mode(BlendMode::Subtract)
         .with_dither(true)
         .textured_gouraud_packet_material();
-#[cfg(feature = "fx-v2")]
 const FX_RING_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(RING_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
         .with_blend_mode(BlendMode::Add)
         .with_dither(true)
         .textured_gouraud_packet_material();
 
-#[cfg(feature = "fx-v2")]
 const FX_FLASH_LIFE: i32 = 7;
-#[cfg(feature = "fx-v2")]
 const FX_RING_LIFE: i32 = 20;
-#[cfg(feature = "fx-v2")]
 const FX_FIRE_COUNT: i32 = 10;
-#[cfg(feature = "fx-v2")]
 const FX_SPARK_COUNT: i32 = 14;
-#[cfg(feature = "fx-v2")]
 const FX_SMOKE_COUNT: i32 = 7;
-#[cfg(feature = "fx-v2")]
 const FX_SMOKE_LIFE: i32 = 56;
 /// Everything is over by this age.
-#[cfg(feature = "fx-v2")]
 const FX_LIFE: i32 = 80;
 /// White-hot, then the flame colour fire cools through.
-#[cfg(feature = "fx-v2")]
 const FX_HOT: Rgb = (255, 246, 214);
-#[cfg(feature = "fx-v2")]
 const FX_FLAME: Rgb = (240, 128, 34);
 
-#[cfg(feature = "fx-v2")]
 impl Builder<'_> {
     /// A camera-facing glow of `radius` uu, its screen half-size capped.
     #[allow(clippy::too_many_arguments)]
@@ -8115,12 +7958,17 @@ impl Builder<'_> {
         self.emit_glow(sp, h.sz as i32 - 20, Self::GLOW_UVS, [tint; 4], GLOW_PACKET);
     }
 
-    fn burst_v2(&mut self, origin: (i32, i32, i32), age: i32, colour: Rgb, scale: i32) {
+    fn burst(&mut self, origin: (i32, i32, i32), age: i32, colour: Rgb, scale: i32) {
         if !(0..FX_LIFE).contains(&age) {
             return;
         }
         let half_detail = split_view();
         let big = scale > 4096;
+        // One screen ceiling for every layer, ring and flash bloom included.
+        // Those two reach past everything else, and at twice the ceiling each
+        // was a full-screen blended quad close to the camera, where the GPU
+        // rather than the CPU then missed the frame. Further out, where a
+        // blast is normally seen, none of them is near it.
         let cap = if big { 96 } else { 64 };
         let s = |v: i32| (v * scale) >> 12;
 
@@ -8213,7 +8061,7 @@ impl Builder<'_> {
             let ease = 4096 - (((4096 - k) * (4096 - k)) >> 12);
             let radius = s(30) + ((s(210) * ease) >> 12);
             let tint = shade(mix(FX_HOT, colour, 7), (FX_RING_LIFE - age) * 3, FX_RING_LIFE * 5);
-            self.fx_sprite(origin, radius, cap * 2, tint, FX_RING_PACKET, -30);
+            self.fx_sprite(origin, radius, cap, tint, FX_RING_PACKET, -30);
         }
 
         // The flash: a white core inside a wide coloured bloom, gone in a
@@ -8225,7 +8073,7 @@ impl Builder<'_> {
             self.fx_sprite(
                 origin,
                 r0 * 2,
-                cap * 2,
+                cap,
                 shade(mix(colour, FX_HOT, 6), fade, FX_FLASH_LIFE),
                 GLOW_PACKET,
                 -40,
