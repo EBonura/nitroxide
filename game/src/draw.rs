@@ -3667,20 +3667,33 @@ fn sort_by_depth(keys: &mut [u32], lo: u32, hi: u32) -> &[u32] {
         return keys;
     }
     let spare = unsafe { &mut CAR_SORT_SPARE[..keys.len()] };
-    let mut counts = [0u16; 256];
+    // Only the buckets the depths span are cleared and read: a car is a
+    // hundred-odd uu deep, and clearing all 256 was most of the sort's own
+    // time. Every key's bucket is below `hi - lo + 1 <= 256`, and the
+    // running starts stay below `keys.len()`, so the indexing is unchecked.
+    let range = (hi - lo) as usize + 1;
+    let mut counts = core::mem::MaybeUninit::<[u16; 256]>::uninit();
+    let counts = unsafe {
+        let p = counts.as_mut_ptr() as *mut u16;
+        core::ptr::write_bytes(p, 0, range);
+        core::slice::from_raw_parts_mut(p, range)
+    };
     for &k in keys.iter() {
-        counts[((k >> 16) - lo) as usize] += 1;
+        unsafe { *counts.get_unchecked_mut(((k >> 16) - lo) as usize) += 1 };
     }
     let mut start = 0u16;
-    for c in counts[..=(hi - lo) as usize].iter_mut() {
+    for c in counts.iter_mut() {
         let n = *c;
         *c = start;
         start += n;
     }
     for &k in keys.iter() {
         let b = ((k >> 16) - lo) as usize;
-        spare[counts[b] as usize] = k;
-        counts[b] += 1;
+        unsafe {
+            let at = counts.get_unchecked_mut(b);
+            *spare.get_unchecked_mut(*at as usize) = k;
+            *at += 1;
+        }
     }
     spare
 }
@@ -4549,9 +4562,15 @@ impl Builder<'_> {
             (gx, gz + step),
             (gx + step, gz + step),
         ];
-        for (k, &(ix, iz)) in at.iter().enumerate() {
-            let (cx, cz) = unsafe { *FLOOR_POS.get_unchecked(ix).get_unchecked(iz) };
-            let p = project(Vec3I16::new(cx, 0, cz));
+        // Three corners through one RTPT and the fourth through RTPS: the
+        // same per-vertex projection, fewer GTE round trips.
+        let corner = |k: usize| {
+            let (cx, cz) = unsafe { *FLOOR_POS.get_unchecked(at[k].0).get_unchecked(at[k].1) };
+            Vec3I16::new(cx, 0, cz)
+        };
+        let t = scene::project_triangle_scheduled(corner(0), corner(1), corner(2));
+        let projected = [t[0], t[1], t[2], project(corner(3))];
+        for (k, p) in projected.iter().enumerate() {
             if p.sz as i32 <= near {
                 // A full view drops the tile, as it always did.
                 if !split {
@@ -5147,8 +5166,11 @@ impl Builder<'_> {
         // rasteriser then skips most of its columns: a solid line breaks
         // into dashes. So a cut is never closer than two pixels across.
         let cut = |s: &LineSection| {
-            let a = project(Vec3I16::new(s.a.0, 0, s.a.1));
-            let mut b = project(Vec3I16::new(s.b.0, 0, s.b.1));
+            // Both ends through one RTPT (the third slot repeats the second):
+            // the same per-vertex projection as two RTPS, one GTE wait.
+            let vb = Vec3I16::new(s.b.0, 0, s.b.1);
+            let [a, mut b, _] =
+                scene::project_triangle_scheduled(Vec3I16::new(s.a.0, 0, s.a.1), vb, vb);
             let dy = b.sy - a.sy;
             if (b.sx - a.sx).abs() < 2 && dy.abs() < 2 {
                 b.sy = a.sy + if dy < 0 { -2 } else { 2 };
