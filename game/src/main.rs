@@ -2062,7 +2062,6 @@ impl Scene for NitroXide {
                 } else {
                     self.sim.tick(&input);
                 }
-                #[cfg(feature = "fx-tracks")]
                 draw::track_tick(&self.sim);
                 #[cfg(feature = "boot-demo-fx")]
                 self.rearm_demo_fx();
@@ -2133,7 +2132,6 @@ impl Scene for NitroXide {
                 // (`Sim::blue_ai`), so nothing outside the seed decides
                 // what happens.
                 self.sim.tick(&Input::default());
-                #[cfg(feature = "fx-tracks")]
                 draw::track_tick(&self.sim);
                 audio::update(&self.sim);
                 self.demo.t += 1;
