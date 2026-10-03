@@ -394,6 +394,22 @@ impl NitroXide {
         self.sim.ball.grounded = false;
     }
 
+    /// The `boot-demo-fx` station: the opponent parked across the player's
+    /// nose and wrecked, again every time its timer is about to respawn it,
+    /// so a headless run sees a demolition explosion every three seconds.
+    #[cfg(feature = "boot-demo-fx")]
+    fn rearm_demo_fx(&mut self) {
+        if self.sim.opponent.demo_timer > 1 {
+            return;
+        }
+        let o = &mut self.sim.opponent;
+        o.p.x = nitroxide_sim::uu(-120);
+        o.p.y = nitroxide_sim::uu(nitroxide_sim::CAR_REST_Y);
+        o.p.z = self.sim.car.p.z + nitroxide_sim::uu(700);
+        o.v = nitroxide_sim::V3::ZERO;
+        o.demo_timer = nitroxide_sim::DEMO_RESPAWN;
+    }
+
     /// The `boot-end-wall` station's ball: in the air beside the far goal's
     /// post, held there after every tick.
     #[cfg(feature = "boot-end-wall")]
@@ -1652,6 +1668,12 @@ impl Scene for NitroXide {
             self.sim.ball.p.x = nitroxide_sim::uu(3000);
             self.sim.opponent.p.x = nitroxide_sim::uu(-3000);
         }
+        #[cfg(feature = "boot-demo-fx")]
+        {
+            self.phase = Phase::Play;
+            self.sim.opponent_ai = false;
+            self.rearm_demo_fx();
+        }
         #[cfg(feature = "boot-goal")]
         {
             self.phase = Phase::Play;
@@ -2040,6 +2062,10 @@ impl Scene for NitroXide {
                 } else {
                     self.sim.tick(&input);
                 }
+                #[cfg(feature = "fx-tracks")]
+                draw::track_tick(&self.sim);
+                #[cfg(feature = "boot-demo-fx")]
+                self.rearm_demo_fx();
                 #[cfg(feature = "boot-roof-length")]
                 self.hold_roof_length_ball();
                 #[cfg(feature = "boot-end-wall")]
@@ -2107,6 +2133,8 @@ impl Scene for NitroXide {
                 // (`Sim::blue_ai`), so nothing outside the seed decides
                 // what happens.
                 self.sim.tick(&Input::default());
+                #[cfg(feature = "fx-tracks")]
+                draw::track_tick(&self.sim);
                 audio::update(&self.sim);
                 self.demo.t += 1;
                 if self.sim.goal_freeze > 0 {

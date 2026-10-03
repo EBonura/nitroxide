@@ -76,6 +76,13 @@ pace-30 = []
 # shipping default; these two select the other authored looks at boot.
 arena-day = []
 arena-sunset = []
+# Prototype effects for review (2026-10-03): the additive-sprite explosion
+# and tyre tracks on the pitch. Compile-time while they are being judged.
+fx-v2 = []
+fx-tracks = []
+# Dev: wreck the opponent in front of the camera at kickoff, so a headless
+# capture frames a demolition explosion at a known tick.
+boot-demo-fx = []
 
 [[bin]]
 name = "nitroxide"
