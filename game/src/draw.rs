@@ -217,12 +217,14 @@ const GTE_TRUE_SZ: i32 = PROJ_H as i32 / 2;
 
 /// The depth a projected vertex must be past to count as drawn where it
 /// belongs: [`GTE_TRUE_SZ`] in split screen, and in a full view only in
-/// front at all, its old test, so a full view draws exactly what it did and
-/// pays for none of the near-camera fix (it cost 60 fps on about one frame
-/// in sixteen, train tape 2026-10-03). Read once per pass, not per vertex.
+/// front at all, its old test. The pitch and wall passes that use it are
+/// built twice, `SPLIT` or not, so a full view runs its old code with none
+/// of the near-camera fix compiled in: inline, the fix's extra code cost a
+/// full view 28k cycles a frame where both cars are close (train tape polls
+/// 795..865, 505k to 533k, 2026-10-03).
 #[inline]
-fn near_sz() -> i32 {
-    if split_view() {
+const fn near_sz<const SPLIT: bool>() -> i32 {
+    if SPLIT {
         GTE_TRUE_SZ
     } else {
         0
@@ -257,6 +259,23 @@ static mut PIECE_JOBS: [PieceJob; MAX_PIECE_JOBS] = [PieceJob {
     kind: Pieces::Floor,
 }; MAX_PIECE_JOBS];
 static mut PIECE_JOB_COUNT: usize = 0;
+
+/// One wall quad queued by index (span, column level, column, lower and
+/// upper ring), with its UVs and tints. See [`Builder::queue_wall_quad`].
+#[derive(Copy, Clone)]
+struct WallJob {
+    at: [u8; 5],
+    uv: [u8; 4],
+    tints: [u32; 4],
+    covered: bool,
+}
+static mut WALL_JOBS: [WallJob; MAX_PIECE_JOBS] = [WallJob {
+    at: [0; 5],
+    uv: [0; 4],
+    tints: [0; 4],
+    covered: false,
+}; MAX_PIECE_JOBS];
+static mut WALL_JOB_COUNT: usize = 0;
 
 /// Point the GTE and the GPU at one viewport, and set the bounds the rejection
 /// tests use. `buffer_y` is where the engine's current back buffer starts in
@@ -4470,7 +4489,7 @@ impl Builder<'_> {
     /// the same i-cache reason as [`Self::conform_tile`].
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
-    fn floor_tile_far(
+    fn floor_tile_far<const SPLIT: bool>(
         &mut self,
         light: &[[u32; FLOOR_GZ]; FLOOR_GX],
         gx: usize,
@@ -4479,7 +4498,7 @@ impl Builder<'_> {
         count_offered!();
         let mut sp = [(0i16, 0i16); 4];
         let mut behind = 0;
-        let (split, near) = (split_view(), near_sz());
+        let (split, near) = (SPLIT, near_sz::<SPLIT>());
         let step = FLOOR_SPLIT_MAX as usize;
         let at = [
             (gx, gz),
@@ -4617,6 +4636,74 @@ impl Builder<'_> {
         );
     }
 
+    /// Note one wall quad the GPU cannot draw whole by its span, column level,
+    /// column and rings (`at`), for [`Self::draw_pieces`] to sweep from
+    /// `SPAN_COLS` and `WALL_PROFILE` and clip. A handful of byte stores, so
+    /// the wall loop stays small in the I-cache and on the scratchpad stack.
+    #[inline(always)]
+    fn queue_wall_quad(at: [u8; 5], uv: [u8; 4], tints: [u32; 4], covered: bool) {
+        unsafe {
+            let n = WALL_JOB_COUNT;
+            if n < MAX_PIECE_JOBS {
+                // Unchecked for the same reason as `queue_pieces`.
+                *WALL_JOBS.get_unchecked_mut(n) = WallJob {
+                    at,
+                    uv,
+                    tints,
+                    covered,
+                };
+                WALL_JOB_COUNT = n + 1;
+            }
+        }
+    }
+
+    /// The queued wall quads as world corners, swept exactly as `wall_span`
+    /// sweeps its rings, then into [`Self::queue_pieces`].
+    #[inline(never)]
+    #[cold]
+    fn sweep_wall_jobs() {
+        let profile = unsafe { &WALL_PROFILE };
+        for k in 0..unsafe { WALL_JOB_COUNT } {
+            let job = unsafe { WALL_JOBS[k] };
+            let [si, level, col, lo, hi] = job.at.map(|v| v as usize);
+            let cols = unsafe { &SPAN_COLS[si][level] };
+            let point = |c: usize, ring: usize| {
+                let p = profile[ring];
+                let pk = if ring <= CURVE_SEGS {
+                    ramp_point(p, cols.ramp[c] as i32)
+                } else {
+                    p
+                };
+                (
+                    cols.x[c] + ((cols.nx[c] * pk.0) >> 12),
+                    -pk.1,
+                    cols.z[c] + ((cols.nz[c] * pk.0) >> 12),
+                )
+            };
+            let [u0, u1, v0, v1] = job.uv;
+            let packet = if job.covered {
+                COVER_PACKET
+            } else {
+                WALL_PACKET
+            };
+            Self::queue_pieces(
+                [
+                    point(col, lo),
+                    point(col + 1, lo),
+                    point(col, hi),
+                    point(col + 1, hi),
+                ],
+                [(u0, v0), (u1, v0), (u0, v1), (u1, v1)],
+                job.tints,
+                Pieces::Wall {
+                    packet,
+                    blended: job.covered,
+                },
+            );
+        }
+        unsafe { WALL_JOB_COUNT = 0 };
+    }
+
     /// Draw the quads the last phase queued with [`Self::queue_pieces`]. The
     /// GTE still holds the world view the phase projected with. Only a quad
     /// whose box is in the view is clipped: most of them straddle the camera
@@ -4625,6 +4712,7 @@ impl Builder<'_> {
     /// it always did: the quads it queues are the ones the GPU dropped.
     #[inline(never)]
     fn draw_pieces(&mut self, cull: &Cull) {
+        Self::sweep_wall_jobs();
         let count = if split_view() {
             unsafe { PIECE_JOB_COUNT }
         } else {
@@ -4795,12 +4883,12 @@ impl Builder<'_> {
         }
     }
 
-    fn floor(&mut self, cull: &Cull) {
+    fn floor<const SPLIT: bool>(&mut self, cull: &Cull) {
         let step_x = sim::HALF_X * 2 / TILES_X;
         let step_z = sim::HALF_Z * 2 / TILES_Z;
         // Split screen draws the near-camera quads the GPU would drop; a full
         // view draws what it always did (see `near_sz`).
-        let near = near_sz();
+        let near = near_sz::<SPLIT>();
         // The pitch is flat, so a tile's box is its footprint with no height.
         // The chamfer only ever pulls corners inward, so this stays generous.
         let tile_e = cull.extents((step_x / 2, 0, step_z / 2));
@@ -4839,7 +4927,7 @@ impl Builder<'_> {
                 // four projections, one emit. Pixel-identical, and an n == 1
                 // tile never conforms, so nothing else changes.
                 if n == 1 {
-                    self.floor_tile_far(light, gx, gz);
+                    self.floor_tile_far::<SPLIT>(light, gx, gz);
                     continue;
                 }
 
@@ -5592,7 +5680,7 @@ impl Builder<'_> {
 
     /// Sweep the profile along one perimeter span, taking its vertex colours
     /// from the light baked for it at boot.
-    fn wall_span(&mut self, si: usize, cull: &Cull) {
+    fn wall_span<const SPLIT: bool>(&mut self, si: usize, cull: &Cull) {
         let Span { a, b, .. } = unsafe { SPANS[si] };
         let end_wall = a.1 == b.1 && a.1.abs() == sim::HALF_Z;
         if end_wall
@@ -5617,7 +5705,7 @@ impl Builder<'_> {
         }
         let profile = unsafe { &WALL_PROFILE };
         // See `near_sz`: split screen alone draws the near quads the GPU drops.
-        let (split, near_z) = (split_view(), near_sz());
+        let (split, near_z) = (SPLIT, near_sz::<SPLIT>());
         // Same distance bands as the floor. A wall is the surface you see at
         // the most glancing angle of anything in here, because you drive along
         // it, so it warps for exactly the same reason and takes the same fix.
@@ -5791,34 +5879,13 @@ impl Builder<'_> {
                 };
                 let packet = if covered { COVER_PACKET } else { WALL_PACKET };
                 let Some((sp, z_sum)) = whole else {
-                    // Too near the camera to draw whole: the same quad from
-                    // its world corners, swept exactly as the rings above.
-                    let point = |col: usize, ring: usize| {
-                        let p = profile[ring];
-                        let pk = if ring <= CURVE_SEGS {
-                            ramp_point(p, ramp[col] as i32)
-                        } else {
-                            p
-                        };
-                        (
-                            sx[col] + ((cnx[col] * pk.0) >> 12),
-                            -pk.1,
-                            sz[col] + ((cnz[col] * pk.0) >> 12),
-                        )
-                    };
-                    Self::queue_pieces(
-                        [
-                            point(k, ri),
-                            point(k + 1, ri),
-                            point(k, top),
-                            point(k + 1, top),
-                        ],
-                        [(u0, v0), (u1, v0), (u0, v1), (u1, v1)],
+                    // Too near the camera to draw whole: noted by span,
+                    // columns and rings, for `draw_pieces` to sweep and clip.
+                    Self::queue_wall_quad(
+                        [si as u8, splits as u8 - 1, k as u8, ri as u8, top as u8],
+                        [u0, u1, v0, v1],
                         tints,
-                        Pieces::Wall {
-                            packet,
-                            blended: covered,
-                        },
+                        covered,
                     );
                     continue;
                 };
@@ -5967,7 +6034,11 @@ impl Builder<'_> {
 
     fn walls(&mut self, cull: &Cull) {
         for si in 0..SPAN_COUNT {
-            self.wall_span(si, cull);
+            if split_view() {
+                self.wall_span::<true>(si, cull);
+            } else {
+                self.wall_span::<false>(si, cull);
+            }
         }
         // Continue the translucent enclosure over each goal mouth. The old
         // lintel was one opaque quad at the goal line, so it formed a dark
@@ -7556,7 +7627,11 @@ fn build_view(
         let cull = view.cull();
         staged!(S_FLOOR, {
             on_scratchpad(|| {
-                b.floor(&cull);
+                if split_view() {
+                    b.floor::<true>(&cull);
+                } else {
+                    b.floor::<false>(&cull);
+                }
                 b.lines(&cull);
             });
             b.draw_pieces(&cull);
