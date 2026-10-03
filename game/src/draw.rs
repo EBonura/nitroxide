@@ -195,11 +195,27 @@ fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
 #[inline]
 fn gpu_draws_whole(sp: &[(i16, i16); 4]) -> bool {
     let fits = |t: [(i16, i16); 3]| {
-        let (x0, x1) = (t[0].0.min(t[1].0).min(t[2].0), t[0].0.max(t[1].0).max(t[2].0));
-        let (y0, y1) = (t[0].1.min(t[1].1).min(t[2].1), t[0].1.max(t[1].1).max(t[2].1));
+        let (x0, x1) = (
+            t[0].0.min(t[1].0).min(t[2].0),
+            t[0].0.max(t[1].0).max(t[2].0),
+        );
+        let (y0, y1) = (
+            t[0].1.min(t[1].1).min(t[2].1),
+            t[0].1.max(t[1].1).max(t[2].1),
+        );
         (x1 as i32 - x0 as i32) < 1024 && (y1 as i32 - y0 as i32) < 512
     };
     fits([sp[0], sp[1], sp[2]]) && fits([sp[1], sp[2], sp[3]])
+}
+
+/// Did the GTE project this vertex where it belongs? RTPS saturates its
+/// divide once the depth is half the projection plane distance or less, and
+/// a vertex that close lands short of its true place without any sign of it:
+/// a pitch quad with one there met its neighbour at an angle and left a
+/// wedge of sky between them. Zero is behind the near plane altogether.
+#[inline]
+fn projects_true(sz: i32) -> bool {
+    sz > PROJ_H as i32 / 2
 }
 
 /// How finely [`Builder::quad_pieces`] cuts a quad the GPU cannot draw
@@ -214,6 +230,10 @@ enum Pieces {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
     },
+    /// A pitch marking, untextured: one colour, or shaded along the line.
+    Line {
+        flat: bool,
+    },
 }
 
 /// One quad queued for [`Builder::quad_pieces`].
@@ -226,7 +246,7 @@ struct PieceJob {
 }
 /// Quads a phase may queue for [`Builder::quad_pieces`]: the few beside or
 /// under the camera, with room to spare.
-const MAX_PIECE_JOBS: usize = 32;
+const MAX_PIECE_JOBS: usize = 48;
 static mut PIECE_JOBS: [PieceJob; MAX_PIECE_JOBS] = [PieceJob {
     world: [(0, 0, 0); 4],
     uvs: [(0, 0); 4],
@@ -4457,11 +4477,16 @@ impl Builder<'_> {
         let mut sp = [(0i16, 0i16); 4];
         let mut behind = 0;
         let step = FLOOR_SPLIT_MAX as usize;
-        let at = [(gx, gz), (gx + step, gz), (gx, gz + step), (gx + step, gz + step)];
+        let at = [
+            (gx, gz),
+            (gx + step, gz),
+            (gx, gz + step),
+            (gx + step, gz + step),
+        ];
         for (k, &(ix, iz)) in at.iter().enumerate() {
             let (cx, cz) = unsafe { *FLOOR_POS.get_unchecked(ix).get_unchecked(iz) };
             let p = project(Vec3I16::new(cx, 0, cz));
-            if p.sz == 0 {
+            if !projects_true(p.sz as i32) {
                 behind += 1;
             }
             sp[k] = (p.sx, p.sy);
@@ -4522,11 +4547,12 @@ impl Builder<'_> {
         }
     }
 
-    /// Draw a pitch or wall quad the GPU cannot draw whole as a grid of
+    /// Draw a pitch, marking or wall quad the GPU cannot draw whole as a grid of
     /// smaller pieces.
     ///
-    /// Near the camera a quad can have a corner behind the near plane, or a
-    /// corner so close to it that the projection lands a thousand pixels off
+    /// Near the camera a quad can have a corner behind the near plane or too
+    /// near for the GTE to project right (see [`projects_true`]), or a corner
+    /// so close that its projection lands a thousand pixels off
     /// screen, and the rasteriser drops any triangle with an edge 1024 or
     /// more pixels wide or 512 tall. Either way the whole quad went, and the
     /// sky showed through the pitch and the foot of the walls: in split
@@ -4534,8 +4560,8 @@ impl Builder<'_> {
     /// (Manny's attract demo, 2026-10-03). The pieces lie on the quad's own
     /// bilinear surface with its UVs and tints carried across, so a picture
     /// only gains what was missing. A piece that still cannot be drawn is cut
-    /// the same way once more (`fine` is set on that pass), and dropped after
-    /// that, as the whole quad used to be.
+    /// the same way once more (`fine` is set on that pass), and one still too
+    /// big after that is clipped by [`Self::clip_piece`].
     ///
     /// `world`, `uvs` and `tints` are in the corner order the packets use:
     /// (0, 0), (1, 0), (0, 1), (1, 1). Cold: a handful of quads a frame reach
@@ -4550,6 +4576,7 @@ impl Builder<'_> {
         uvs: [(u8, u8); 4],
         tints: [u32; 4],
         kind: Pieces,
+        cull: &Cull,
         fine: bool,
     ) {
         const N: i32 = PIECES;
@@ -4572,7 +4599,7 @@ impl Builder<'_> {
         let corner = |i: i32, j: i32| {
             let p = point(i, j);
             let v = project(Vec3I16::new(p.0 as i16, p.1 as i16, p.2 as i16));
-            (v.sz != 0).then_some((v.sx, v.sy, v.sz as i32))
+            projects_true(v.sz as i32).then_some((v.sx, v.sy, v.sz as i32))
         };
         let mut below = [None; PIECES as usize + 1];
         for (i, slot) in below.iter_mut().enumerate() {
@@ -4600,16 +4627,16 @@ impl Builder<'_> {
                 };
                 let Some((sp, z_sum)) = whole else {
                     // The piece at the near corner can still be too big: cut
-                    // it once more, which leaves a sixteenth of the quad's
-                    // side undrawn rather than a quarter.
-                    if !fine {
-                        self.quad_pieces(
-                            corners.map(|(x, y)| point(x, y)),
-                            corners.map(|(x, y)| uv(x, y)),
-                            corners.map(|(x, y)| tint(x, y)),
-                            kind,
-                            true,
-                        );
+                    // it once more, and clip what is left of it after that.
+                    let (w, u, t) = (
+                        corners.map(|(x, y)| point(x, y)),
+                        corners.map(|(x, y)| uv(x, y)),
+                        corners.map(|(x, y)| tint(x, y)),
+                    );
+                    if fine {
+                        self.clip_piece(w, u, t, kind, cull);
+                    } else {
+                        self.quad_pieces(w, u, t, kind, cull, true);
                     }
                     continue;
                 };
@@ -4618,12 +4645,7 @@ impl Builder<'_> {
                     uvw(u, v)
                 });
                 let piece_tints = corners.map(|(x, y)| tint(x, y));
-                match kind {
-                    Pieces::Floor => self.floor_quad(sp, piece_uvs, piece_tints),
-                    Pieces::Wall { packet, blended } => {
-                        self.quad_tex_words(sp, z_sum, piece_uvs, piece_tints, 0, packet, blended)
-                    }
-                }
+                self.emit_piece(kind, sp, z_sum, piece_uvs, piece_tints);
             }
             below = above;
         }
@@ -4643,7 +4665,12 @@ impl Builder<'_> {
         unsafe {
             let n = PIECE_JOB_COUNT;
             if n < MAX_PIECE_JOBS {
-                PIECE_JOBS[n] = PieceJob { world, uvs, tints, kind };
+                PIECE_JOBS[n] = PieceJob {
+                    world,
+                    uvs,
+                    tints,
+                    kind,
+                };
                 PIECE_JOB_COUNT = n + 1;
             }
         }
@@ -4652,13 +4679,170 @@ impl Builder<'_> {
     /// Draw the quads the last phase queued for [`Self::quad_pieces`]. The
     /// GTE still holds the world view the phase projected with.
     #[inline(never)]
-    fn draw_pieces(&mut self) {
+    fn draw_pieces(&mut self, cull: &Cull) {
         let count = unsafe { PIECE_JOB_COUNT };
         for k in 0..count {
             let job = unsafe { PIECE_JOBS[k] };
-            self.quad_pieces(job.world, job.uvs, job.tints, job.kind, false);
+            self.quad_pieces(job.world, job.uvs, job.tints, job.kind, cull, false);
         }
         unsafe { PIECE_JOB_COUNT = 0 };
+    }
+
+    /// The last resort for a piece [`Self::quad_pieces`] still cannot draw
+    /// whole, right beside the camera: clip it in camera space to the depth
+    /// the GTE still projects right (see [`projects_true`]),
+    /// and to a guard band around the view (480 pixels either side of
+    /// its centre and 240 above and below), so every corner left projects
+    /// close enough to the others for the GPU, and draw the clipped polygon
+    /// as a fan of triangles (quads with a repeated corner). Clipped corners
+    /// are placed back in the world and projected by the GTE like any other,
+    /// so they land on the same screen line as the edge they were cut from.
+    #[inline(never)]
+    #[cold]
+    fn clip_piece(
+        &mut self,
+        world: [(i32, i32, i32); 4],
+        uvs: [(u8, u8); 4],
+        tints: [u32; 4],
+        kind: Pieces,
+        cull: &Cull,
+    ) {
+        /// A polygon corner: world position, then u, v, r, g, b.
+        #[derive(Copy, Clone)]
+        struct Corner {
+            p: [i32; 3],
+            a: [i32; 5],
+        }
+        // Four corners, and one more for each of the five planes at most.
+        const MAX: usize = 9;
+        const H: i32 = PROJ_H as i32;
+        const GUARD_X: i32 = 480;
+        const GUARD_Y: i32 = 240;
+        const NEAR: i32 = PROJ_H as i32 / 2 + 8;
+        let corner = |k: usize| {
+            let c = rgb_of(tints[k]);
+            Corner {
+                p: [world[k].0, world[k].1, world[k].2],
+                a: [
+                    uvs[k].0 as i32,
+                    uvs[k].1 as i32,
+                    c.0 as i32,
+                    c.1 as i32,
+                    c.2 as i32,
+                ],
+            }
+        };
+        // The packets' corner order is a zigzag; walk the quad's outline.
+        let mut poly = [corner(0); MAX];
+        (poly[1], poly[2], poly[3]) = (corner(1), corner(3), corner(2));
+        let mut n = 4;
+        for plane in 0..5 {
+            // Signed distance outside the plane: in camera space, scaled by
+            // the projection plane for the four guard-band sides.
+            let outside = |c: &Corner| {
+                let d = (
+                    c.p[0] - cull.pos.0,
+                    c.p[1] - cull.pos.1,
+                    c.p[2] - cull.pos.2,
+                );
+                let (x, y, z) = (
+                    Cull::dot(cull.right, d),
+                    Cull::dot(cull.vertical, d),
+                    Cull::dot(cull.fwd, d),
+                );
+                match plane {
+                    0 => NEAR - z,
+                    1 => x * H - GUARD_X * z,
+                    2 => -x * H - GUARD_X * z,
+                    3 => y * H - GUARD_Y * z,
+                    _ => -y * H - GUARD_Y * z,
+                }
+            };
+            let mut out = [poly[0]; MAX];
+            let mut m = 0;
+            for i in 0..n {
+                let (a, b) = (poly[i], poly[(i + 1) % n]);
+                let (da, db) = (outside(&a), outside(&b));
+                if da <= 0 && m < MAX {
+                    out[m] = a;
+                    m += 1;
+                }
+                if (da <= 0) != (db <= 0) && m < MAX {
+                    // Where the edge crosses the plane, in Q12, with both
+                    // terms shifted down together so the product fits.
+                    let (mut num, mut den) = (da.abs(), (da - db).abs());
+                    while den > 1 << 18 {
+                        num >>= 1;
+                        den >>= 1;
+                    }
+                    let t = (num << 12) / den.max(1);
+                    let mix = |u: i32, v: i32| u + (((v - u) * t) >> 12);
+                    out[m] = Corner {
+                        p: core::array::from_fn(|k| mix(a.p[k], b.p[k])),
+                        a: core::array::from_fn(|k| mix(a.a[k], b.a[k])),
+                    };
+                    m += 1;
+                }
+            }
+            poly = out;
+            n = m;
+            if n < 3 {
+                return;
+            }
+        }
+        let mut screen = [(0i16, 0i16, 0i32); MAX];
+        for (s, c) in screen.iter_mut().zip(&poly[..n]) {
+            let v = project(Vec3I16::new(c.p[0] as i16, c.p[1] as i16, c.p[2] as i16));
+            if !projects_true(v.sz as i32) {
+                return;
+            }
+            *s = (v.sx, v.sy, v.sz as i32);
+        }
+        let uv = |c: &Corner| uvw(c.a[0].clamp(0, 255) as u8, c.a[1].clamp(0, 255) as u8);
+        let tint = |c: &Corner| {
+            let ch = |k: usize| c.a[k].clamp(0, 255) as u8;
+            rgbc((ch(2), ch(3), ch(4)))
+        };
+        for i in 1..n - 1 {
+            let tri = [0, i, i + 1, i + 1];
+            let sp = tri.map(|k| (screen[k].0, screen[k].1));
+            if !gpu_draws_whole(&sp) || !quad_overlaps_view(&sp) {
+                continue;
+            }
+            let uvs = tri.map(|k| uv(&poly[k]));
+            let tints = tri.map(|k| tint(&poly[k]));
+            let z_sum = tri.iter().map(|&k| screen[k].2).sum();
+            self.emit_piece(kind, sp, z_sum, uvs, tints);
+        }
+    }
+
+    /// One piece from [`Self::quad_pieces`] or [`Self::clip_piece`], as the
+    /// packet the whole quad would have been.
+    fn emit_piece(
+        &mut self,
+        kind: Pieces,
+        sp: [(i16, i16); 4],
+        z_sum: i32,
+        uvs: [u16; 4],
+        tints: [u32; 4],
+    ) {
+        match kind {
+            Pieces::Floor => self.floor_quad(sp, uvs, tints),
+            Pieces::Wall { packet, blended } => {
+                self.quad_tex_words(sp, z_sum, uvs, tints, 0, packet, blended)
+            }
+            Pieces::Line { flat: true } => {
+                let c = rgb_of(tints[0]);
+                if let Some(quad) = self.flats.push(QuadFlat::new(sp, c.0, c.1, c.2)) {
+                    self.ot.add_packet(LINE_SLOT, quad);
+                }
+            }
+            Pieces::Line { flat: false } => {
+                if let Some(quad) = self.arena.push(QuadGouraud::new(sp, tints.map(rgb_of))) {
+                    self.ot.add_packet(LINE_SLOT, quad);
+                }
+            }
+        }
     }
 
     fn floor(&mut self, cull: &Cull) {
@@ -4732,7 +4916,7 @@ impl Builder<'_> {
                                 .get_unchecked(gz + sz * grid_step)
                         };
                         let p = project(Vec3I16::new(cx, 0, cz));
-                        if p.sz != 0 {
+                        if projects_true(p.sz as i32) {
                             *corner = Some((p.sx, p.sy, p.sz as i32));
                         }
                     }
@@ -4903,7 +5087,9 @@ impl Builder<'_> {
                 let mut next = cut(unsafe { sections.get_unchecked(j) });
                 // A long step that reaches behind the camera would drop the
                 // whole quad, visible part and all: take one cut instead.
-                if j > i + 1 && (next.0.sz == 0 || next.1.sz == 0) {
+                if j > i + 1
+                    && !(projects_true(next.0.sz as i32) && projects_true(next.1.sz as i32))
+                {
                     j = i + 1;
                     next = cut(unsafe { sections.get_unchecked(j) });
                 }
@@ -4911,7 +5097,37 @@ impl Builder<'_> {
                 let (a, b, cc, dd) = (prev.0, prev.1, next.0, next.1);
                 prev = next;
                 i = j;
-                if a.sz == 0 || b.sz == 0 || cc.sz == 0 || dd.sz == 0 {
+                let sj = unsafe { sections.get_unchecked(j) };
+                // Flat where the light barely moves along the quad: a
+                // Gouraud quad costs the GPU four times the setup and twice
+                // the fill. Shaded where it does move, in the goal pools and
+                // down a long far step, or the chalk steps visibly from quad
+                // to quad.
+                let (c0, c1) = (s.c, sj.c);
+                let dif = |u: u8, v: u8| (u as i32 - v as i32).abs();
+                let flat =
+                    dif(c0.0, c1.0).max(dif(c0.1, c1.1)).max(dif(c0.2, c1.2)) <= LINE_FLAT_SPREAD;
+                let behind = [a.sz, b.sz, cc.sz, dd.sz]
+                    .iter()
+                    .filter(|&&z| !projects_true(z as i32))
+                    .count();
+                let sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
+                if behind == 4 {
+                    continue;
+                }
+                if behind > 0 || !gpu_draws_whole(&sp) {
+                    // The cut beside the camera, too near to draw whole: the
+                    // pitch's edge line drops out there and leaves a wedge of
+                    // sky along the foot of the wall. See `quad_pieces`.
+                    if behind > 0 || quad_overlaps_view(&sp) {
+                        let at = |p: (i16, i16)| (p.0 as i32, 0, p.1 as i32);
+                        self.queue_pieces(
+                            [at(s.a), at(s.b), at(sj.a), at(sj.b)],
+                            [(0, 0); 4],
+                            [rgbc(c0), rgbc(c0), rgbc(c1), rgbc(c1)],
+                            Pieces::Line { flat },
+                        );
+                    }
                     continue;
                 }
                 let min_x = a.sx.min(b.sx).min(cc.sx).min(dd.sx);
@@ -4922,15 +5138,7 @@ impl Builder<'_> {
                     continue;
                 }
                 count_kept!();
-                // Flat where the light barely moves along the quad: a
-                // Gouraud quad costs the GPU four times the setup and twice
-                // the fill. Shaded where it does move, in the goal pools and
-                // down a long far step, or the chalk steps visibly from quad
-                // to quad.
-                let sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
-                let (c0, c1) = (s.c, unsafe { sections.get_unchecked(j) }.c);
-                let dif = |u: u8, v: u8| (u as i32 - v as i32).abs();
-                if dif(c0.0, c1.0).max(dif(c0.1, c1.1)).max(dif(c0.2, c1.2)) > LINE_FLAT_SPREAD {
+                if !flat {
                     if let Some(quad) = self.arena.push(QuadGouraud::new(sp, [c0, c0, c1, c1])) {
                         self.ot.add_packet(LINE_SLOT, quad);
                     } else {
@@ -5602,7 +5810,7 @@ impl Builder<'_> {
                     ((nx * pk.0) >> 12, (nz * pk.0) >> 12, pk.1)
                 };
                 let v = project(Vec3I16::new((x0 + ox) as i16, -height as i16, (z0 + oz) as i16));
-                upper[k] = if v.sz != 0 {
+                upper[k] = if projects_true(v.sz as i32) {
                     Some((v.sx, v.sy, v.sz as i32))
                 } else {
                     None
@@ -5666,14 +5874,30 @@ impl Builder<'_> {
                     // its world corners, swept exactly as the rings above.
                     let point = |col: usize, ring: usize| {
                         let p = profile[ring];
-                        let pk = if ring <= CURVE_SEGS { ramp_point(p, ramp[col] as i32) } else { p };
-                        (sx[col] + ((cnx[col] * pk.0) >> 12), -pk.1, sz[col] + ((cnz[col] * pk.0) >> 12))
+                        let pk = if ring <= CURVE_SEGS {
+                            ramp_point(p, ramp[col] as i32)
+                        } else {
+                            p
+                        };
+                        (
+                            sx[col] + ((cnx[col] * pk.0) >> 12),
+                            -pk.1,
+                            sz[col] + ((cnz[col] * pk.0) >> 12),
+                        )
                     };
                     self.queue_pieces(
-                        [point(k, ri), point(k + 1, ri), point(k, top), point(k + 1, top)],
+                        [
+                            point(k, ri),
+                            point(k + 1, ri),
+                            point(k, top),
+                            point(k + 1, top),
+                        ],
                         [(u0, v0), (u1, v0), (u0, v1), (u1, v1)],
                         tints,
-                        Pieces::Wall { packet, blended: covered },
+                        Pieces::Wall {
+                            packet,
+                            blended: covered,
+                        },
                     );
                     continue;
                 };
@@ -6730,7 +6954,12 @@ fn draw_cars(
         } else {
             (unsafe { &mut CAR_FAR_LOD[seat] }, seat)
         };
-        let far = lod_far(state, depth, CAR_LOD_ENTER_DEPTH[size], CAR_LOD_EXIT_DEPTH[size]);
+        let far = lod_far(
+            state,
+            depth,
+            CAR_LOD_ENTER_DEPTH[size],
+            CAR_LOD_EXIT_DEPTH[size],
+        );
         let which = if far { which + CAR_COUNT } else { which };
         // Mid-flip, spin the car about the axis across its dodge direction:
         // yaw into the dodge frame, tumble about X, yaw back out. A forward
@@ -7409,7 +7638,7 @@ fn build_view(
                 b.floor(&cull);
                 b.lines(&cull);
             });
-            b.draw_pieces();
+            b.draw_pieces(&cull);
         });
         staged!(S_PADS, { on_scratchpad(|| b.pads(s, &cull)) });
         staged!(S_WALLS, {
@@ -7418,7 +7647,7 @@ fn build_view(
                 b.stands(&cull);
                 b.lamps(&cull);
             });
-            b.draw_pieces();
+            b.draw_pieces(&cull);
         });
         staged!(S_TRIM, {
             on_scratchpad(|| {

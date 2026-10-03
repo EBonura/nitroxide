@@ -61,13 +61,18 @@ impl Frame {
 
     /// A demo cut or a loading frame: nothing to check.
     fn blank(&self) -> bool {
-        let dark = (0..H).flat_map(|y| (0..W).map(move |x| (x, y))).filter(|&(x, y)| self.dark(x, y)).count();
+        let dark = (0..H)
+            .flat_map(|y| (0..W).map(move |x| (x, y)))
+            .filter(|&(x, y)| self.dark(x, y))
+            .count();
         dark * 10 > W * H * 6
     }
 
     /// Split screen draws a dark seam across rows 119 and 120.
     fn split(&self) -> bool {
-        [119, 120].iter().all(|&y| (0..W).filter(|&x| self.dark(x, y)).count() * 10 >= W * 9)
+        [119, 120]
+            .iter()
+            .all(|&y| (0..W).filter(|&x| self.dark(x, y)).count() * 10 >= W * 9)
     }
 }
 
@@ -140,13 +145,21 @@ struct Limits {
 
 fn parse_args() -> Result<(PathBuf, Limits), String> {
     let mut args = std::env::args().skip(1);
-    let dir = PathBuf::from(args.next().ok_or("usage: frame-check <screenshot-dir> [options]")?);
+    let dir = PathBuf::from(
+        args.next()
+            .ok_or("usage: frame-check <screenshot-dir> [options]")?,
+    );
     // Defaults: a few dithered crack pixels are what the pitch's underdraw
     // strips allow. A split view's LOD car is at most ~28 px long, which
     // covered 106 px at worst over the attract demo once fixed, against
     // ~250 px for the old own-car LOD under the chase camera. A full view
     // keeps the opponent's LOD down to 56 px long, so it gets more room.
-    let mut limits = Limits { ticks: None, hole: 16, lod_split: 150, lod_single: 600 };
+    let mut limits = Limits {
+        ticks: None,
+        hole: 16,
+        lod_split: 150,
+        lod_single: 600,
+    };
     while let Some(flag) = args.next() {
         let value = args.next().ok_or(format!("{flag} needs a value"))?;
         let number = || value.parse::<usize>().map_err(|e| format!("{flag}: {e}"));
@@ -178,7 +191,11 @@ fn main() -> ExitCode {
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter_map(|p| {
                 let name = p.file_name()?.to_str()?;
-                let tick = name.strip_prefix("tick-")?.strip_suffix(".ppm")?.parse().ok()?;
+                let tick = name
+                    .strip_prefix("tick-")?
+                    .strip_suffix(".ppm")?
+                    .parse()
+                    .ok()?;
                 Some((tick, p))
             })
             .collect(),
@@ -208,10 +225,17 @@ fn main() -> ExitCode {
         }
         checked += 1;
         let split = frame.split();
-        let views: &[(&str, usize, usize)] =
-            if split { &[("top", 0, H / 2), ("bottom", H / 2, H)] } else { &[("full", 0, H)] };
+        let views: &[(&str, usize, usize)] = if split {
+            &[("top", 0, H / 2), ("bottom", H / 2, H)]
+        } else {
+            &[("full", 0, H)]
+        };
         split_frames += split as usize;
-        let lod_limit = if split { limits.lod_split } else { limits.lod_single };
+        let lod_limit = if split {
+            limits.lod_split
+        } else {
+            limits.lod_single
+        };
         let mut problems = Vec::new();
         for &(name, y0, y1) in views {
             let hole = hole_pixels(&frame, y0, y1);
@@ -243,5 +267,9 @@ fn main() -> ExitCode {
         eprintln!("no frames checked");
         return ExitCode::from(2);
     }
-    if failed > 0 { ExitCode::from(1) } else { ExitCode::SUCCESS }
+    if failed > 0 {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
 }
