@@ -189,6 +189,52 @@ fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
     max_x >= view_min_x && min_x < view_max_x && max_y >= view_min_y && min_y < view_max_y
 }
 
+/// Will the rasteriser draw both of this projected quad's triangles? It
+/// drops a triangle two of whose vertices are 1024 or more pixels apart
+/// across or 512 or more down.
+#[inline]
+fn gpu_draws_whole(sp: &[(i16, i16); 4]) -> bool {
+    let fits = |t: [(i16, i16); 3]| {
+        let (x0, x1) = (t[0].0.min(t[1].0).min(t[2].0), t[0].0.max(t[1].0).max(t[2].0));
+        let (y0, y1) = (t[0].1.min(t[1].1).min(t[2].1), t[0].1.max(t[1].1).max(t[2].1));
+        (x1 as i32 - x0 as i32) < 1024 && (y1 as i32 - y0 as i32) < 512
+    };
+    fits([sp[0], sp[1], sp[2]]) && fits([sp[1], sp[2], sp[3]])
+}
+
+/// How finely [`Builder::quad_pieces`] cuts a quad the GPU cannot draw
+/// whole, per side.
+const PIECES: i32 = 4;
+
+/// What [`Builder::quad_pieces`] draws its pieces as.
+#[derive(Copy, Clone)]
+enum Pieces {
+    Floor,
+    Wall {
+        packet: TexturedGouraudPacketMaterial,
+        blended: bool,
+    },
+}
+
+/// One quad queued for [`Builder::quad_pieces`].
+#[derive(Copy, Clone)]
+struct PieceJob {
+    world: [(i32, i32, i32); 4],
+    uvs: [(u8, u8); 4],
+    tints: [u32; 4],
+    kind: Pieces,
+}
+/// Quads a phase may queue for [`Builder::quad_pieces`]: the few beside or
+/// under the camera, with room to spare.
+const MAX_PIECE_JOBS: usize = 32;
+static mut PIECE_JOBS: [PieceJob; MAX_PIECE_JOBS] = [PieceJob {
+    world: [(0, 0, 0); 4],
+    uvs: [(0, 0); 4],
+    tints: [0; 4],
+    kind: Pieces::Floor,
+}; MAX_PIECE_JOBS];
+static mut PIECE_JOB_COUNT: usize = 0;
+
 /// Point the GTE and the GPU at one viewport, and set the bounds the rejection
 /// tests use. `buffer_y` is where the engine's current back buffer starts in
 /// VRAM, which is what turns a display-space viewport into a VRAM scissor.
@@ -2414,10 +2460,25 @@ impl View {
     }
 }
 
+/// The `diag-keys` sky, which `tools/frame-check` finds as a hole in the pitch.
+const DIAG_SKY_KEY: Rgb = (255, 0, 255);
+
 /// Backdrop colours for this camera. Sunset keeps a cool zenith and warms the
 /// horizon most strongly toward a fixed +Z sun, mirroring VoXide's directional
 /// Minecraft sunset rather than washing all four corners orange.
 fn arena_sky(view: &View) -> [Rgb; 4] {
+    // Keyed only while the camera is low, level (vertical axis within about
+    // 30 degrees of world up) and inside the pitch's length: then the bottom
+    // of a view only ever shows the pitch or the foot of a wall. A camera
+    // tipped up at a car on a wall, high on a wall or inside a goal sees the
+    // sky through the net there, legitimately.
+    if cfg!(feature = "diag-keys")
+        && (view.v.m[1][1] as i32).abs() > 3550
+        && -view.pos.1 < 600
+        && view.pos.2.abs() < sim::HALF_Z
+    {
+        return [DIAG_SKY_KEY; 4];
+    }
     let look = arena_look();
     if unsafe { ARENA_TIME } != ArenaTime::Sunset {
         return [look.zenith, look.zenith, look.horizon, look.horizon];
@@ -2858,13 +2919,6 @@ static CAR_BLOBS: [&[u8]; CAR_SLOTS] = [
 /// Every cooked car mesh: the three select-screen cars, then their LODs.
 const CAR_SLOTS: usize = CAR_COUNT * 2;
 
-/// Distance past which a half-height split view draws a car from its LOD
-/// slot. The chase camera trails its own car by 800 uu, where a 320x120
-/// view shows it about sixty pixels wide; past 500 uu the LOD reads the
-/// same and costs a third, and that covers the own car in every view, the
-/// two full lit meshes a split frame could not afford at kickoff.
-const CAR_LOD_DISTANCE: i32 = 500;
-
 /// A full-screen view swaps a car to its 60-face LOD once it is this many
 /// pixels long or less on screen, and back to the full mesh above
 /// [`CAR_LOD_EXIT_PX`]. Screen size rather than distance, because size is what
@@ -2891,6 +2945,16 @@ const CAR_LOD_EXIT_DEPTH: [i32; SEATS] = [
 ];
 /// Which seats a full-screen view is currently drawing from the LOD.
 static mut CAR_FAR_LOD: [bool; SEATS] = [false; SEATS];
+/// The same per split-screen half (top, bottom), each with its own camera.
+/// Both cars in a split match are a player's car, studied from a chase
+/// camera, so both take seat 0's sizes: the 60-face LOD is garbled at the
+/// sixty pixels the chase camera shows a car at (thin wheel slabs under a
+/// wedge of body), which is what drawing every split car past 500 uu from
+/// the LOD looked like (Manny's attract demo, 2026-10-03).
+static mut SPLIT_CAR_FAR_LOD: [[bool; SEATS]; 2] = [[false; SEATS]; 2];
+/// Which split half `build_view` is drawing: the index into
+/// [`SPLIT_CAR_FAR_LOD`]. Set by [`render_split`].
+static mut SPLIT_HALF: usize = 0;
 
 /// The same idea for the ball: a full-screen view drops to eight columns (the
 /// split view's mesh) once the ball is this many pixels across or less, and
@@ -3024,6 +3088,9 @@ static mut PAINTED_GAME: [[u32; CAR_MAX_VERTS]; SEATS] = [[RGBC_GREY; CAR_MAX_VE
 /// The same seat paints applied to the LOD copy of each seat's car.
 static mut PAINTED_LOD: [[u32; CAR_MAX_VERTS]; SEATS] = [[RGBC_GREY; CAR_MAX_VERTS]; SEATS];
 const RGBC_GREY: u32 = rgbc((128, 128, 128));
+/// Every vertex of a `diag-keys` LOD car: pure green, which lighting only
+/// darkens, so `tools/frame-check` can measure how big the LOD is drawn.
+static DIAG_LOD_KEY: [u32; CAR_MAX_VERTS] = [rgbc((0, 255, 0)); CAR_MAX_VERTS];
 
 /// A colour as the GTE's RGBC data register takes it, code byte zero.
 const fn rgbc(c: Rgb) -> u32 {
@@ -4388,19 +4455,26 @@ impl Builder<'_> {
     ) {
         count_offered!();
         let mut sp = [(0i16, 0i16); 4];
+        let mut behind = 0;
         let step = FLOOR_SPLIT_MAX as usize;
-        for (k, (ix, iz)) in [(gx, gz), (gx + step, gz), (gx, gz + step), (gx + step, gz + step)]
-            .into_iter()
-            .enumerate()
-        {
+        let at = [(gx, gz), (gx + step, gz), (gx, gz + step), (gx + step, gz + step)];
+        for (k, &(ix, iz)) in at.iter().enumerate() {
             let (cx, cz) = unsafe { *FLOOR_POS.get_unchecked(ix).get_unchecked(iz) };
             let p = project(Vec3I16::new(cx, 0, cz));
             if p.sz == 0 {
-                return;
+                behind += 1;
             }
             sp[k] = (p.sx, p.sy);
         }
-        if !sp.iter().any(|&(x, y)| on_view(x, y)) {
+        // A one-quad tile is a whole 1024-uu tile, and the distance band
+        // that picks it is measured to the tile's centre, so its near edge
+        // can still pass right by the camera: see `quad_pieces`.
+        let whole = behind == 0 && gpu_draws_whole(&sp);
+        if whole {
+            if !sp.iter().any(|&(x, y)| on_view(x, y)) {
+                return;
+            }
+        } else if behind == 4 || (behind == 0 && !quad_overlaps_view(&sp)) {
             return;
         }
         count_kept!();
@@ -4415,6 +4489,15 @@ impl Builder<'_> {
             ]
         };
         let last = (GRASS_TILE_W - 1) as u8;
+        if !whole {
+            let world = at.map(|(ix, iz)| {
+                let (x, z) = unsafe { *FLOOR_POS.get_unchecked(ix).get_unchecked(iz) };
+                (x as i32, 0, z as i32)
+            });
+            let uvs = [(0, 0), (last, 0), (0, last), (last, last)];
+            self.queue_pieces(world, uvs, tints, Pieces::Floor);
+            return;
+        }
         let uvs = [uvw(0, 0), uvw(last, 0), uvw(0, last), uvw(last, last)];
         self.floor_quad(sp, uvs, tints);
     }
@@ -4437,6 +4520,145 @@ impl Builder<'_> {
         } else {
             count_overflow!();
         }
+    }
+
+    /// Draw a pitch or wall quad the GPU cannot draw whole as a grid of
+    /// smaller pieces.
+    ///
+    /// Near the camera a quad can have a corner behind the near plane, or a
+    /// corner so close to it that the projection lands a thousand pixels off
+    /// screen, and the rasteriser drops any triangle with an edge 1024 or
+    /// more pixels wide or 512 tall. Either way the whole quad went, and the
+    /// sky showed through the pitch and the foot of the walls: in split
+    /// screen most of all, where pitch tiles and wall spans are cut coarser
+    /// (Manny's attract demo, 2026-10-03). The pieces lie on the quad's own
+    /// bilinear surface with its UVs and tints carried across, so a picture
+    /// only gains what was missing. A piece that still cannot be drawn is cut
+    /// the same way once more (`fine` is set on that pass), and dropped after
+    /// that, as the whole quad used to be.
+    ///
+    /// `world`, `uvs` and `tints` are in the corner order the packets use:
+    /// (0, 0), (1, 0), (0, 1), (1, 1). Cold: a handful of quads a frame reach
+    /// it, queued by [`Self::queue_pieces`] and drawn by [`Self::draw_pieces`]
+    /// on the main stack, because the pitch and wall phases leave too little
+    /// of the scratchpad stack for it.
+    #[inline(never)]
+    #[cold]
+    fn quad_pieces(
+        &mut self,
+        world: [(i32, i32, i32); 4],
+        uvs: [(u8, u8); 4],
+        tints: [u32; 4],
+        kind: Pieces,
+        fine: bool,
+    ) {
+        const N: i32 = PIECES;
+        let lerp = |a: i32, b: i32, t: i32| a + (b - a) * t / N;
+        // Bilinear over the corners, `i` along (0,0)-(1,0), `j` along (0,0)-(0,1).
+        let at = |c: [i32; 4], i: i32, j: i32| lerp(lerp(c[0], c[1], i), lerp(c[2], c[3], i), j);
+        let point = |i: i32, j: i32| {
+            let axis = |f: fn((i32, i32, i32)) -> i32| at(world.map(f), i, j);
+            (axis(|p| p.0), axis(|p| p.1), axis(|p| p.2))
+        };
+        let uv = |i: i32, j: i32| {
+            let axis = |f: fn((u8, u8)) -> u8| at(uvs.map(|c| f(c) as i32), i, j) as u8;
+            (axis(|c| c.0), axis(|c| c.1))
+        };
+        let tint = |i: i32, j: i32| {
+            let c = tints.map(rgb_of);
+            let ch = |f: fn(Rgb) -> u8| at(c.map(|c| f(c) as i32), i, j) as u8;
+            rgbc((ch(|c| c.0), ch(|c| c.1), ch(|c| c.2)))
+        };
+        let corner = |i: i32, j: i32| {
+            let p = point(i, j);
+            let v = project(Vec3I16::new(p.0 as i16, p.1 as i16, p.2 as i16));
+            (v.sz != 0).then_some((v.sx, v.sy, v.sz as i32))
+        };
+        let mut below = [None; PIECES as usize + 1];
+        for (i, slot) in below.iter_mut().enumerate() {
+            *slot = corner(i as i32, 0);
+        }
+        for j in 1..=N {
+            let mut above = [None; PIECES as usize + 1];
+            for (i, slot) in above.iter_mut().enumerate() {
+                *slot = corner(i as i32, j);
+            }
+            for i in 0..N {
+                let k = i as usize;
+                let quad = (below[k], below[k + 1], above[k], above[k + 1]);
+                let corners = [(i, j - 1), (i + 1, j - 1), (i, j), (i + 1, j)];
+                let whole = match quad {
+                    (Some(a), Some(b), Some(c), Some(d)) => {
+                        let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
+                        if !quad_overlaps_view(&sp) {
+                            continue;
+                        }
+                        gpu_draws_whole(&sp).then_some((sp, a.2 + b.2 + c.2 + d.2))
+                    }
+                    (None, None, None, None) => continue,
+                    _ => None,
+                };
+                let Some((sp, z_sum)) = whole else {
+                    // The piece at the near corner can still be too big: cut
+                    // it once more, which leaves a sixteenth of the quad's
+                    // side undrawn rather than a quarter.
+                    if !fine {
+                        self.quad_pieces(
+                            corners.map(|(x, y)| point(x, y)),
+                            corners.map(|(x, y)| uv(x, y)),
+                            corners.map(|(x, y)| tint(x, y)),
+                            kind,
+                            true,
+                        );
+                    }
+                    continue;
+                };
+                let piece_uvs = corners.map(|(x, y)| {
+                    let (u, v) = uv(x, y);
+                    uvw(u, v)
+                });
+                let piece_tints = corners.map(|(x, y)| tint(x, y));
+                match kind {
+                    Pieces::Floor => self.floor_quad(sp, piece_uvs, piece_tints),
+                    Pieces::Wall { packet, blended } => {
+                        self.quad_tex_words(sp, z_sum, piece_uvs, piece_tints, 0, packet, blended)
+                    }
+                }
+            }
+            below = above;
+        }
+    }
+
+    /// Note a quad for [`Self::quad_pieces`], which [`Self::draw_pieces`]
+    /// draws once the phase is off the scratchpad stack. A quad past the
+    /// queue's end is dropped, as every such quad used to be.
+    #[inline(always)]
+    fn queue_pieces(
+        &mut self,
+        world: [(i32, i32, i32); 4],
+        uvs: [(u8, u8); 4],
+        tints: [u32; 4],
+        kind: Pieces,
+    ) {
+        unsafe {
+            let n = PIECE_JOB_COUNT;
+            if n < MAX_PIECE_JOBS {
+                PIECE_JOBS[n] = PieceJob { world, uvs, tints, kind };
+                PIECE_JOB_COUNT = n + 1;
+            }
+        }
+    }
+
+    /// Draw the quads the last phase queued for [`Self::quad_pieces`]. The
+    /// GTE still holds the world view the phase projected with.
+    #[inline(never)]
+    fn draw_pieces(&mut self) {
+        let count = unsafe { PIECE_JOB_COUNT };
+        for k in 0..count {
+            let job = unsafe { PIECE_JOBS[k] };
+            self.quad_pieces(job.world, job.uvs, job.tints, job.kind, false);
+        }
+        unsafe { PIECE_JOB_COUNT = 0 };
     }
 
     fn floor(&mut self, cull: &Cull) {
@@ -4567,21 +4789,31 @@ impl Builder<'_> {
                     };
                     for sz in 0..nu {
                         count_offered!();
-                        let (Some(a), Some(b), Some(c), Some(d)) = (
+                        let quad = (
                             corners[sx][sz],
                             corners[sx + 1][sz],
                             corners[sx][sz + 1],
                             corners[sx + 1][sz + 1],
-                        ) else {
-                            continue;
+                        );
+                        let whole = match quad {
+                            (Some(a), Some(b), Some(c), Some(d)) => {
+                                let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
+                                if gpu_draws_whole(&sp) {
+                                    if !sp.iter().any(|&(x, y)| on_view(x, y)) {
+                                        continue;
+                                    }
+                                    Some(sp)
+                                } else if quad_overlaps_view(&sp) {
+                                    None
+                                } else {
+                                    continue;
+                                }
+                            }
+                            (None, None, None, None) => continue,
+                            _ => None,
                         };
-                        let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
-                        if !sp.iter().any(|&(x, y)| on_view(x, y)) {
-                            continue;
-                        }
                         count_kept!();
                         let (va, vb) = (u(sz as i32), u(sz as i32 + 1));
-                        let uvs = [uvw(ua, va), uvw(ub, va), uvw(ua, vb), uvw(ub, vb)];
                         let (j0, j1) = (gz + sz * stride, gz + (sz + 1) * stride);
                         let tints = unsafe {
                             [
@@ -4591,6 +4823,26 @@ impl Builder<'_> {
                                 *r1.get_unchecked(j1),
                             ]
                         };
+                        let Some(sp) = whole else {
+                            // Too near the camera to draw whole: the same
+                            // quad from its world corners, in pieces.
+                            let at = |di: usize, dj: usize| {
+                                let (x, z) = unsafe {
+                                    *FLOOR_POS
+                                        .get_unchecked(gx + (sx + di) * grid_step)
+                                        .get_unchecked(gz + (sz + dj) * grid_step)
+                                };
+                                (x as i32, 0, z as i32)
+                            };
+                            self.queue_pieces(
+                                [at(0, 0), at(1, 0), at(0, 1), at(1, 1)],
+                                [(ua, va), (ub, va), (ua, vb), (ub, vb)],
+                                tints,
+                                Pieces::Floor,
+                            );
+                            continue;
+                        };
+                        let uvs = [uvw(ua, va), uvw(ub, va), uvw(ua, vb), uvw(ub, vb)];
                         self.floor_quad(sp, uvs, tints);
                     }
                 }
@@ -5365,19 +5617,22 @@ impl Builder<'_> {
             let (llo, lhi) = unsafe { (light.get_unchecked(ri), light.get_unchecked(top)) };
             for k in 0..columns - 1 {
                 count_offered!();
-                let (Some(a), Some(b), Some(c), Some(d)) =
-                    (lower[k], lower[k + 1], upper[k], upper[k + 1])
-                else {
-                    continue;
+                let whole = match (lower[k], lower[k + 1], upper[k], upper[k + 1]) {
+                    (Some(a), Some(b), Some(c), Some(d)) => {
+                        let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
+                        // A nearby roof-curve band can cross the whole view
+                        // while all four projected corners sit beyond its
+                        // edges. Corner-only acceptance made that top section
+                        // disappear during a wall climb even though the
+                        // polygon covered visible pixels.
+                        if !quad_overlaps_view(&sp) {
+                            continue;
+                        }
+                        gpu_draws_whole(&sp).then_some((sp, a.2 + b.2 + c.2 + d.2))
+                    }
+                    (None, None, None, None) => continue,
+                    _ => None,
                 };
-                let sp = [(a.0, a.1), (b.0, b.1), (c.0, c.1), (d.0, d.1)];
-                // A nearby roof-curve band can cross the whole view while all
-                // four projected corners sit beyond its edges. Corner-only
-                // acceptance made that top section disappear during a wall
-                // climb even though the polygon covered visible pixels.
-                if !quad_overlaps_view(&sp) {
-                    continue;
-                }
                 count_kept!();
                 // The wall tile starts at texel 64 now that grass owns the
                 // first 64 columns. Slicing from 32 sampled grass and painted
@@ -5405,15 +5660,24 @@ impl Builder<'_> {
                         *lhi.get_unchecked(s1),
                     ]
                 };
-                self.quad_tex_words(
-                    sp,
-                    a.2 + b.2 + c.2 + d.2,
-                    uvs,
-                    tints,
-                    0,
-                    if covered { COVER_PACKET } else { WALL_PACKET },
-                    covered,
-                );
+                let packet = if covered { COVER_PACKET } else { WALL_PACKET };
+                let Some((sp, z_sum)) = whole else {
+                    // Too near the camera to draw whole: the same quad from
+                    // its world corners, swept exactly as the rings above.
+                    let point = |col: usize, ring: usize| {
+                        let p = profile[ring];
+                        let pk = if ring <= CURVE_SEGS { ramp_point(p, ramp[col] as i32) } else { p };
+                        (sx[col] + ((cnx[col] * pk.0) >> 12), -pk.1, sz[col] + ((cnz[col] * pk.0) >> 12))
+                    };
+                    self.queue_pieces(
+                        [point(k, ri), point(k + 1, ri), point(k, top), point(k + 1, top)],
+                        [(u0, v0), (u1, v0), (u0, v1), (u1, v1)],
+                        tints,
+                        Pieces::Wall { packet, blended: covered },
+                    );
+                    continue;
+                };
+                self.quad_tex_words(sp, z_sum, uvs, tints, 0, packet, covered);
             }
         }
     }
@@ -6456,20 +6720,17 @@ fn draw_cars(
         // so the blob is never parsed again here: that was a header walk per
         // car per view, four of them in a split frame.
         let which = which.min(CAR_COUNT - 1);
-        // Beyond the LOD distance a half-height view draws the 60-face copy
-        // with the same paint; the full mesh costs the same ~83k cycles at
-        // thirty pixels as it does filling the screen.
-        let far = if split_view() {
-            cull.flat_distance(ground.0, ground.2) > CAR_LOD_DISTANCE
+        // Small on screen, draw the 60-face copy with the same paint; the full
+        // mesh costs the same ~83k cycles at thirty pixels as it does filling
+        // the screen. A split half keeps its own state and seat 0's sizes for
+        // both cars (see `SPLIT_CAR_FAR_LOD`).
+        let depth = view.camera_space(ground).2;
+        let (state, size) = if split_view() {
+            (unsafe { &mut SPLIT_CAR_FAR_LOD[SPLIT_HALF][seat] }, 0)
         } else {
-            let depth = view.camera_space(ground).2;
-            lod_far(
-                unsafe { &mut CAR_FAR_LOD[seat] },
-                depth,
-                CAR_LOD_ENTER_DEPTH[seat],
-                CAR_LOD_EXIT_DEPTH[seat],
-            )
+            (unsafe { &mut CAR_FAR_LOD[seat] }, seat)
         };
+        let far = lod_far(state, depth, CAR_LOD_ENTER_DEPTH[size], CAR_LOD_EXIT_DEPTH[size]);
         let which = if far { which + CAR_COUNT } else { which };
         // Mid-flip, spin the car about the axis across its dodge direction:
         // yaw into the dodge frame, tumble about X, yaw back out. A forward
@@ -6509,7 +6770,9 @@ fn draw_cars(
             .load_gte();
         lights.for_object(&view_rot).load();
         let materials = unsafe {
-            if far {
+            if far && cfg!(feature = "diag-keys") {
+                &DIAG_LOD_KEY
+            } else if far {
                 &PAINTED_LOD[seat]
             } else {
                 &PAINTED_GAME[seat]
@@ -7003,6 +7266,7 @@ pub fn render_split(
                 submit_detached();
             }
             SET = new;
+            SPLIT_HALF = k;
             VIEW_TAIL = k == 1;
             enter_view_cpu(vp);
             render_view(s, cars, cam, subject, vp, camera_slot);
@@ -7144,7 +7408,8 @@ fn build_view(
             on_scratchpad(|| {
                 b.floor(&cull);
                 b.lines(&cull);
-            })
+            });
+            b.draw_pieces();
         });
         staged!(S_PADS, { on_scratchpad(|| b.pads(s, &cull)) });
         staged!(S_WALLS, {
@@ -7152,7 +7417,8 @@ fn build_view(
                 b.walls(&cull);
                 b.stands(&cull);
                 b.lamps(&cull);
-            })
+            });
+            b.draw_pieces();
         });
         staged!(S_TRIM, {
             on_scratchpad(|| {
