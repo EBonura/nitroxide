@@ -151,7 +151,7 @@ fn parse_args() -> Result<(PathBuf, Limits), String> {
     );
     // Defaults: a pitch hole beside the camera covered up to 6,073 px of a
     // view's bottom band before the fix and cracks of 20 to 110 px remain;
-    // a camera level with a car low on a side wall also sees up to ~550 px
+    // a camera level with a car low on a side wall also sees up to ~1,300 px
     // of sky through the net there, which is not a hole. A split view's LOD
     // car is at most ~28 px long, which covered 107 px at worst over the
     // attract demo once fixed, against
@@ -159,7 +159,7 @@ fn parse_args() -> Result<(PathBuf, Limits), String> {
     // keeps the opponent's LOD down to 56 px long, so it gets more room.
     let mut limits = Limits {
         ticks: None,
-        hole: 600,
+        hole: 1500,
         lod_split: 150,
         lod_single: 600,
     };
