@@ -4786,10 +4786,28 @@ impl Builder<'_> {
                 c.2 as i32,
             ]
         };
+        // Two corner buffers the planes cut back and forth between: copying a
+        // whole polygon per plane was a measurable share of the clip.
+        let mut bufs = [[[0i32; 11]; MAX]; 2];
         // The packets' corner order is a zigzag; walk the quad's outline.
-        let mut poly = [corner(0); MAX];
-        (poly[1], poly[2], poly[3]) = (corner(1), corner(3), corner(2));
-        let mut n = 4;
+        (bufs[0][0], bufs[0][1], bufs[0][2], bufs[0][3]) =
+            (corner(0), corner(1), corner(3), corner(2));
+        // Most queued quads lie beside or behind the camera, out of the view
+        // itself: if all four corners are past one of its planes, nothing of
+        // the quad shows, and the clip below is the expensive part.
+        let (half_w, half_h) = unsafe { (VIEW_HALF_W, VIEW_HALF_H) };
+        let quad = &bufs[0][..4];
+        let past =
+            |test: fn(&Corner, i32, i32) -> bool| quad.iter().all(|c| test(c, half_w, half_h));
+        if past(|c, _, _| c[5] <= NEAR)
+            || past(|c, w, _| c[3] * H > w * c[5])
+            || past(|c, w, _| -c[3] * H > w * c[5])
+            || past(|c, _, h| c[4] * H > h * c[5])
+            || past(|c, _, h| -c[4] * H > h * c[5])
+        {
+            return;
+        }
+        let (mut src, mut n) = (0, 4);
         for plane in 0..5 {
             // Signed distance outside the plane, in camera space, scaled by
             // the projection plane for the four guard-band sides.
@@ -4806,19 +4824,19 @@ impl Builder<'_> {
             let mut d = [0i32; MAX];
             let mut cut = false;
             for i in 0..n {
-                d[i] = outside(&poly[i]);
+                d[i] = outside(&bufs[src][i]);
                 cut |= d[i] > 0;
             }
             if !cut {
                 continue;
             }
-            let mut out = [poly[0]; MAX];
+            let dst = src ^ 1;
             let mut m = 0;
             for i in 0..n {
                 let j = if i + 1 == n { 0 } else { i + 1 };
                 let (da, db) = (d[i], d[j]);
                 if da <= 0 && m < MAX {
-                    out[m] = poly[i];
+                    bufs[dst][m] = bufs[src][i];
                     m += 1;
                 }
                 if (da <= 0) != (db <= 0) && m < MAX {
@@ -4830,17 +4848,20 @@ impl Builder<'_> {
                         den >>= 1;
                     }
                     let t = (num << 12) / den.max(1);
-                    let (a, b) = (&poly[i], &poly[j]);
-                    out[m] = core::array::from_fn(|k| a[k] + (((b[k] - a[k]) * t) >> 12));
+                    let (a, b) = (bufs[src][i], bufs[src][j]);
+                    for k in 0..11 {
+                        bufs[dst][m][k] = a[k] + (((b[k] - a[k]) * t) >> 12);
+                    }
                     m += 1;
                 }
             }
-            poly = out;
+            src = dst;
             n = m;
             if n < 3 {
                 return;
             }
         }
+        let poly = &bufs[src];
         let mut screen = [(0i16, 0i16, 0i32); MAX];
         for (s, c) in screen.iter_mut().zip(&poly[..n]) {
             let v = project(Vec3I16::new(c[0] as i16, c[1] as i16, c[2] as i16));
