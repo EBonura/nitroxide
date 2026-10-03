@@ -56,6 +56,10 @@ boot-roof-length = []
 # in the air beside the goal post: the end wall's floor curve close up, the
 # post, and the pitch's edge along the end wall, held still.
 boot-end-wall = []
+# Dev: the split-screen stress route, bot matches shown the costly way
+# (ball cam in both halves, cars close under the chase cameras), straight
+# from boot. The gate route for split screen at 30.
+boot-split-stress = []
 # Dev: render every second vblank. Not a shipping mode: a build whose frames
 # all fit two vblanks presents on the same ticks as any other such build, so
 # two builds' screenshots can be compared tick for tick to prove a speed-up

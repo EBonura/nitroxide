@@ -197,6 +197,19 @@ fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
 /// whole-screen coordinates and the framebuffer's own drawing offset still
 /// puts them in the right buffer. Only the scissor has to know about VRAM.
 fn enter_view(vp: Viewport, buffer_y: u16) {
+    enter_view_cpu(vp);
+    psx_gpu::set_draw_area(
+        vp.x as u16,
+        buffer_y + vp.y as u16,
+        (vp.x + vp.w) as u16 - 1,
+        buffer_y + (vp.y + vp.h) as u16 - 1,
+    );
+}
+
+/// The CPU half of [`enter_view`]: the rejection bounds and the GTE's
+/// projection centre, with no GP0 write, for a view whose scissor travels in
+/// its own table ([`AreaPacket`]) while another table may still be walking.
+fn enter_view_cpu(vp: Viewport) {
     unsafe {
         VIEW_MIN_X = vp.x - EDGE_SLACK;
         VIEW_MAX_X = vp.x + vp.w + EDGE_SLACK;
@@ -210,20 +223,6 @@ fn enter_view(vp: Viewport, buffer_y: u16) {
         ((vp.x + vp.w / 2) as i32) << 16,
         ((vp.y + vp.h / 2) as i32) << 16,
     );
-    psx_gpu::set_draw_area(
-        vp.x as u16,
-        buffer_y + vp.y as u16,
-        (vp.x + vp.w) as u16 - 1,
-        buffer_y + (vp.y + vp.h) as u16 - 1,
-    );
-}
-
-/// Hand the whole back buffer back, so the overlay pass can write across the
-/// seam. The runner draws the HUD after `render` returns and before the swap
-/// that would otherwise reset the scissor, so leaving a half-width area
-/// behind clips every string on the right of the screen.
-fn leave_view(buffer_y: u16) {
-    enter_view(Viewport::FULL, buffer_y);
 }
 
 // The default chase camera follows the car. Ball cam keeps the ball as its
@@ -327,7 +326,10 @@ pub fn set_camera_tick(tick: u32) {
 /// next `render` submits a table from before the cut, whose packets a split
 /// frame may since have overwritten.
 pub fn drop_pending() {
-    unsafe { PENDING = false };
+    unsafe {
+        PENDING = false;
+        SPLIT_PENDING = false;
+    }
 }
 
 /// Forget both chase cameras' history, so the next frame frames its car
@@ -2110,17 +2112,87 @@ pub fn upload_arena_texture(blob: &[u8]) -> bool {
     true
 }
 
-static mut OT_SETS: [OrderingTable<OT_DEPTH>; 2] = [OrderingTable::new(), OrderingTable::new()];
+/// Packet sets: the frame being built and the frame in flight, for one view
+/// (sets 0 and 1) and, in split screen, for the second view (2 and 3).
+const SET_COUNT: usize = 4;
+static mut OT_SETS: [OrderingTable<OT_DEPTH>; SET_COUNT] =
+    [const { OrderingTable::new() }; SET_COUNT];
 /// EXPERIMENT: which packet set the frame being built uses; the other may be in flight.
 static mut SET: usize = 0;
 static mut PENDING: bool = false;
-static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; 2] = [QUADS_INIT; 2];
+/// Split screen's tables from the last frame wait to be drawn: both views'
+/// sets `SET` and `SET + 2` (see [`render_split`]).
+static mut SPLIT_PENDING: bool = false;
+/// The vblank the last split frame flips on (see [`note_split_flip`]).
+static mut SPLIT_FLIP_VBLANK: u32 = 0;
+
+/// Note when a split frame flips: call last thing before every flip (the HUD
+/// overlay's end); it does nothing unless the frame was a split one. The
+/// flip lands on the vblank after this returns. See [`hold_split_cadence`].
+pub fn note_split_flip() {
+    unsafe {
+        if SPLIT_PENDING {
+            SPLIT_FLIP_VBLANK = psx_rt::interrupts::vblank_count().wrapping_add(1);
+        }
+    }
+}
+
+/// Hold split screen at a steady 30, last thing in [`render_split`].
+///
+/// Pipelined, a quiet split frame fits in one vblank, and a picture that
+/// alternates between one and two vblanks judders. A frame built within the
+/// vblank of the last flip waits here for the next one, so it flips two
+/// vblanks after the last, as it always did when every split frame ran long.
+/// Waiting here rather than at the flip lets the runner spend the rest of
+/// that second vblank on the fixed update it falls due for, instead of
+/// owing it after the flip. A frame that is late anyway does not wait.
+fn hold_split_cadence() {
+    use psx_rt::interrupts::{vblank_count, wait_vblank};
+    unsafe {
+        while (vblank_count().wrapping_sub(SPLIT_FLIP_VBLANK) as i32) < 1 {
+            wait_vblank();
+        }
+    }
+}
+
+/// GP0(E3h) and GP0(E4h) as an ordering-table packet: a view's scissor set
+/// from inside its own table, so the GPU switches between the two halves
+/// in command order while the CPU builds the next view. Filled in when the
+/// table is kicked, because the back buffer it lands in is only known then.
+#[repr(C, align(4))]
+struct AreaPacket {
+    tag: u32,
+    top_left: u32,
+    bottom_right: u32,
+}
+const AREA_WORDS: u8 = 2;
+impl AreaPacket {
+    const EMPTY: Self = Self {
+        tag: 0,
+        top_left: 0xE300_0000,
+        bottom_right: 0xE400_0000,
+    };
+    fn set(&mut self, vp: Viewport, buffer_y: u16) {
+        let (x0, y0) = (vp.x as u32, buffer_y as u32 + vp.y as u32);
+        let (x1, y1) = ((vp.x + vp.w) as u32 - 1, buffer_y as u32 + (vp.y + vp.h) as u32 - 1);
+        self.top_left = 0xE300_0000 | (x0 & 0x3FF) | ((y0 & 0x1FF) << 10);
+        self.bottom_right = 0xE400_0000 | (x1 & 0x3FF) | ((y1 & 0x1FF) << 10);
+    }
+}
+/// Per set: the scissor its view is drawn with, first in its table, and for
+/// the second split view the whole screen again, last in its table, so the
+/// HUD overlay after it is not clipped to the bottom half.
+static mut AREA_HEAD: [AreaPacket; SET_COUNT] = [const { AreaPacket::EMPTY }; SET_COUNT];
+static mut AREA_TAIL: [AreaPacket; SET_COUNT] = [const { AreaPacket::EMPTY }; SET_COUNT];
+/// `build_view` links `AREA_TAIL[SET]` as the last packet of the table.
+static mut VIEW_TAIL: bool = false;
+static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; SET_COUNT] = [QUADS_INIT; SET_COUNT];
 /// Single-colour quads: the pitch markings (one per pair of cuts at worst)
 /// and, per pad, the two plates and the far orb's one diamond. A flat quad
 /// costs the GPU a quarter of a Gouraud one's setup and half its fill, so
 /// nothing that is one colour anyway pays for shading.
 const MAX_FLAT_QUADS: usize = MAX_LINE_SECTIONS + 3 * sim::PADS.len();
-static mut FLAT_QUADS_SETS: [[QuadFlat; MAX_FLAT_QUADS]; 2] = [FLAT_QUADS_INIT; 2];
+static mut FLAT_QUADS_SETS: [[QuadFlat; MAX_FLAT_QUADS]; SET_COUNT] = [FLAT_QUADS_INIT; SET_COUNT];
 const FLAT_QUADS_INIT: [QuadFlat; MAX_FLAT_QUADS] =
     [const { QuadFlat::new([(0, 0); 4], 0, 0, 0) }; MAX_FLAT_QUADS];
 const QUADS_INIT: [QuadGouraud; MAX_QUADS] =
@@ -2136,7 +2208,7 @@ const QUADS_INIT: [QuadGouraud; MAX_QUADS] =
 // Keep another thirty-two packets of headroom for a near-plane split rather
 // than allowing a high aerial to lose random cells from the enclosure.
 const MAX_TEX_QUADS: usize = 704;
-static mut TEX_QUADS_SETS: [[QuadTexturedGouraud; MAX_TEX_QUADS]; 2] = [TEX_INIT; 2];
+static mut TEX_QUADS_SETS: [[QuadTexturedGouraud; MAX_TEX_QUADS]; SET_COUNT] = [TEX_INIT; SET_COUNT];
 const TEX_INIT: [QuadTexturedGouraud; MAX_TEX_QUADS] =
     [const { QuadTexturedGouraud::EMPTY }; MAX_TEX_QUADS];
 
@@ -2160,7 +2232,7 @@ const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
 /// Goal halos (four a goal, eight with both goals in view), the ball's disc,
 /// and its hoop at up to sixteen segments of two quads: 41 at most.
 const MAX_GLOWS: usize = 64;
-static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; 2] = [GLOW_INIT; 2];
+static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; SET_COUNT] = [GLOW_INIT; SET_COUNT];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
     GlowQuad {
         quad: QuadTexturedGouraud::EMPTY,
@@ -2194,7 +2266,8 @@ impl ClutLoad {
 /// The crowd's two palettes, one per end, loaded every frame from inside the
 /// table (one per packet set: the other set's table may still be in flight):
 /// they carry the teams' colours and a shimmer through the fans.
-static mut CROWD_CLUT_LOAD: [[ClutLoad; 2]; 2] = [const { [ClutLoad::EMPTY, ClutLoad::EMPTY] }; 2];
+static mut CROWD_CLUT_LOAD: [[ClutLoad; 2]; SET_COUNT] =
+    [const { [ClutLoad::EMPTY, ClutLoad::EMPTY] }; SET_COUNT];
 
 /// Crowd palette entries that are not team colour (tools/cook-arena's crowd
 /// tile indexes them): seat shadow, tier step, clothes and faces.
@@ -3106,7 +3179,7 @@ const TRI_GOURAUD_CMD: u32 = TriGouraud::new([(0, 0); 3], [(0, 0, 0); 3]).color0
 /// rounded up for the bodywork that overhangs the collision box.
 const CAR_BOUND_R: i32 = 128;
 
-static mut CAR_TRIS_SETS: [[TriGouraud; CAR_TRI_CAP]; 2] = [TRIS_INIT; 2];
+static mut CAR_TRIS_SETS: [[TriGouraud; CAR_TRI_CAP]; SET_COUNT] = [TRIS_INIT; SET_COUNT];
 const TRIS_INIT: [TriGouraud; CAR_TRI_CAP] =
     [const { TriGouraud::new([(0, 0); 3], [(0, 0, 0); 3]) }; CAR_TRI_CAP];
 static mut CAR_PROJ: [CarLit; CAR_VERT_CAP] = [EMPTY_LIT; CAR_VERT_CAP];
@@ -6810,7 +6883,10 @@ pub fn render_menu(s: &Sim, cars: [usize; SEATS], panels: FrontPanels, pair: boo
         STAGE_CAM_PITCH,
     );
     enter_view(Viewport::FULL, buffer_y);
-    unsafe { PENDING = false };
+    unsafe {
+        PENDING = false;
+        SPLIT_PENDING = false;
+    }
     build_view(s, cars, view, Viewport::FULL, Some(panels), 0);
     submit_detached();
 }
@@ -6851,6 +6927,7 @@ pub fn render(s: &Sim, cars: [usize; SEATS], ball_cam: bool, buffer_y: u16) {
     // EXPERIMENT: kick the table the previous call built, then build this
     // frame's into the other set while the GPU draws that one.
     unsafe {
+        SPLIT_PENDING = false;
         if PENDING {
             submit_detached();
         }
@@ -6890,15 +6967,56 @@ pub fn render_split(
     } else {
         (ball_cam[0], ball_cam[1], 0, 1)
     };
-    for (vp, subject, cam, camera_slot) in [
-        (Viewport::TOP, near, near_cam, near_slot),
-        (Viewport::BOTTOM, far, far_cam, far_slot),
-    ] {
-        enter_view(vp, buffer_y);
-        render_view(s, cars, cam, subject, vp, camera_slot);
-        submit_prepared();
+    // Pipelined the way the one-view path is: this frame draws the two
+    // tables the last frame built, each kicked while the CPU builds this
+    // frame's table for the same view, so the GPU's half of the work runs
+    // under the CPU's instead of after it. The scissors travel inside the
+    // tables (`AreaPacket`), because no immediate GP0 write may land while a
+    // table is walking. The picture is one frame behind the sim, as it
+    // already is with one view.
+    //
+    // The old order drew each view as soon as it was built and waited for
+    // it, so a frame cost both views' CPU plus both views' GPU, and scenes
+    // with both cars close together or ball cam down the length of the
+    // arena ran past two vblanks (the boot-split-stress route).
+    unsafe {
+        PENDING = false;
+        let (prev, cur) = (SET, SET ^ 1);
+        let pending = SPLIT_PENDING;
+        for (k, (vp, subject, cam, camera_slot)) in [
+            (Viewport::TOP, near, near_cam, near_slot),
+            (Viewport::BOTTOM, far, far_cam, far_slot),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (old, new) = (prev + 2 * k, cur + 2 * k);
+            if pending {
+                if k == 1 {
+                    // One DMA channel: the first view's walk must end
+                    // before the second's starts.
+                    psx_gpu::submit_linked_list_wait();
+                }
+                AREA_HEAD[old].set(vp, buffer_y);
+                AREA_TAIL[old].set(Viewport::FULL, buffer_y);
+                SET = old;
+                submit_detached();
+            }
+            SET = new;
+            VIEW_TAIL = k == 1;
+            enter_view_cpu(vp);
+            render_view(s, cars, cam, subject, vp, camera_slot);
+            VIEW_TAIL = false;
+            // Last into the first slot walked, so first in the table.
+            OT_SETS[new].add(SKY_SLOT, &mut AREA_HEAD[new], AREA_WORDS);
+        }
+        SET = cur;
+        SPLIT_PENDING = true;
     }
-    leave_view(buffer_y);
+    // CPU side only: the second table, still walking, sets the whole screen
+    // back as its last packet before the runner draws the HUD.
+    enter_view_cpu(Viewport::FULL);
+    hold_split_cadence();
 }
 
 /// Build the ordering table for one view. The caller has already pointed the
@@ -6975,6 +7093,12 @@ fn build_view(
                 flats: unsafe { PrimitiveArena::new(&mut FLAT_QUADS_SETS[SET]) },
                 glow: unsafe { PrimitiveArena::new(&mut GLOW_SETS[SET]) },
             };
+            // First into slot 0, so walked after everything else.
+            unsafe {
+                if VIEW_TAIL {
+                    b.ot.add(0, &mut AREA_TAIL[SET], AREA_WORDS);
+                }
+            }
             // The crowd's palettes for this frame, loaded before anything in
             // the table samples them.
             unsafe {
@@ -7103,22 +7227,6 @@ fn build_view(
     }
 }
 
-/// Kick the ordering table a split-screen pass prepared and wait for the walk.
-///
-/// The scene uses the engine's immediate contract: `render` kicks its own
-/// table and the runner drains it before the HUD overlay and the flip. A
-/// split pass has to wait here, because the next pass (and `leave_view`)
-/// moves the drawing area with an immediate GP0 command, which must not land
-/// while this pass's packets are still being walked.
-pub fn submit_prepared() {
-    staged!(S_SUBMIT, {
-        apply_arena_draw_mode();
-        // Synchronous: kick the linked-list DMA and wait for the walk.
-        // The GPU keeps rasterising afterwards; the engine's draw_sync
-        // before the flip covers that tail, same as voxide's frame shape.
-        unsafe { OtFrame::resume(&mut OT_SETS[SET]) }.submit();
-    });
-}
 
 /// Kick a whole-screen table and return while the walk runs.
 ///
