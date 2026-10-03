@@ -28,7 +28,7 @@ use psx_settings::Profile;
 use psx_vram::{Clut, TexDepth, Tpage};
 
 use nitroxide_sim::{
-    Input, Sim, Team, WinCondition, BOOST_MAX_PIPS, BOOST_SCALE, DEMO_MATCHES,
+    DemoMatch, Input, Sim, Team, WinCondition, BOOST_MAX_PIPS, BOOST_SCALE, DEMO_MATCHES,
 };
 
 mod assets;
@@ -126,8 +126,9 @@ const DEMO_DRESS_AT: u32 = DEMO_CUT_TICKS - 4;
 /// How each demo match is presented, in the order of [`DEMO_MATCHES`]: one
 /// view and split screen alternating, each arena look in turn, and the cars
 /// and paints changing so the garage shows too. Split screen runs both chase
-/// cameras: ball cam down the length of the arena in both halves dropped the
-/// first split match below 30 fps for a quarter of a second (2026-10-02).
+/// cameras: when the demo was made, ball cam down the length of the arena in
+/// both halves dropped the first split match below 30 fps (2026-10-02, since
+/// fixed by pipelining `draw::render_split`); the footage was kept.
 struct DemoShow {
     split: bool,
     ball_cam: [bool; 2],
@@ -135,6 +136,7 @@ struct DemoShow {
     cars: [usize; 2],
     paints: [usize; 2],
 }
+#[cfg_attr(feature = "boot-split-stress", allow(dead_code))]
 const DEMO_SHOWS: [DemoShow; DEMO_MATCHES.len()] = [
     DemoShow {
         split: false,
@@ -164,6 +166,33 @@ const DEMO_SHOWS: [DemoShow; DEMO_MATCHES.len()] = [
         cars: [0, 2],
         paints: [7, 5],
     },
+];
+
+/// The matches the demo plays and how it shows them: the attract demo's,
+/// or with `boot-split-stress` the split-screen stress route.
+#[cfg(not(feature = "boot-split-stress"))]
+const ROUTE_MATCHES: &[DemoMatch] = &DEMO_MATCHES;
+#[cfg(not(feature = "boot-split-stress"))]
+const ROUTE_SHOWS: &[DemoShow] = &DEMO_SHOWS;
+#[cfg(feature = "boot-split-stress")]
+const ROUTE_MATCHES: &[DemoMatch] = &STRESS_MATCHES;
+#[cfg(feature = "boot-split-stress")]
+const ROUTE_SHOWS: &[DemoShow] = &STRESS_SHOWS;
+
+/// Dev: the split-screen stress route. Bot matches that drove split screen
+/// under 30 fps in the attract demo's first drafts (2026-10-02): ball cam
+/// down the arena in both halves, and both cars close together under the
+/// chase cameras. The same seeds as the demo, shown the costly way.
+#[cfg(feature = "boot-split-stress")]
+const STRESS_MATCHES: [DemoMatch; 4] = [DEMO_MATCHES[1], DEMO_STRESS_CLOSE, DEMO_STRESS_CLOSE, DEMO_MATCHES[1]];
+#[cfg(feature = "boot-split-stress")]
+const DEMO_STRESS_CLOSE: DemoMatch = DemoMatch { spot: 1, seed: 10, first_goal: 1399, scorer: Team::Blue };
+#[cfg(feature = "boot-split-stress")]
+const STRESS_SHOWS: [DemoShow; 4] = [
+    DemoShow { split: true, ball_cam: [true, true], arena: draw::ArenaTime::Day, cars: [1, 2], paints: [1, 4] },
+    DemoShow { split: true, ball_cam: [true, true], arena: draw::ArenaTime::Night, cars: [0, 2], paints: [7, 5] },
+    DemoShow { split: true, ball_cam: [false, false], arena: draw::ArenaTime::Night, cars: [0, 2], paints: [7, 5] },
+    DemoShow { split: true, ball_cam: [true, false], arena: draw::ArenaTime::Day, cars: [1, 2], paints: [1, 4] },
 ];
 
 /// Where the demo is, and what it borrowed from the player's own setup to
@@ -469,7 +498,7 @@ impl NitroXide {
     /// goes on mid-cut, see [`Self::apply_demo_look`].
     fn demo_show(&mut self, show: usize) {
         audio::stop_all();
-        self.sim = Sim::demo(&DEMO_MATCHES[show]);
+        self.sim = Sim::demo(&ROUTE_MATCHES[show]);
         self.demo.show = show;
         self.demo.t = 0;
         self.demo.scored = false;
@@ -482,7 +511,7 @@ impl NitroXide {
     /// debt it leaves is dropped rather than caught up: the sim ticks after
     /// it are the same ticks whether the bake took 40 vblanks or 45.
     fn apply_demo_look(&mut self, ctx: &mut Ctx) {
-        let s = &DEMO_SHOWS[self.demo.show];
+        let s = &ROUTE_SHOWS[self.demo.show];
         self.two_player = s.split;
         self.ball_cam = s.ball_cam;
         self.arena_time = s.arena;
@@ -1262,9 +1291,9 @@ impl NitroXide {
     /// slides in from the right when a song starts and back out as the
     /// banner expires, with a spinning disc ahead of the type. Drawn
     /// immediate like the rest of the overlay: the ordering table is long
-    /// submitted, and `leave_view` has already handed back the full-screen
-    /// scissor, so screen coordinates land in the right buffer and the
-    /// GPU clips the plate's off-screen end.
+    /// submitted, and the full-screen scissor is back (a split frame's
+    /// second table restores it as its last packet), so screen coordinates
+    /// land in the right buffer and the GPU clips the plate's off-screen end.
     fn draw_now_playing(&self, font: &FontAtlas, tick: u32) {
         let Some((name, elapsed)) = self.music.now_playing(tick) else {
             return;
@@ -1599,6 +1628,8 @@ impl Scene for NitroXide {
         {
             self.phase = Phase::Play;
         }
+        #[cfg(feature = "boot-split-stress")]
+        self.start_demo();
         #[cfg(feature = "boot-split-play")]
         {
             self.phase = Phase::Play;
@@ -2083,7 +2114,7 @@ impl Scene for NitroXide {
                 } else if self.demo.scored || self.demo.t >= DEMO_MAX_TICKS {
                     // The celebration is over and the kickoff is set: on to
                     // the next match, or back to the menu after the last.
-                    if self.demo.show + 1 < DEMO_SHOWS.len() {
+                    if self.demo.show + 1 < ROUTE_SHOWS.len() {
                         self.demo_show(self.demo.show + 1);
                     } else {
                         self.end_demo(ctx);
@@ -2184,6 +2215,16 @@ impl Scene for NitroXide {
     }
 
     fn render_overlay(&mut self, ctx: &mut Ctx) {
+        self.draw_overlay(ctx);
+        // Last before the flip, which split screen paces itself from.
+        draw::note_split_flip();
+    }
+}
+
+impl NitroXide {
+    /// Text and panels over the frame, drawn immediate once the frame's
+    /// tables have been walked.
+    fn draw_overlay(&mut self, ctx: &mut Ctx) {
         let display = self.display.as_ref().expect("display font");
         let hud = self.hud.as_ref().expect("hud font");
         match self.phase {
