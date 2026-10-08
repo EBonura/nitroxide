@@ -314,6 +314,8 @@ static mut GOAL_JOBS: [PieceJob; MAX_GOAL_JOBS] = [PieceJob {
     kind: Pieces::Floor,
 }; MAX_GOAL_JOBS];
 static mut GOAL_JOB_COUNT: usize = 0;
+/// The two corner buffers [`Builder::clip_piece`] cuts back and forth between.
+static mut CLIP_BUFS: [[[i32; 11]; 9]; 2] = [[[0; 11]; 9]; 2];
 
 /// One wall quad queued by index (span, column level, column, lower and
 /// upper ring), with its UVs and tints. See [`Builder::queue_wall_quad`].
@@ -4968,7 +4970,9 @@ impl Builder<'_> {
         };
         // Two corner buffers the planes cut back and forth between: copying a
         // whole polygon per plane was a measurable share of the clip.
-        let mut bufs = [[[0i32; 11]; MAX]; 2];
+        // SAFETY: nothing else touches this scratch; `clip_piece` does not nest.
+        // Kept off the frame so each call does not zero 792 bytes of it.
+        let bufs = unsafe { &mut *core::ptr::addr_of_mut!(CLIP_BUFS) };
         // The packets' corner order is a zigzag; walk the quad's outline.
         (bufs[0][0], bufs[0][1], bufs[0][2], bufs[0][3]) =
             (corner(0), corner(1), corner(3), corner(2));
