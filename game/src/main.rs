@@ -836,7 +836,7 @@ impl NitroXide {
     /// drive identically is a bug waiting to be reported as one.
     fn read_pad(map: &ActionMap<9>, deadzone: Deadzone, pad: &PadState, prev: &PadState) -> Input {
         let actions = map.input(*pad, *prev);
-        let held = |action: usize| actions.held(action);
+        let held = |action: usize| actions.is_held(action);
 
         let mut steer = 0;
         if held(ACT_LEFT) {
@@ -878,7 +878,7 @@ impl NitroXide {
             steer: steer.clamp(-128, 128),
             pitch: pitch.clamp(-128, 128),
             boost: held(ACT_BOOST),
-            jump_pressed: actions.pressed(ACT_JUMP),
+            jump_pressed: actions.just_pressed(ACT_JUMP),
             // Held as well as tapped: the sim extends a jump for up to a fifth
             // of a second while this is down, which is what makes jump height
             // something the player controls.
@@ -2388,7 +2388,7 @@ impl Scene for NitroXide {
         draw::set_camera_tick(tick);
         // Where the back buffer starts in VRAM, which is what turns a
         // display-space viewport into the GPU's scissor rectangle.
-        let buffer_y = ctx.fb.buffer_y(ctx.fb.drawing);
+        let buffer_y = ctx.fb.draw_origin().1;
         // Keep the working colour tables in step before anything is drawn
         // from them. A frame that changes nothing does nothing here.
         for seat in 0..2 {
@@ -2483,7 +2483,7 @@ impl NitroXide {
             let display = self.display.as_ref().expect("display font");
             let hud = self.hud.as_ref().expect("hud font");
             let busy = self.card_ask == CardAsk::Formatting;
-            Self::draw_card_prompt(display, hud, ctx.fb.buffer_y(ctx.fb.drawing), busy);
+            Self::draw_card_prompt(display, hud, ctx.fb.draw_origin().1, busy);
         }
     }
 
@@ -2518,12 +2518,12 @@ impl NitroXide {
         let hud = self.hud.as_ref().expect("hud font");
         match self.phase {
             Phase::Intro => {
-                self.draw_intro(hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                self.draw_intro(hud, ctx.fb.draw_origin().1);
             }
             Phase::Title => {
                 self.draw_title(display, hud, ctx.sim_tick.as_u32());
                 if self.settings.is_some() {
-                    self.draw_settings(display, hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                    self.draw_settings(display, hud, ctx.fb.draw_origin().1);
                 }
             }
             Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
@@ -2541,9 +2541,9 @@ impl NitroXide {
                 }
                 if self.paused {
                     if self.settings.is_some() {
-                        self.draw_settings(display, hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                        self.draw_settings(display, hud, ctx.fb.draw_origin().1);
                     } else {
-                        self.draw_pause_menu(display, hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                        self.draw_pause_menu(display, hud, ctx.fb.draw_origin().1);
                     }
                 }
                 return;
