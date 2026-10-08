@@ -60,6 +60,9 @@ boot-end-wall = []
 # (ball cam in both halves, cars close under the chase cameras), straight
 # from boot. The gate route for split screen at 30.
 boot-split-stress = []
+# Dev: boot into a demo route of the matches NITRO_DEMO_PICKS names at build
+# time (see main.rs), to try candidate seeds for the attract demo.
+boot-demo-picks = []
 # Dev: paint the sky (while the camera is close to level) and every car drawn
 # from its LOD in key colours (sky magenta, LOD cars pure green) and change
 # nothing else, so a headless capture of the attract demo can be checked by

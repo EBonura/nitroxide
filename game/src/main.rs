@@ -152,7 +152,7 @@ struct DemoShow {
     cars: [usize; 2],
     paints: [usize; 2],
 }
-#[cfg_attr(feature = "boot-split-stress", allow(dead_code))]
+#[cfg_attr(any(feature = "boot-split-stress", feature = "boot-demo-picks"), allow(dead_code))]
 const DEMO_SHOWS: [DemoShow; DEMO_MATCHES.len()] = [
     DemoShow {
         split: false,
@@ -186,10 +186,117 @@ const DEMO_SHOWS: [DemoShow; DEMO_MATCHES.len()] = [
 
 /// The matches the demo plays and how it shows them: the attract demo's,
 /// or with `boot-split-stress` the split-screen stress route.
-#[cfg(not(feature = "boot-split-stress"))]
+#[cfg(not(any(feature = "boot-split-stress", feature = "boot-demo-picks")))]
 const ROUTE_MATCHES: &[DemoMatch] = &DEMO_MATCHES;
-#[cfg(not(feature = "boot-split-stress"))]
+#[cfg(not(any(feature = "boot-split-stress", feature = "boot-demo-picks")))]
 const ROUTE_SHOWS: &[DemoShow] = &DEMO_SHOWS;
+#[cfg(feature = "boot-demo-picks")]
+const ROUTE_MATCHES: &[DemoMatch] = PICKS.matches();
+#[cfg(feature = "boot-demo-picks")]
+const ROUTE_SHOWS: &[DemoShow] = PICKS.shows();
+
+/// Dev: boot straight into a demo route of the matches named at build time,
+/// to judge candidate seeds for the attract demo in the emulator (frame
+/// cadence, camera, look) before they go into `DEMO_MATCHES`.
+/// `NITRO_DEMO_PICKS="spot:seed:first_goal:B|O:mode;..."`, up to eight, with
+/// mode `s` one view, ball cam, night; `p` one view, chase cams, sunset; `x`
+/// split, day; `y` split, night, as in the demo itself.
+#[cfg(feature = "boot-demo-picks")]
+struct Picks {
+    matches: [DemoMatch; 8],
+    shows: [DemoShow; 8],
+    len: usize,
+}
+#[cfg(feature = "boot-demo-picks")]
+impl Picks {
+    const fn matches(&'static self) -> &'static [DemoMatch] {
+        // SAFETY: `len` is at most 8, the array's length.
+        unsafe { core::slice::from_raw_parts(self.matches.as_ptr(), self.len) }
+    }
+    const fn shows(&'static self) -> &'static [DemoShow] {
+        // SAFETY: as above.
+        unsafe { core::slice::from_raw_parts(self.shows.as_ptr(), self.len) }
+    }
+}
+#[cfg(feature = "boot-demo-picks")]
+static PICKS: Picks = parse_picks(match option_env!("NITRO_DEMO_PICKS") {
+    Some(s) => s,
+    None => "",
+});
+#[cfg(feature = "boot-demo-picks")]
+const fn parse_picks(text: &str) -> Picks {
+    const NONE_MATCH: DemoMatch = DemoMatch { spot: 0, seed: 0, first_goal: 0, scorer: Team::Blue };
+    const NONE_SHOW: DemoShow = DemoShow {
+        split: false,
+        ball_cam: [false; 2],
+        arena: draw::ArenaTime::Night,
+        cars: [0, 1],
+        paints: [0, 5],
+    };
+    let b = text.as_bytes();
+    let mut out = Picks { matches: [NONE_MATCH; 8], shows: [NONE_SHOW; 8], len: 0 };
+    let (mut i, mut field, mut n) = (0, 0, [0usize; 3]);
+    let (mut scorer, mut mode) = (b'B', b's');
+    while i <= b.len() && out.len < 8 {
+        let c = if i < b.len() { b[i] } else { b';' };
+        if c == b':' || c == b';' {
+            if c == b';' && (field == 4 || field == 3) {
+                let m = DemoMatch {
+                    spot: n[0],
+                    seed: n[1] as u32,
+                    first_goal: n[2] as u32,
+                    scorer: if scorer == b'B' { Team::Blue } else { Team::Orange },
+                };
+                out.matches[out.len] = m;
+                out.shows[out.len] = match mode {
+                    b'p' => DemoShow {
+                        split: false,
+                        ball_cam: [false, false],
+                        arena: draw::ArenaTime::Sunset,
+                        cars: [2, 0],
+                        paints: [2, 6],
+                    },
+                    b'x' => DemoShow {
+                        split: true,
+                        ball_cam: [false, false],
+                        arena: draw::ArenaTime::Day,
+                        cars: [1, 2],
+                        paints: [1, 4],
+                    },
+                    b'y' => DemoShow {
+                        split: true,
+                        ball_cam: [false, false],
+                        arena: draw::ArenaTime::Night,
+                        cars: [0, 2],
+                        paints: [7, 5],
+                    },
+                    _ => DemoShow {
+                        split: false,
+                        ball_cam: [true, true],
+                        arena: draw::ArenaTime::Night,
+                        cars: [0, 1],
+                        paints: [0, 5],
+                    },
+                };
+                out.len += 1;
+                n = [0; 3];
+                field = 0;
+                scorer = b'B';
+                mode = b's';
+            } else {
+                field += 1;
+            }
+        } else if field < 3 {
+            n[field] = n[field] * 10 + (c - b'0') as usize;
+        } else if field == 3 {
+            scorer = c;
+        } else {
+            mode = c;
+        }
+        i += 1;
+    }
+    out
+}
 #[cfg(feature = "boot-split-stress")]
 const ROUTE_MATCHES: &[DemoMatch] = &STRESS_MATCHES;
 #[cfg(feature = "boot-split-stress")]
@@ -1749,7 +1856,7 @@ impl Scene for NitroXide {
         {
             self.phase = Phase::Play;
         }
-        #[cfg(feature = "boot-split-stress")]
+        #[cfg(any(feature = "boot-split-stress", feature = "boot-demo-picks"))]
         self.start_demo();
         #[cfg(feature = "boot-split-play")]
         {
