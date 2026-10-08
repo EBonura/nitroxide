@@ -880,9 +880,47 @@ fn damp(v: i32, num: i32) -> i32 {
     (v * num) >> 10
 }
 
+/// `p >> sh`, rounded toward zero. The ball's arithmetic uses this wherever a
+/// signed product is scaled down: a bare `>>` rounds toward negative
+/// infinity, which biases every such step toward -x, -y and -z and makes the
+/// ball play differently mirrored.
+#[inline]
+const fn rz(p: i32, sh: i32) -> i32 {
+    (p + ((p >> 31) & ((1 << sh) - 1))) >> sh
+}
+
+/// [`dot_q12`] for the ball: the same dot product, rounded toward zero.
+#[inline]
+fn dot_q12_rz(a: V3, b: V3) -> i32 {
+    rz(a.x * b.x + a.y * b.y + a.z * b.z, 12)
+}
+
+/// [`add_scaled`] for the ball, rounded toward zero.
+#[inline]
+fn add_scaled_rz(v: &mut V3, dir: V3, scale: i32) {
+    v.x += rz(dir.x * scale, 12);
+    v.y += rz(dir.y * scale, 12);
+    v.z += rz(dir.z * scale, 12);
+}
+
+/// [`cross_shift`] for the ball, rounded toward zero.
+#[inline]
+fn cross_shift_rz(a: V3, b: V3, sh: i32) -> V3 {
+    V3::new(
+        rz(a.y * b.z - a.z * b.y, sh),
+        rz(a.z * b.x - a.x * b.z, sh),
+        rz(a.x * b.y - a.y * b.x, sh),
+    )
+}
+
+/// `v * num / 4096`, rounded toward zero. A bare `>> 12` rounds toward
+/// negative infinity, so a ball rolling toward -x or -z lost nothing to drag
+/// below 2048 sub-units a tick while one rolling the other way lost one every
+/// tick, and a loose ball crept toward the -x/-z walls for ever.
 #[inline]
 fn damp12(v: i32, num: i32) -> i32 {
-    (v * num) >> 12
+    let p = v * num;
+    (p + ((p >> 31) & 4095)) >> 12
 }
 
 // ---- state -----------------------------------------------------------------
@@ -2643,10 +2681,10 @@ impl Sim {
         if ball.p.z.abs() < uu(HALF_Z - BALL_R) {
             let facing_mouth = ball.p.x.abs() < uu(GOAL_HALF_W);
             if let Some(n) = ball_surface_contact(ball, facing_mouth) {
-                let vn = dot_q12(ball.v, n);
+                let vn = dot_q12_rz(ball.v, n);
                 if vn < 0 {
                     let push = damp(-vn, BALL_BOUNCE) - vn;
-                    add_scaled(&mut ball.v, n, push);
+                    add_scaled_rz(&mut ball.v, n, push);
                     ball_friction(ball, n, push, BALL_FRICTION, V3::ZERO);
                 }
             }
@@ -2673,7 +2711,7 @@ impl Sim {
             // The wall pushed along its own normal; how hard is the difference
             // it made, and that is what the friction there gets to work with.
             if wall != V3::ZERO {
-                let push = dot_q12(ball.v, wall) - dot_q12(before, wall);
+                let push = dot_q12_rz(ball.v, wall) - dot_q12_rz(before, wall);
                 ball_friction(ball, wall, push, BALL_FRICTION, V3::ZERO);
             }
         } else {
@@ -3074,7 +3112,7 @@ fn ball_surface_contact(ball: &mut Ball, mouth_open: bool) -> Option<V3> {
 
     let projected_h = horizontal * centre_radius / length;
     let projected_v = vertical * centre_radius / length;
-    add_scaled(
+    add_scaled_rz(
         &mut ball.p,
         wall.inward,
         radius - projected_h - wall.distance,
@@ -3414,21 +3452,21 @@ fn ball_friction(ball: &mut Ball, n: V3, push: i32, grip: i32, other_v: V3) {
         return;
     }
     let arm = V3::new(
-        -(n.x * uu(BALL_R)) >> 12,
-        -(n.y * uu(BALL_R)) >> 12,
-        -(n.z * uu(BALL_R)) >> 12,
+        rz(-(n.x * uu(BALL_R)), 12),
+        rz(-(n.y * uu(BALL_R)), 12),
+        rz(-(n.z * uu(BALL_R)), 12),
     );
-    let surface = cross_shift(ball.w, arm, SPIN_FP);
+    let surface = cross_shift_rz(ball.w, arm, SPIN_FP);
     let rel = V3::new(
         ball.v.x + surface.x - other_v.x,
         ball.v.y + surface.y - other_v.y,
         ball.v.z + surface.z - other_v.z,
     );
-    let into = dot_q12(rel, n);
+    let into = dot_q12_rz(rel, n);
     let slip = V3::new(
-        rel.x - ((n.x * into) >> 12),
-        rel.y - ((n.y * into) >> 12),
-        rel.z - ((n.z * into) >> 12),
+        rel.x - rz(n.x * into, 12),
+        rel.y - rz(n.y * into, 12),
+        rel.z - rz(n.z * into, 12),
     );
     let mag = slip.len();
     if mag < 2 {
@@ -3438,19 +3476,19 @@ fn ball_friction(ball: &mut Ball, n: V3, push: i32, grip: i32, other_v: V3) {
     // `SPIN_PER_SLIP`); Coulomb may not allow all of that, so `take` is the
     // Q12 fraction of a full stop this contact can actually pay for.
     let full = mag * 2 / 7;
-    let cap = (push * grip) >> 10;
+    let cap = rz(push * grip, 10);
     let take = if full <= cap { 4096 } else { 4096 * cap / full };
 
     let slowed = take * 2 / 7;
-    ball.v.x -= (slip.x * slowed) >> 12;
-    ball.v.y -= (slip.y * slowed) >> 12;
-    ball.v.z -= (slip.z * slowed) >> 12;
+    ball.v.x -= rz(slip.x * slowed, 12);
+    ball.v.y -= rz(slip.y * slowed, 12);
+    ball.v.z -= rz(slip.z * slowed, 12);
 
     // The same impulse, felt as a torque about the contact arm.
-    let turn = cross_q12(n, slip);
-    ball.w.x += (((turn.x * take) >> 12) * SPIN_PER_SLIP) >> 10;
-    ball.w.y += (((turn.y * take) >> 12) * SPIN_PER_SLIP) >> 10;
-    ball.w.z += (((turn.z * take) >> 12) * SPIN_PER_SLIP) >> 10;
+    let turn = cross_shift_rz(n, slip, 12);
+    ball.w.x += rz(rz(turn.x * take, 12) * SPIN_PER_SLIP, 10);
+    ball.w.y += rz(rz(turn.y * take, 12) * SPIN_PER_SLIP, 10);
+    ball.w.z += rz(rz(turn.z * take, 12) * SPIN_PER_SLIP, 10);
 
     // Rocket League caps how fast the ball can spin, and the cap is low enough
     // to be felt rather than a safety rail: see `BALL_MAX_SPIN`. Applied here,
@@ -3575,6 +3613,7 @@ mod tests {
         // box corner: it should come back roughly the way it came. (Straight
         // down the diagonal now meets the rounded joint beside the plane.)
         sim.ball.v = V3::new(1855, 0, 2400);
+        let mut came_back = false;
         for _ in 0..600 {
             sim.tick(&Input::default());
             assert!(
@@ -3582,12 +3621,12 @@ mod tests {
                 "left the arena: {:?}",
                 sim.ball.p
             );
+            // Checked on the way, not at the end: the ball now rolls to a
+            // stop in either direction, where it used to keep creeping toward
+            // -x/-z for ever and so still looked reversed ten seconds on.
+            came_back |= sim.ball.v.x < -200 && sim.ball.v.z < -100;
         }
-        assert!(
-            sim.ball.v.x < 0 && sim.ball.v.z < 0,
-            "corner did not reverse it: {:?}",
-            sim.ball.v
-        );
+        assert!(came_back, "corner did not reverse it: {:?}", sim.ball.v);
     }
 
     #[test]
@@ -3970,6 +4009,52 @@ mod tests {
         b.tick(&Input { throttle: -128, steer: 128, boost: true, ..Input::default() });
         assert_eq!((a.car.p, a.car.v), (b.car.p, b.car.v), "blue read the pad");
         assert_eq!(a.ai_target, b.ai_target);
+    }
+
+    /// A loose ball's trajectory, one point per second, from a start and a
+    /// velocity, with both cars parked far from it.
+    fn loose_ball_path(x: i32, z: i32, vx: i32, vz: i32) -> std::vec::Vec<(i32, i32)> {
+        let mut sim = Sim::new();
+        sim.opponent_ai = false;
+        sim.car.p = V3::new(uu(-1000), uu(CAR_REST_Y), uu(-4400));
+        sim.opponent.p = V3::new(uu(1000), uu(CAR_REST_Y), uu(4400));
+        sim.ball.p = V3::new(uu(x), uu(100), uu(z));
+        sim.ball.v = V3::new(vx, 0, vz);
+        let mut path = std::vec::Vec::new();
+        for t in 0..900 {
+            sim.tick(&Input::default());
+            if t % 60 == 59 {
+                path.push((sim.ball.p.x >> FP, sim.ball.p.z >> FP));
+            }
+        }
+        path
+    }
+
+    #[test]
+    fn a_loose_ball_plays_the_same_mirrored() {
+        // Drag, friction and the ramps round their products toward zero, so a
+        // ball rolling toward -x or -z behaves as one rolling toward +x or +z.
+        // Rounding toward negative infinity once made a loose ball creep for
+        // ever one way and stop the other. A uu or two of integer slack.
+        let starts = [
+            (3900, 0, 0, 0),
+            (0, 4900, 0, 0),
+            (2000, 1000, 300, 0),
+            (2000, 1000, 0, 300),
+            (1000, -2000, 200, -150),
+            (3300, 4500, 0, 0),
+        ];
+        for (x, z, vx, vz) in starts {
+            let a = loose_ball_path(x, z, vx, vz);
+            let in_x = loose_ball_path(-x, z, -vx, vz);
+            let in_z = loose_ball_path(x, -z, vx, -vz);
+            for k in 0..a.len() {
+                let (ex, ez) = ((a[k].0 + in_x[k].0).abs(), (a[k].1 - in_x[k].1).abs());
+                assert!(ex.max(ez) <= 3, "start {:?}: x-mirror off by {} {} at {} s", (x, z, vx, vz), ex, ez, k + 1);
+                let (fx, fz) = ((a[k].0 - in_z[k].0).abs(), (a[k].1 + in_z[k].1).abs());
+                assert!(fx.max(fz) <= 3, "start {:?}: z-mirror off by {} {} at {} s", (x, z, vx, vz), fx, fz, k + 1);
+            }
+        }
     }
 
     #[test]
