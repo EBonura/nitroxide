@@ -631,10 +631,10 @@ pub struct DemoMatch {
 
 /// The attract demo's matches, in the order it plays them.
 pub const DEMO_MATCHES: [DemoMatch; 4] = [
-    DemoMatch { spot: 0, seed: 3, first_goal: 1066, scorer: Team::Blue },
-    DemoMatch { spot: 3, seed: 11, first_goal: 1577, scorer: Team::Orange },
-    DemoMatch { spot: 2, seed: 5, first_goal: 1090, scorer: Team::Blue },
-    DemoMatch { spot: 4, seed: 3, first_goal: 1380, scorer: Team::Blue },
+    DemoMatch { spot: 0, seed: 1, first_goal: 1813, scorer: Team::Blue },
+    DemoMatch { spot: 3, seed: 2, first_goal: 1345, scorer: Team::Orange },
+    DemoMatch { spot: 2, seed: 22, first_goal: 1136, scorer: Team::Blue },
+    DemoMatch { spot: 4, seed: 37, first_goal: 1529, scorer: Team::Orange },
 ];
 
 /// The demo bots' flair (see `Sim::flair`), in uu relative to the car: how
