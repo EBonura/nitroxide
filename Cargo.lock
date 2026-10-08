@@ -20,6 +20,7 @@ dependencies = [
  "psx-gte",
  "psx-io",
  "psx-math",
+ "psx-mc",
  "psx-pack",
  "psx-pad",
  "psx-rt",
