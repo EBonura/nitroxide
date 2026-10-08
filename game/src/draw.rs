@@ -4979,7 +4979,13 @@ impl Builder<'_> {
             }
             let uvs = tri.map(|k| uv(&poly[k]));
             let tints = tri.map(|k| tint(&poly[k]));
-            let z_sum = tri.iter().map(|&k| screen[k].2).sum();
+            // A wall piece is a backdrop and is filed at its far edge, like
+            // the whole wall quads (see `wall_span`).
+            let z_sum = if matches!(kind, Pieces::Wall { .. }) {
+                4 * tri.iter().map(|&k| screen[k].2).max().unwrap_or(0)
+            } else {
+                tri.iter().map(|&k| screen[k].2).sum()
+            };
             self.emit_piece(kind, sp, z_sum, uvs, tints);
         }
     }
@@ -5709,7 +5715,12 @@ impl Builder<'_> {
                         if !quad_overlaps_view(&sp) {
                             continue;
                         }
-                        (!split || gpu_draws_whole(&sp)).then_some((sp, a.2 + b.2 + c.2 + d.2))
+                        // Filed at its far edge, not its average depth: a wall is
+                        // a backdrop, and a quad whose middle is nearer than a
+                        // car on it drew over the car's far half (the car on a
+                        // side ramp flickered in and out of existence).
+                        (!split || gpu_draws_whole(&sp))
+                            .then_some((sp, 4 * a.2.max(b.2).max(c.2).max(d.2)))
                     }
                     (None, None, None, None) => continue,
                     _ if split => None,
