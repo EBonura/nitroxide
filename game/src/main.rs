@@ -776,6 +776,7 @@ impl NitroXide {
         cross: bool,
         back: bool,
         tick: u32,
+        ctx: &mut Ctx,
     ) {
         let rows = self.settings_rows();
         let Some(mut row) = self.settings else {
@@ -789,7 +790,7 @@ impl NitroXide {
         self.settings = Some(row);
         if back || (cross && rows[row] == SettingsRow::Back) {
             self.settings = None;
-            self.persist_settings();
+            self.persist_settings(ctx);
             return;
         }
         // X steps forward like the old pause toggles did; left and right step
@@ -892,11 +893,16 @@ impl NitroXide {
         }
     }
 
-    fn persist_settings(&mut self) {
+    fn persist_settings(&mut self, ctx: &mut Ctx) {
         if !self.settings_dirty || self.card_ask != CardAsk::Idle {
             return;
         }
-        let mut card = psx_mc::Card::new(psx_mc::HardwareCard::new(psx_mc::Slot::One));
+        // The card borrows the controller port from the context, which on the
+        // pad engine is a lease that keeps the engine off the port.
+        let mut card = psx_mc::Card::new(psx_mc::HardwareCard::on_port(
+            ctx.controller_port(),
+            psx_mc::Slot::One,
+        ));
         match card.is_formatted() {
             Ok(true) => {
                 if psx_settings::save(&mut card, SETTINGS_FILE, SETTINGS_TITLE, &self.profile)
@@ -915,7 +921,7 @@ impl NitroXide {
     /// The player's answer to the format question: Cross formats the card and
     /// saves, Circle or Start leaves the card alone for the rest of the
     /// session.
-    fn card_answer(&mut self, ctx: &Ctx) {
+    fn card_answer(&mut self, ctx: &mut Ctx) {
         if self.card_ask == CardAsk::Formatting {
             // Render is every second vblank: give it a few updates to show
             // the notice before the format takes the CPU for seconds.
@@ -923,7 +929,10 @@ impl NitroXide {
             if self.card_wait < 6 {
                 return;
             }
-            let mut card = psx_mc::Card::new(psx_mc::HardwareCard::new(psx_mc::Slot::One));
+            let mut card = psx_mc::Card::new(psx_mc::HardwareCard::on_port(
+                ctx.controller_port(),
+                psx_mc::Slot::One,
+            ));
             let saved = card.format().is_ok()
                 && psx_settings::save(&mut card, SETTINGS_FILE, SETTINGS_TITLE, &self.profile)
                     .is_ok();
@@ -1812,7 +1821,8 @@ impl Scene for NitroXide {
         // covers a pad that was not ready at boot or gets re-plugged.
         let _ = ctx.enable_analog(psx_pad::Port::One);
         let _ = ctx.enable_analog(psx_pad::Port::Two);
-        if let Ok(profile) = psx_settings::load_slot_one(SETTINGS_FILE) {
+        if let Ok(profile) = psx_settings::load_from_slot_one(ctx.controller_port(), SETTINGS_FILE)
+        {
             self.profile = profile;
         }
         draw::setup();
@@ -2073,6 +2083,7 @@ impl Scene for NitroXide {
                         ctx.just_pressed(button::CROSS),
                         ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START),
                         ctx.sim_tick.as_u32(),
+                        ctx,
                     );
                     return;
                 }
@@ -2234,7 +2245,8 @@ impl Scene for NitroXide {
                         || p2(button::CIRCLE)
                         || ctx.just_pressed(button::START)
                         || p2(button::START);
-                    self.settings_input(up, down, left, right, cross, back, ctx.sim_tick.as_u32());
+                    let tick = ctx.sim_tick.as_u32();
+                    self.settings_input(up, down, left, right, cross, back, tick, ctx);
                     return;
                 }
                 if ctx.just_pressed(button::UP) || p2(button::UP) {
