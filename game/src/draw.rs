@@ -261,6 +261,16 @@ const fn near_sz<const SPLIT: bool>() -> i32 {
 #[derive(Copy, Clone)]
 enum Pieces {
     Floor,
+    /// A flat-lit Gouraud quad of the goal box.
+    Flat,
+    /// The goal's floor: a Gouraud quad filed with the pitch, behind
+    /// everything depth-sorted.
+    GoalFloor,
+    /// The goal's netting: a blended wall quad filed at its average depth,
+    /// since the net hangs in front of whatever stands in the goal.
+    Net {
+        packet: TexturedGouraudPacketMaterial,
+    },
     Wall {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
@@ -5002,6 +5012,9 @@ impl Builder<'_> {
     ) {
         match kind {
             Pieces::Floor => self.floor_quad(sp, uvs, tints),
+            Pieces::Flat => self.emit(sp, z_sum / 4, tints.map(rgb_of)),
+            Pieces::GoalFloor => self.emit_goal_floor(sp, tints.map(rgb_of)),
+            Pieces::Net { packet } => self.quad_tex_words(sp, z_sum, uvs, tints, 0, packet, true),
             Pieces::Wall { packet, blended } => {
                 self.quad_tex_words(sp, z_sum, uvs, tints, 0, packet, blended)
             }
@@ -6112,7 +6125,77 @@ impl Builder<'_> {
         }
     }
 
-    fn goals(&mut self, _view: &View) {
+    /// Is any corner of this quad at or inside the depth the GTE stops
+    /// projecting true (see [`GTE_TRUE_SZ`])? Such a quad is clipped rather
+    /// than projected: [`project_quad`] drops a quad with a corner behind the
+    /// eye, and one with a corner that close lands off its true place.
+    #[inline]
+    fn near_the_eye(cull: &Cull, corners: &[(i32, i32, i32); 4]) -> bool {
+        corners.iter().any(|c| {
+            let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
+            Cull::dot(cull.fwd, d) <= GTE_TRUE_SZ + 8
+        })
+    }
+
+    /// [`Builder::quad`] for the goal box, whose faces are big enough for the
+    /// camera to stand inside: a driver in the mouth of the goal has the near
+    /// corners of the floor and the sides behind the lens, and the whole
+    /// face used to go with them (the pitch under the car vanished).
+    fn goal_quad(&mut self, cull: &Cull, corners: [(i32, i32, i32); 4], colors: [Rgb; 4]) {
+        if Self::near_the_eye(cull, &corners) {
+            self.clip_piece(corners, [(0, 0); 4], colors.map(rgbc), Pieces::Flat, cull);
+        } else {
+            self.quad(corners, colors);
+        }
+    }
+
+    fn goal_quad_flat(&mut self, cull: &Cull, corners: [(i32, i32, i32); 4], color: Rgb) {
+        self.goal_quad(cull, corners, [color; 4]);
+    }
+
+    /// The goal's floor, like the pitch's, is not depth-sorted: it lies under
+    /// everything that stands in the goal, and a floor sorted by its average
+    /// depth drew over the lower half of a car parked on it.
+    fn goal_floor(&mut self, cull: &Cull, corners: [(i32, i32, i32); 4], colors: [Rgb; 4]) {
+        if Self::near_the_eye(cull, &corners) {
+            self.clip_piece(corners, [(0, 0); 4], colors.map(rgbc), Pieces::GoalFloor, cull);
+        } else if let Some((sp, _)) = project_quad(&corners) {
+            if quad_overlaps_view(&sp) {
+                self.emit_goal_floor(sp, colors);
+            }
+        }
+    }
+
+    fn emit_goal_floor(&mut self, sp: [(i16, i16); 4], colors: [Rgb; 4]) {
+        if let Some(q) = self.arena.push(QuadGouraud::new(sp, colors)) {
+            self.ot.add_packet(FLOOR_SLOT, q);
+        } else {
+            count_overflow!();
+        }
+    }
+
+    /// [`Builder::quad_tex`] for the goal's netting, for the same reason.
+    #[allow(clippy::too_many_arguments)]
+    fn goal_quad_tex(
+        &mut self,
+        cull: &Cull,
+        corners: [(i32, i32, i32); 4],
+        uvs: [u16; 4],
+        tints: [Rgb; 4],
+        bias: i32,
+        packet: TexturedGouraudPacketMaterial,
+        blended: bool,
+    ) {
+        if Self::near_the_eye(cull, &corners) {
+            let kind = Pieces::Net { packet };
+            self.clip_piece(corners, uvs.map(|w| (w as u8, (w >> 8) as u8)), tints.map(rgbc), kind, cull);
+        } else {
+            self.quad_tex(corners, uvs, tints, bias, packet, blended);
+        }
+    }
+
+    fn goals(&mut self, view: &View) {
+        let cull = view.cull();
         // The far goal (+Z) is the one you shoot at, so it wears the
         // opponent's colour; your own net behind you is blue.
         for (z_line, color) in [
@@ -6138,7 +6221,8 @@ impl Builder<'_> {
             // so the box is never less than a third of the signal colour and
             // the white net and the hot frame are in front of it.
             let glow = |n: i32| shade(color, n, 16);
-            self.quad(
+            self.goal_quad(
+                &cull,
                 [
                     (-gw, 0, back),
                     (gw, 0, back),
@@ -6154,7 +6238,8 @@ impl Builder<'_> {
             );
             for &sx in &[-1i32, 1] {
                 let x = sx * gw;
-                self.quad(
+                self.goal_quad(
+                    &cull,
                     [(x, 0, z_line), (x, 0, back), (x, gh, z_line), (x, gh, back)],
                     [
                         glow(GOAL_SIDE - 2),
@@ -6164,7 +6249,8 @@ impl Builder<'_> {
                     ],
                 );
             }
-            self.quad_flat(
+            self.goal_quad_flat(
+                &cull,
                 [
                     (-gw, gh, z_line),
                     (gw, gh, z_line),
@@ -6173,7 +6259,8 @@ impl Builder<'_> {
                 ],
                 glow(GOAL_BACK_HI - 1),
             );
-            self.quad(
+            self.goal_floor(
+                &cull,
                 [
                     (-gw, 0, z_line),
                     (gw, 0, z_line),
@@ -6232,7 +6319,8 @@ impl Builder<'_> {
             let net_lo = shade(COVER_STRAND, 2400, 4096);
 
             // Back.
-            self.quad_tex(
+            self.goal_quad_tex(
+                &cull,
                 [(-nw, 0, far), (nw, 0, far), (-nw, nh, far), (nw, nh, far)],
                 patch(across, tall),
                 [net_lo, net_lo, net_hi, net_hi],
@@ -6243,7 +6331,8 @@ impl Builder<'_> {
             // Sides.
             for &sx in &[-1i32, 1] {
                 let x = sx * nw;
-                self.quad_tex(
+                self.goal_quad_tex(
+                    &cull,
                     [(x, 0, z_line), (x, 0, far), (x, nh, z_line), (x, nh, far)],
                     patch(deep, tall),
                     [net_lo, net_lo, net_hi, net_hi],
@@ -6253,7 +6342,8 @@ impl Builder<'_> {
                 );
             }
             // Roof.
-            self.quad_tex(
+            self.goal_quad_tex(
+                &cull,
                 [
                     (-nw, nh, z_line),
                     (nw, nh, z_line),
@@ -7605,7 +7695,11 @@ fn build_view(
                     b.demo_burst(s);
                 }
                 b.ceiling(&cull);
-                b.goals(&view);
+            });
+            // Off the scratchpad stack: a face the camera stands inside is
+            // clipped, and the clip needs more frame than the stack has.
+            b.goals(&view);
+            on_scratchpad(|| {
                 b.ball_ring(s, &cull);
                 b.shadow(
                     r(s.ball.p.x),
