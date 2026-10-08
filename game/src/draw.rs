@@ -369,6 +369,12 @@ const CAM_WALL_TRAIL: i32 = 500;
 #[cfg(feature = "boot-wheels")]
 const CAM_WALL_TRAIL: i32 = 0;
 const CAM_MIN_SEP: i32 = 300;
+/// How long after a kickoff the camera stays directly behind the car even where
+/// the end wall leaves less than `CAM_MIN_FLAT_DIST` of boom (the back-middle
+/// spot has 330 uu), shortening the boom instead of sliding the eye sideways
+/// along the wall: the first thing a player sees should be the car from behind.
+/// A tick is a sixtieth of a second; the byte saturates at 255.
+const CAM_KICKOFF_BEHIND_TICKS: u8 = 240;
 const CAM_PITCH_MIN: i32 = -260; // Q12, negative = looking up at a ball overhead
 const CAM_WALL_PITCH_MIN: i32 = -620;
 const CAM_PITCH_MAX: i32 = 700;
@@ -2761,7 +2767,7 @@ fn camera(
     let (mut cx, mut cz) = keep_inside(desired_x, desired_z);
     let (car_x, car_z) = (r(subject.p.x), r(subject.p.z));
     let current_flat = isqrt_i32((car_x - cx) * (car_x - cx) + (car_z - cz) * (car_z - cz));
-    if current_flat < CAM_MIN_FLAT_DIST {
+    if current_flat < CAM_MIN_FLAT_DIST && s.kickoff_ticks() >= CAM_KICKOFF_BEHIND_TICKS {
         // At the back-middle kickoff there is not enough room directly behind
         // the car for an 800-uu boom. Slide the eye along the wall instead of
         // collapsing almost onto the bumper; the final look-at yaw below
