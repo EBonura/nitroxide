@@ -90,6 +90,22 @@ const DRIVE_ACTIONS: ActionMap<9> = ActionMap::new([
     ActionBinding::new(button::L1, 0),
 ]);
 
+/// The answer to a card that holds no `MC` header, asked once a session.
+#[derive(Clone, Copy, PartialEq)]
+enum CardAsk {
+    /// Nothing pending: the card was fine, absent, or not asked about yet.
+    Idle,
+    /// The question is on screen and owns the pad.
+    Asking,
+    /// Cross was pressed: this frame says the card is being formatted, and
+    /// the next update does it. Formatting runs a card's whole directory
+    /// through the pad port, seconds in which nothing else can be drawn.
+    Formatting,
+    /// The player said no: settings stay in memory for this session and the
+    /// card is left alone.
+    Declined,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
     /// Boot splash: the Bonnie Studios logo and the "Built with PSoXide"
@@ -376,6 +392,13 @@ struct NitroXide {
     intro_t: i32,
     profile: Profile<9, 0>,
     settings_dirty: bool,
+    /// Where the "format this card?" question stands. A card with no `MC`
+    /// header is never written to unasked: formatting it drops every other
+    /// game's save from its directory.
+    card_ask: CardAsk,
+    /// Updates spent on the formatting notice, so it is on the screen before
+    /// the work begins and blocks every frame after it.
+    card_wait: u8,
     /// Ticks since the last press on a menu page; the demo starts at
     /// `DEMO_IDLE_TICKS`.
     idle: u32,
@@ -489,6 +512,8 @@ impl NitroXide {
             seed: 0,
             profile: Profile::new(DRIVE_ACTIONS),
             settings_dirty: false,
+            card_ask: CardAsk::Idle,
+            card_wait: 0,
             idle: 0,
             demo: DemoState {
                 show: 0,
@@ -761,11 +786,54 @@ impl NitroXide {
     }
 
     fn persist_settings(&mut self) {
-        if !self.settings_dirty {
+        if !self.settings_dirty || self.card_ask != CardAsk::Idle {
             return;
         }
-        if psx_settings::save_slot_one(SETTINGS_FILE, SETTINGS_TITLE, &self.profile).is_ok() {
-            self.settings_dirty = false;
+        let mut card = psx_mc::Card::new(psx_mc::HardwareCard::new(psx_mc::Slot::One));
+        match card.is_formatted() {
+            Ok(true) => {
+                if psx_settings::save(&mut card, SETTINGS_FILE, SETTINGS_TITLE, &self.profile)
+                    .is_ok()
+                {
+                    self.settings_dirty = false;
+                }
+            }
+            // A card that answers but holds no header: ask, do not format.
+            Ok(false) => self.card_ask = CardAsk::Asking,
+            // No card in the slot, or it would not talk: nothing to ask.
+            Err(_) => {}
+        }
+    }
+
+    /// The player's answer to the format question: Cross formats the card and
+    /// saves, Circle or Start leaves the card alone for the rest of the
+    /// session.
+    fn card_answer(&mut self, ctx: &Ctx) {
+        if self.card_ask == CardAsk::Formatting {
+            // Render is every second vblank: give it a few updates to show
+            // the notice before the format takes the CPU for seconds.
+            self.card_wait += 1;
+            if self.card_wait < 6 {
+                return;
+            }
+            let mut card = psx_mc::Card::new(psx_mc::HardwareCard::new(psx_mc::Slot::One));
+            let saved = card.format().is_ok()
+                && psx_settings::save(&mut card, SETTINGS_FILE, SETTINGS_TITLE, &self.profile)
+                    .is_ok();
+            if saved {
+                self.settings_dirty = false;
+            }
+            // A card that would not format is not asked about again either.
+            self.card_ask = if saved {
+                CardAsk::Idle
+            } else {
+                CardAsk::Declined
+            };
+        } else if ctx.just_pressed(button::CROSS) {
+            self.card_ask = CardAsk::Formatting;
+            self.card_wait = 0;
+        } else if ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START) {
+            self.card_ask = CardAsk::Declined;
         }
     }
 
@@ -1843,6 +1911,10 @@ impl Scene for NitroXide {
         // Outside the phase machine: the disc's music plays over the front
         // end and the match alike, and a pause holds the game, not the song.
         self.music.update(ctx.sim_tick.as_u32());
+        if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
+            self.card_answer(ctx);
+            return;
+        }
         if matches!(self.phase, Phase::Play | Phase::Demo) {
             // Ahead of the phase machine, which returns early while paused.
             self.scoreboard_open = if self.scoreboard_wanted_open() {
@@ -2285,9 +2357,44 @@ impl Scene for NitroXide {
 }
 
 impl NitroXide {
+    /// The overlay, and over it the card question when one is pending.
+    fn draw_overlay(&mut self, ctx: &mut Ctx) {
+        self.draw_overlay_scene(ctx);
+        if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
+            let display = self.display.as_ref().expect("display font");
+            let hud = self.hud.as_ref().expect("hud font");
+            let busy = self.card_ask == CardAsk::Formatting;
+            Self::draw_card_prompt(display, hud, ctx.fb.buffer_y(ctx.fb.drawing), busy);
+        }
+    }
+
+    /// "This card is not formatted": the plate, what formatting costs, and
+    /// the two answers. Same plate as the pause menu.
+    fn draw_card_prompt(display: &FontAtlas, font: &FontAtlas, buffer_y: u16, busy: bool) {
+        const X: u16 = 40;
+        const W: u16 = 240;
+        const H: u16 = 112;
+        let y = (draw::SCREEN_H as u16 - H) / 2;
+        psx_gpu::fill_rect(X, buffer_y + y, W, H, 10, 12, 22);
+        psx_gpu::fill_rect(X + 4, buffer_y + y + 4, W - 8, H - 8, 24, 28, 44);
+        let cx = draw::SCREEN_W / 2;
+        let y = y as i16;
+        Self::centred(display, cx, y + 12, "MEMORY CARD", (255, 255, 255));
+        if busy {
+            Self::centred(font, cx, y + 44, "FORMATTING THE CARD.", (230, 232, 240));
+            Self::centred(font, cx, y + 60, "THIS TAKES A FEW SECONDS.", (230, 232, 240));
+            Self::centred(font, cx, y + 76, "DO NOT REMOVE THE CARD.", (255, 190, 110));
+            return;
+        }
+        Self::centred(font, cx, y + 36, "THE CARD IN SLOT 1 IS NOT FORMATTED.", (230, 232, 240));
+        Self::centred(font, cx, y + 50, "FORMAT IT TO SAVE YOUR SETTINGS?", (230, 232, 240));
+        Self::centred(font, cx, y + 64, "FORMATTING ERASES EVERYTHING ON IT.", (255, 190, 110));
+        Self::centred(font, cx, y + 88, "X  FORMAT        O  NOT NOW", (146, 202, 255));
+    }
+
     /// Text and panels over the frame, drawn immediate once the frame's
     /// tables have been walked.
-    fn draw_overlay(&mut self, ctx: &mut Ctx) {
+    fn draw_overlay_scene(&mut self, ctx: &mut Ctx) {
         let display = self.display.as_ref().expect("display font");
         let hud = self.hud.as_ref().expect("hud font");
         match self.phase {
