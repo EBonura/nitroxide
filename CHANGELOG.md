@@ -1,8 +1,44 @@
 # Changelog
 
-## 0.3.0 (not yet published)
+## 0.4.0 | 2026-10-08
 
-The arena and HUD overhaul, on top of source 2026.09.05.
+Attract demo, rounder arena, a new ball, explosions and tyre tracks, a steadier
+split screen, on top of 0.3.0.
+
+- Attract demo: leave a menu alone for 30 seconds, or pick DEMO on the main
+  menu, and four bot-against-bot matches play (one view and split screen,
+  day, sunset and night). Any button returns to the main menu.
+- Arena: the corners are rounded where the corner planes meet the walls, and
+  the end walls have a smaller floor ramp than the sides, to match the
+  standard arena. Ball and cars follow the new curves.
+- The ball has a panelled design, with plates, dark seams and an amber light
+  in each pentagon, instead of flat white and black facets.
+- The landing hoop under an airborne ball is a smooth ring that stays round
+  at any distance, and it no longer draws over a car standing near it.
+- Goals and demolitions blow up in glowing flashes, rings, fireballs, sparks
+  and smoke. Sliding rear wheels leave tyre tracks on the pitch.
+- Split screen holds 30 fps with both cars close together or ball cam looking
+  down the arena.
+  Cars in split screen no longer turn into low-detail wedges on wheel slabs,
+  and the sky no longer shows through the pitch or the foot of the walls when
+  the camera is close.
+- The chase camera stays above the pitch when you drive up a wall, instead of
+  looking at the grass from underneath.
+- The view down the full length of the pitch, roof and lights included, holds
+  60 fps.
+- The now-playing plate no longer covers the goal banner.
+- Saving settings no longer wipes another game's saves: a memory card with no
+  header now gets a "format it?" prompt (Cross formats and saves, Circle or
+  Start leaves the card alone for this session), and a missing card is still
+  skipped silently.
+- Pinned newer PSoXide SDK, engine and emulator components.
+
+## 0.3.0 | 2026-09-26
+
+The arena and HUD overhaul, on top of source 2026.09.05. Uploaded to itch.io by
+hand on 2026-09-26 from the library disc; the itch workflow did not run for
+this version.
+
 
 - Arena: each half of the pitch, its walls and the roof in its team's colour;
   each goal lit in its team's colour.

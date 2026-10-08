@@ -307,7 +307,16 @@ explicitly with `PSOXIDE_FROM`.
 
 ## Recent changes
 
-**0.3.0 (not yet published): the arena and HUD overhaul.** The pitch now looks
+**0.4.0: attract demo, rounder arena, new ball.** Leave a menu alone for 30
+seconds, or pick DEMO on the main menu, and four bot-against-bot matches play,
+one view and split screen, until you press a button. The arena corners are
+rounded and the end walls have a smaller floor ramp, like the standard arena,
+the ball has a panelled design, goals and demolitions blow up in glowing
+flashes and fireballs, and sliding wheels leave tyre tracks. Split screen holds
+30 fps, the sky no longer shows through the pitch near the camera, and the game
+asks before formatting a memory card that has no header.
+
+**0.3.0: the arena and HUD overhaul.** The pitch now looks
 like a stadium. Each half, its walls and the roof glow in that team's colour,
 the goals are lit the same way, boost pads are pools of light with the orbs
 floating over them again, and the goal boxes and arcs are marked on the pitch
