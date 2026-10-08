@@ -2303,8 +2303,15 @@ impl NitroXide {
             Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
             Phase::Play => {
                 self.draw_hud(hud);
+                // The goal banner has the corner to itself: the plate slides
+                // in at the song's start, which a goal celebration often
+                // shares, and drawn over the headline it cut the end off
+                // ("P1 SCOF"). It comes back once the banner is gone, under
+                // any pause panel.
                 if self.sim.goal_freeze > 0 {
                     self.draw_goal_banner(display);
+                } else {
+                    self.draw_now_playing(hud, ctx.sim_tick.as_u32());
                 }
                 if self.paused {
                     if self.settings.is_some() {
@@ -2313,6 +2320,7 @@ impl NitroXide {
                         self.draw_pause_menu(display, hud, ctx.fb.buffer_y(ctx.fb.drawing));
                     }
                 }
+                return;
             }
             Phase::Results => self.draw_results(display, hud),
             Phase::Demo if self.demo.cut > 0 => return,
