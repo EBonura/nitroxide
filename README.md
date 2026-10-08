@@ -1,8 +1,8 @@
 # NitroXide
 
-Start with the [PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc): it includes NitroXide
-and the other Bonnie Studios PlayStation demos. Standalone downloads are available
-for testing just this project.
+**[Download the latest version on itch.io](https://bonnie-studios.itch.io/nitroxide)**
+
+It's also on the [PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc) with the other Bonnie Studios PlayStation games, and you can [play it in your browser](https://bonnie-studios.itch.io/psoxide).
 
 Rocket-powered car soccer for the original PlayStation, written in Rust on the
 [PSoXide SDK](https://github.com/EBonura/PSoXide) and
