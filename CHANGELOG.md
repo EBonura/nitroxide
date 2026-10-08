@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.1 | 2026-10-08
+
+A fix for how the ball rolls, a fresh set of attract demo matches and clearer
+tyre tracks, on top of 0.4.0.
+
+- The ball now plays the same in every direction. Before, a ball rolling
+  toward one end or side lost speed to drag and stopped, while the same ball
+  rolling the other way kept going until it hit a wall. Mirrored shots and
+  rolls now match.
+- Attract demo: four new matches (one view and split screen) picked for the
+  fixed ball, with more touches, saves, flips and wall driving before the
+  first goal.
+- Tyre tracks are wider, darker and last longer (8 seconds, then a 4 second
+  fade), and a wheel starts marking the pitch sooner when you slide.
+
 ## 0.4.0 | 2026-10-08
 
 Attract demo, rounder arena, a new ball, explosions and tyre tracks, a steadier

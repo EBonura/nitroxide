@@ -307,6 +307,11 @@ explicitly with `PSOXIDE_FROM`.
 
 ## Recent changes
 
+**0.4.1: the ball rolls the same both ways.** A ball rolling toward one end
+or side no longer stops sooner than the same ball rolling the other way, so
+mirrored shots and rolls match. The attract demo has four new matches picked
+for the fixed ball, and tyre tracks are wider, darker and last longer.
+
 **0.4.0: attract demo, rounder arena, new ball.** Leave a menu alone for 30
 seconds, or pick DEMO on the main menu, and four bot-against-bot matches play,
 one view and split screen, until you press a button. The arena corners are
