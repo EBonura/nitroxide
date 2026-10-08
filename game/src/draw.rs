@@ -208,6 +208,13 @@ fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
     max_x >= view_min_x && min_x < view_max_x && max_y >= view_min_y && min_y < view_max_y
 }
 
+/// Did the GTE clamp this screen coordinate? It stores -1024..=1023, so a
+/// vertex at either end is short of its true place.
+#[inline(always)]
+const fn screen_saturated((x, y): (i16, i16)) -> bool {
+    x <= -1024 || x >= 1023 || y <= -1024 || y >= 1023
+}
+
 /// Will the rasteriser draw both of this projected quad's triangles? It
 /// drops a triangle two of whose vertices are 1024 or more pixels apart
 /// across or 512 or more down.
@@ -4465,10 +4472,26 @@ impl Builder<'_> {
             if nn >= n {
                 continue;
             }
-            conformed |= 1 << k;
             // The shared edge: constant sx against an x-step neighbour,
             // constant sz against a z-step one.
             let at = if dx + dz > 0 { nu } else { 0 };
+            // A coarse neighbour whose end of this edge is saturated (the
+            // GTE stores a screen coordinate no further than -1024 or 1023)
+            // is drawn as clipped pieces, which follow the true edge. The
+            // straight screen segment to the saturated end points somewhere
+            // else, and snapping this tile's edge onto it left a wedge of
+            // sky between the two.
+            let ends = if dx != 0 {
+                (g[at][0], g[at][nu])
+            } else {
+                (g[0][at], g[nu][at])
+            };
+            let saturated =
+                |p: Option<(i16, i16, i32)>| p.is_some_and(|p| screen_saturated((p.0, p.1)));
+            if saturated(ends.0) || saturated(ends.1) {
+                continue;
+            }
+            conformed |= 1 << k;
             let cs = (n / nn) as usize;
             for i in 1..nu {
                 if i % cs == 0 {
