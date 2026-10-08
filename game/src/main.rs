@@ -1756,6 +1756,18 @@ impl Scene for NitroXide {
             self.phase = Phase::Play;
             self.two_player = true;
             self.sim.opponent_ai = false;
+            // NITRO_SPLIT_LOOK="car0,car1,paint0,paint1" picks the garage at
+            // build time, so every pairing can be captured without a second
+            // pad. Unset, the split game keeps its default pair.
+            if let Some(look) = option_env!("NITRO_SPLIT_LOOK") {
+                let mut v = look.split(',').map(|n| n.parse::<usize>().unwrap_or(0));
+                let mut next = || v.next().unwrap_or(0);
+                self.cars = [
+                    next().min(draw::CAR_COUNT - 1),
+                    next().min(draw::CAR_COUNT - 1),
+                ];
+                self.paints = [next().min(draw::PAINT_COUNT - 1), next().min(draw::PAINT_COUNT - 1)];
+            }
         }
         #[cfg(feature = "boot-hatch")]
         {
