@@ -7700,23 +7700,23 @@ const TRACK_STEP: i32 = 128;
 /// Past this a wheel has been teleported (kickoff, respawn), not driven.
 const TRACK_JUMP: i32 = 400;
 /// Ticks a point lives, and how many of them it spends fading out.
-const TRACK_LIFE: u16 = 360;
-const TRACK_FADE: u16 = 180;
+const TRACK_LIFE: u16 = 480;
+const TRACK_FADE: u16 = 240;
 /// Camera depth, in uu, at which a mark starts to fade, and past which it is
 /// gone. Past the fade a mark is under two pixels wide: the fade is so that
 /// it leaves gradually rather than at a line.
 const TRACK_NEAR: i32 = 2600;
 const TRACK_FAR: i32 = 3800;
 /// Half the width of one tyre's mark, in uu.
-const TRACK_HALF_W: i32 = 12;
+const TRACK_HALF_W: i32 = 18;
 /// Where the rear wheels touch the pitch, from the car's centre, in uu.
 const TRACK_AXLE_Z: i32 = -50;
 const TRACK_WHEEL_X: i32 = 44;
 /// Sideways speed, in sim sub-units a tick, past which a tyre is scrubbing.
 /// About 250 uu/s.
-const TRACK_SLIP: i32 = 260;
+const TRACK_SLIP: i32 = 200;
 /// How dark a fresh mark is: subtracted from the pitch.
-const TRACK_DARK: Rgb = (46, 50, 42);
+const TRACK_DARK: Rgb = (84, 92, 72);
 /// The track slot: one in front of the markings.
 const TRACK_SLOT: usize = LINE_SLOT - 1;
 
