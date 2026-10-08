@@ -297,6 +297,24 @@ static mut PIECE_JOBS: [PieceJob; MAX_PIECE_JOBS] = [PieceJob {
 }; MAX_PIECE_JOBS];
 static mut PIECE_JOB_COUNT: usize = 0;
 
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum EyeReach {
+    Clear,
+    Cuts,
+    Behind,
+}
+
+/// Goal-box quads the camera is too near to project (see [`Builder::goals`]):
+/// nine to a goal, both goals.
+const MAX_GOAL_JOBS: usize = 20;
+static mut GOAL_JOBS: [PieceJob; MAX_GOAL_JOBS] = [PieceJob {
+    world: [(0, 0, 0); 4],
+    uvs: [(0, 0); 4],
+    tints: [0; 4],
+    kind: Pieces::Floor,
+}; MAX_GOAL_JOBS];
+static mut GOAL_JOB_COUNT: usize = 0;
+
 /// One wall quad queued by index (span, column level, column, lower and
 /// upper ring), with its UVs and tints. See [`Builder::queue_wall_quad`].
 #[derive(Copy, Clone)]
@@ -5858,6 +5876,7 @@ impl Builder<'_> {
                 continue;
             }
             let near = Self::floor_split(cull.flat_distance(st.centre.0, st.centre.2)) > 2;
+            let mut apron_whole = false;
             let (cols, rows): (&[usize], &[usize]) =
                 if near { (&[0, 1, 2, 3], &[0, 1, 2]) } else { (&[0, 3], &[0, 2]) };
             let packet = CROWD_PACKETS[st.team as usize];
@@ -5879,11 +5898,20 @@ impl Builder<'_> {
                     }
                 }
             }
-            // The apron: the front edge dropped to the ground, in the same
-            // columns the crowd uses (a piece beside the camera is a wide
-            // quad that the rasteriser would refuse whole).
-            for c in cols.windows(2) {
-                let (i0, i1) = (c[0], c[1]);
+            // The apron: the front edge dropped to the ground. The edge is a
+            // straight line, so one quad covers the piece unless it is too wide
+            // for the rasteriser to take whole (a piece beside the camera), and
+            // then it goes in the crowd's own columns.
+            let last = cols[cols.len() - 1];
+            let spans: &[(usize, usize)] = if cols.len() > 2 {
+                &[(0, last), (0, 1), (1, 2), (2, 3)]
+            } else {
+                &[(0, last)]
+            };
+            for (n, &(i0, i1)) in spans.iter().enumerate() {
+                if n == 1 && apron_whole {
+                    break;
+                }
                 let (Some(t0), Some(t1)) = (g[0][i0], g[0][i1]) else {
                     continue;
                 };
@@ -5896,7 +5924,15 @@ impl Builder<'_> {
                     continue;
                 }
                 let sp = [t0, t1, (b0.sx, b0.sy), (b1.sx, b1.sy)];
-                if !quad_overlaps_view(&sp) || !gpu_draws_whole(&sp) {
+                if !quad_overlaps_view(&sp) {
+                    continue;
+                }
+                if n == 0 && cols.len() > 2 {
+                    apron_whole = gpu_draws_whole(&sp);
+                    if !apron_whole {
+                        continue;
+                    }
+                } else if !gpu_draws_whole(&sp) {
                     continue;
                 }
                 if let Some(q) = self
@@ -6208,44 +6244,115 @@ impl Builder<'_> {
         }
     }
 
-    /// Is any corner of this quad at or inside the depth the GTE stops
-    /// projecting true (see [`GTE_TRUE_SZ`])? Such a quad is clipped rather
-    /// than projected: [`project_quad`] drops a quad with a corner behind the
-    /// eye, and one with a corner that close lands off its true place.
+    /// Where a quad's corners are against the depth the GTE stops projecting
+    /// true (see [`GTE_TRUE_SZ`]): every corner past it, none, or some. A
+    /// quad with some is clipped rather than projected: [`project_quad`]
+    /// drops a quad with a corner behind the eye, and one with a corner that
+    /// close lands off its true place. One wholly behind it shows nothing.
     #[inline]
-    fn near_the_eye(cull: &Cull, corners: &[(i32, i32, i32); 4]) -> bool {
-        corners.iter().any(|c| {
+    fn eye_reach(cull: &Cull, corners: &[(i32, i32, i32); 4]) -> EyeReach {
+        let mut inside = 0;
+        for c in corners {
             let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-            Cull::dot(cull.fwd, d) <= GTE_TRUE_SZ + 8
-        })
+            inside += (Cull::dot(cull.fwd, d) <= GTE_TRUE_SZ + 8) as u8;
+        }
+        match inside {
+            0 => EyeReach::Clear,
+            4 => EyeReach::Behind,
+            _ => EyeReach::Cuts,
+        }
+    }
+
+    /// Queue a goal-box quad for [`Builder::flush_goal_jobs`], which clips it
+    /// once the phase is off the scratchpad stack (the clip needs more frame
+    /// than the stack has). A quad past the queue's end is dropped, as every
+    /// such quad used to be.
+    #[inline(never)]
+    #[cold]
+    fn queue_goal_job(
+        world: [(i32, i32, i32); 4],
+        uvs: [(u8, u8); 4],
+        tints: [u32; 4],
+        kind: Pieces,
+    ) {
+        unsafe {
+            let n = GOAL_JOB_COUNT;
+            if n < MAX_GOAL_JOBS {
+                GOAL_JOBS[n] = PieceJob {
+                    world,
+                    uvs,
+                    tints,
+                    kind,
+                };
+                GOAL_JOB_COUNT = n + 1;
+            }
+        }
+    }
+
+    /// Clip and draw what [`Builder::queue_goal_job`] collected.
+    #[inline(never)]
+    fn flush_goal_jobs(&mut self, cull: &Cull) {
+        for k in 0..unsafe { GOAL_JOB_COUNT } {
+            let job = unsafe { GOAL_JOBS[k] };
+            self.clip_piece(job.world, job.uvs, job.tints, job.kind, cull);
+        }
+        unsafe { GOAL_JOB_COUNT = 0 };
     }
 
     /// [`Builder::quad`] for the goal box, whose faces are big enough for the
     /// camera to stand inside: a driver in the mouth of the goal has the near
     /// corners of the floor and the sides behind the lens, and the whole
-    /// face used to go with them (the pitch under the car vanished).
-    fn goal_quad(&mut self, cull: &Cull, corners: [(i32, i32, i32); 4], colors: [Rgb; 4]) {
-        if Self::near_the_eye(cull, &corners) {
-            self.clip_piece(corners, [(0, 0); 4], colors.map(rgbc), Pieces::Flat, cull);
-        } else {
-            self.quad(corners, colors);
+    /// face used to go with them (the pitch under the car vanished). `near`
+    /// is whether any of this goal's box can reach the eye (see `goals`), so a
+    /// goal across the pitch pays for no test at all.
+    fn goal_quad(
+        &mut self,
+        cull: &Cull,
+        near: bool,
+        corners: [(i32, i32, i32); 4],
+        colors: [Rgb; 4],
+    ) {
+        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+            EyeReach::Clear => self.quad(corners, colors),
+            EyeReach::Cuts => {
+                Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::Flat)
+            }
+            EyeReach::Behind => {}
         }
     }
 
-    fn goal_quad_flat(&mut self, cull: &Cull, corners: [(i32, i32, i32); 4], color: Rgb) {
-        self.goal_quad(cull, corners, [color; 4]);
+    fn goal_quad_flat(
+        &mut self,
+        cull: &Cull,
+        near: bool,
+        corners: [(i32, i32, i32); 4],
+        color: Rgb,
+    ) {
+        self.goal_quad(cull, near, corners, [color; 4]);
     }
 
     /// The goal's floor, like the pitch's, is not depth-sorted: it lies under
     /// everything that stands in the goal, and a floor sorted by its average
     /// depth drew over the lower half of a car parked on it.
-    fn goal_floor(&mut self, cull: &Cull, corners: [(i32, i32, i32); 4], colors: [Rgb; 4]) {
-        if Self::near_the_eye(cull, &corners) {
-            self.clip_piece(corners, [(0, 0); 4], colors.map(rgbc), Pieces::GoalFloor, cull);
-        } else if let Some((sp, _)) = project_quad(&corners) {
-            if quad_overlaps_view(&sp) {
-                self.emit_goal_floor(sp, colors);
+    fn goal_floor(
+        &mut self,
+        cull: &Cull,
+        near: bool,
+        corners: [(i32, i32, i32); 4],
+        colors: [Rgb; 4],
+    ) {
+        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+            EyeReach::Clear => {
+                if let Some((sp, _)) = project_quad(&corners) {
+                    if quad_overlaps_view(&sp) {
+                        self.emit_goal_floor(sp, colors);
+                    }
+                }
             }
+            EyeReach::Cuts => {
+                Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::GoalFloor)
+            }
+            EyeReach::Behind => {}
         }
     }
 
@@ -6262,6 +6369,7 @@ impl Builder<'_> {
     fn goal_quad_tex(
         &mut self,
         cull: &Cull,
+        near: bool,
         corners: [(i32, i32, i32); 4],
         uvs: [u16; 4],
         tints: [Rgb; 4],
@@ -6269,11 +6377,15 @@ impl Builder<'_> {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
     ) {
-        if Self::near_the_eye(cull, &corners) {
-            let kind = Pieces::Net { packet };
-            self.clip_piece(corners, uvs.map(|w| (w as u8, (w >> 8) as u8)), tints.map(rgbc), kind, cull);
-        } else {
-            self.quad_tex(corners, uvs, tints, bias, packet, blended);
+        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+            EyeReach::Clear => self.quad_tex(corners, uvs, tints, bias, packet, blended),
+            EyeReach::Cuts => Self::queue_goal_job(
+                corners,
+                uvs.map(|w| (w as u8, (w >> 8) as u8)),
+                tints.map(rgbc),
+                Pieces::Net { packet },
+            ),
+            EyeReach::Behind => {}
         }
     }
 
@@ -6286,6 +6398,14 @@ impl Builder<'_> {
             (-sim::HALF_Z, seat_signal(0)),
         ] {
             let back = z_line + sim::GOAL_DEPTH * z_line.signum();
+            // Can any of this goal's box reach the eye? Its nearest point is no
+            // nearer than the box's centre less its reach along the view.
+            let near = {
+                let c = (0, -sim::GOAL_H / 2, (z_line + back) / 2);
+                let reach = cull.extents((sim::GOAL_HALF_W, sim::GOAL_H / 2, sim::GOAL_DEPTH / 2))[0];
+                let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
+                Cull::dot(cull.fwd, d) - reach <= GTE_TRUE_SZ + 8
+            };
             // There used to be a guard here that skipped this whole box when
             // the camera was inside the goal, on the grounds that an unclipped
             // quad straddling the eye becomes a screen-wide slab. It was
@@ -6306,6 +6426,7 @@ impl Builder<'_> {
             let glow = |n: i32| shade(color, n, 16);
             self.goal_quad(
                 &cull,
+                near,
                 [
                     (-gw, 0, back),
                     (gw, 0, back),
@@ -6323,6 +6444,7 @@ impl Builder<'_> {
                 let x = sx * gw;
                 self.goal_quad(
                     &cull,
+                    near,
                     [(x, 0, z_line), (x, 0, back), (x, gh, z_line), (x, gh, back)],
                     [
                         glow(GOAL_SIDE - 2),
@@ -6334,6 +6456,7 @@ impl Builder<'_> {
             }
             self.goal_quad_flat(
                 &cull,
+                near,
                 [
                     (-gw, gh, z_line),
                     (gw, gh, z_line),
@@ -6344,6 +6467,7 @@ impl Builder<'_> {
             );
             self.goal_floor(
                 &cull,
+                near,
                 [
                     (-gw, 0, z_line),
                     (gw, 0, z_line),
@@ -6404,6 +6528,7 @@ impl Builder<'_> {
             // Back.
             self.goal_quad_tex(
                 &cull,
+                near,
                 [(-nw, 0, far), (nw, 0, far), (-nw, nh, far), (nw, nh, far)],
                 patch(across, tall),
                 [net_lo, net_lo, net_hi, net_hi],
@@ -6416,6 +6541,7 @@ impl Builder<'_> {
                 let x = sx * nw;
                 self.goal_quad_tex(
                     &cull,
+                    near,
                     [(x, 0, z_line), (x, 0, far), (x, nh, z_line), (x, nh, far)],
                     patch(deep, tall),
                     [net_lo, net_lo, net_hi, net_hi],
@@ -6427,6 +6553,7 @@ impl Builder<'_> {
             // Roof.
             self.goal_quad_tex(
                 &cull,
+                near,
                 [
                     (-nw, nh, z_line),
                     (nw, nh, z_line),
@@ -7778,11 +7905,7 @@ fn build_view(
                     b.demo_burst(s);
                 }
                 b.ceiling(&cull);
-            });
-            // Off the scratchpad stack: a face the camera stands inside is
-            // clipped, and the clip needs more frame than the stack has.
-            b.goals(&view);
-            on_scratchpad(|| {
+                b.goals(&view);
                 b.ball_ring(s, &cull);
                 b.shadow(
                     r(s.ball.p.x),
@@ -7811,6 +7934,8 @@ fn build_view(
                 }
             })
         });
+        // Off the scratchpad stack: the clip needs more frame than it has.
+        b.flush_goal_jobs(&cull);
 
         staged!(S_BALL, { on_scratchpad(|| b.ball(s, &view)) });
         on_scratchpad(|| {
