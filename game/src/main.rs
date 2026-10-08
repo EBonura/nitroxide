@@ -1231,7 +1231,8 @@ impl NitroXide {
         }
     }
 
-    fn draw_goal_banner(&self, font: &FontAtlas) {
+    /// The goal banner's two words, where they go and how big they are.
+    fn goal_banner(&self, font: &FontAtlas) -> draw::Banner {
         // Who scored, not what happened. `last_scorer` is the team credited,
         // so an own goal already reads as the other side scoring and there is
         // no separate case for it: the scoreboard is the thing that has to say
@@ -1255,16 +1256,32 @@ impl NitroXide {
         let w =
             (font.text_width(text) as i32 + font.text_width(" SCORED") as i32) * grow as i32 / 256;
         let x = (160 - w / 2) as i16;
-        // High, in the stands. Centred it sat exactly where the celebration
-        // camera puts the net, so the headline covered the explosion it was
-        // announcing.
-        const Y: i16 = 34;
         let after = x + (font.text_width(text) as i32 * grow as i32 / 256) as i16;
+        draw::Banner {
+            font: *font,
+            // High, in the stands. Centred it sat exactly where the celebration
+            // camera puts the net, so the headline covered the explosion it was
+            // announcing.
+            y: 34,
+            q8: grow,
+            parts: [
+                (x, text, color),
+                (after, " SCORED", (240, 240, 220)),
+            ],
+        }
+    }
+
+    /// The banner written straight to the GPU over the finished frame: split
+    /// screen, whose two tables have no tail of their own to carry it. A
+    /// single view files it in its table instead (`draw::set_banner`).
+    fn draw_goal_banner(&self, font: &FontAtlas) {
+        let banner = self.goal_banner(font);
         // Outlined: the team colour is its true shade now rather than washed
         // out by saturation, and the cobalt is too dark to hold its edges
         // against the stands' grey lattice alone.
-        Self::outlined(font, x, Y, text, grow, color);
-        Self::outlined(font, after, Y, " SCORED", grow, (240, 240, 220));
+        for (x, text, tint) in banner.parts {
+            Self::outlined(font, x, banner.y, text, banner.q8, tint);
+        }
     }
 
     /// Display text at a Q8 scale with a black outline, one pixel each way
@@ -2399,6 +2416,15 @@ impl Scene for NitroXide {
         // Idempotent: this only does work on the frame a colour moved.
         draw::set_seat_paints(self.paints);
         draw::set_arena_time(self.arena_time);
+        // The goal banner rides in a single view's table; split screen draws
+        // it over the finished frame (see `draw_goal_banner`).
+        let banner = match (self.phase, self.display.as_ref()) {
+            (Phase::Play | Phase::Demo, Some(font)) if self.sim.goal_freeze > 0 && !self.two_player => {
+                Some(self.goal_banner(font))
+            }
+            _ => None,
+        };
+        draw::set_banner(banner);
         match self.phase {
             // Nothing behind the splash: the overlay paints the whole frame.
             Phase::Intro => {}
@@ -2535,7 +2561,9 @@ impl NitroXide {
                 // ("P1 SCOF"). It comes back once the banner is gone, under
                 // any pause panel.
                 if self.sim.goal_freeze > 0 {
-                    self.draw_goal_banner(display);
+                    if self.two_player {
+                        self.draw_goal_banner(display);
+                    }
                 } else {
                     self.draw_now_playing(hud, ctx.sim_tick.as_u32());
                 }
@@ -2552,7 +2580,7 @@ impl NitroXide {
             Phase::Demo if self.demo.cut > 0 => return,
             Phase::Demo => {
                 self.draw_hud(hud);
-                if self.sim.goal_freeze > 0 {
+                if self.sim.goal_freeze > 0 && self.two_player {
                     self.draw_goal_banner(display);
                 }
                 // WipEout's way: the match HUD as it is, and one word saying

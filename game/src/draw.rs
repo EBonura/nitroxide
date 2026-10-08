@@ -28,7 +28,8 @@ use psx_engine::{ActorTransform, DepthRange, GpuPacket, OtFrame, Vec3World};
 use psx_gpu::frame::PrimitiveArena;
 use psx_gpu::material::{BlendMode, TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedGouraud, TriGouraud};
+use psx_font::FontAtlas;
+use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedGouraud, QuadTexturedMaterial, TriGouraud};
 use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, project_vertex_scheduled as project};
@@ -2332,6 +2333,52 @@ const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
         restore: 0,
     }
 }; MAX_GLOWS];
+
+/// The goal banner, as the packets `draw_text_scaled_q8` would have written to
+/// the GPU one word at a time after the scene: every glyph of every outline
+/// pass, in the same order. Written by hand over the ports, a banner of fifty
+/// glyph quads waited on the GPU between the end of the scene and the flip and
+/// took a sixth of a frame; as packets at the back of the ordering table the
+/// GPU draws them during the next build instead.
+///
+/// A glyph is one quad of eleven words (its texture window travels with it).
+/// Ten glyphs, five outline passes and the ink: sixty.
+const BANNER_MAX: usize = 64;
+static mut BANNER_QUADS: [[QuadTexturedMaterial; BANNER_MAX]; SET_COUNT] = [BANNER_INIT; SET_COUNT];
+const BANNER_INIT: [QuadTexturedMaterial; BANNER_MAX] = [const {
+    QuadTexturedMaterial::with_material(
+        [(0, 0); 4],
+        [(0, 0); 4],
+        TextureMaterial::opaque(0, 0, (0, 0, 0)),
+    )
+}; BANNER_MAX];
+
+/// What the goal banner says and where, for the next table built. `parts` are
+/// drawn in order, each with its black outline: x, text, ink.
+#[derive(Copy, Clone)]
+pub struct Banner {
+    pub font: FontAtlas,
+    pub y: i16,
+    pub q8: u16,
+    pub parts: [(i16, &'static str, (u8, u8, u8)); 2],
+}
+static mut BANNER: Option<Banner> = None;
+/// The draw mode the banner's glyphs are drawn in: the font's own, which has
+/// no dither. Written to the GPU ahead of them so the grain the arena's
+/// textured packets draw with does not land on the lettering.
+static mut BANNER_MODE: [ModePacket; SET_COUNT] = [const { ModePacket { tag: 0, word: 0 } }; SET_COUNT];
+/// What each set's glyph packets were last built from, and how many there
+/// are: a banner that has finished growing is the same sixty quads every frame.
+type BannerKey = (i16, u16, [(i16, &'static str, (u8, u8, u8)); 2]);
+static mut BANNER_BUILT: [Option<(BannerKey, usize)>; SET_COUNT] = [None; SET_COUNT];
+
+/// Ask for a goal banner in the next single-view table, or for none.
+pub fn set_banner(banner: Option<Banner>) {
+    unsafe { BANNER = banner };
+}
+
+/// The black offsets the banner's outline is drawn at before its ink.
+const BANNER_OUTLINE: [(i16, i16); 5] = [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)];
 
 /// One sixteen-entry CLUT row uploaded from inside the ordering table:
 /// GP0(A0) with its data inline, then GP0(01) so no cached copy of the old
@@ -7737,6 +7784,7 @@ fn build_view(
                 }
             }
         });
+        b.banner();
     }
 
     // Phase 2: the car mesh, appended into the same frame.
@@ -8452,6 +8500,116 @@ impl Builder<'_> {
                 GLOW_PACKET,
                 -50,
             );
+        }
+    }
+}
+
+// ---- goal banner -----------------------------------------------------------
+
+/// `scale_q8_i16` of psx-font: a glyph side at a Q8 scale, rounded, at least 1.
+fn banner_side(value: i16, q8: u16) -> i16 {
+    ((i32::from(value) * i32::from(q8) + 128) >> 8).clamp(1, i32::from(i16::MAX)) as i16
+}
+
+/// `round_q8_to_i16` of psx-font for a non-negative cursor.
+fn banner_round(q8: i32) -> i16 {
+    ((q8.saturating_add(128)) >> 8).clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+}
+
+/// One glyph of an atlas as the font crate lays it out: where it is in its
+/// texture page, its CLUT and page words, and its size. `None` for a
+/// character the atlas has no glyph for.
+fn banner_glyph(font: &FontAtlas, ch: char) -> Option<(u8, u8, u16, u16, i16, i16, u32)> {
+    let mut utf8 = [0u8; 4];
+    let text: &str = ch.encode_utf8(&mut utf8);
+    let (mut mode, mut found) = (0u32, None);
+    font.emit_text_packets(0, 0, text, (0, 0, 0), |words| {
+        match words.len() {
+            2 => mode = words[0],
+            4 => found = Some((words[2], words[3])),
+            _ => {}
+        }
+        true
+    });
+    let (uv_clut, size) = found?;
+    Some((
+        uv_clut as u8,
+        (uv_clut >> 8) as u8,
+        (uv_clut >> 16) as u16,
+        (mode & 0x1FF) as u16,
+        (size & 0xFFFF) as i16,
+        (size >> 16) as i16,
+        mode,
+    ))
+}
+
+impl Builder<'_> {
+    /// File the banner's glyph packets in the last slot, drawn after the scene.
+    /// Out of line: it is built on the main stack, after the scratchpad phases.
+    #[inline(never)]
+    fn banner(&mut self) {
+        let Some(spec) = (unsafe { BANNER }) else {
+            return;
+        };
+        let quads = unsafe { &mut BANNER_QUADS[SET] };
+        let key: BannerKey = (spec.y, spec.q8, spec.parts);
+        let built = unsafe { BANNER_BUILT[SET] };
+        let (mut n, mut mode) = (0, 0);
+        if let Some((was, count)) = built {
+            if was == key {
+                n = count;
+                mode = unsafe { BANNER_MODE[SET].word };
+            }
+        }
+        let rebuild = n == 0;
+        for (x, text, ink) in spec.parts {
+            if !rebuild {
+                break;
+            }
+            // Each glyph's atlas entry once, not once per pass.
+            let mut glyphs = [None; 12];
+            for (slot, ch) in glyphs.iter_mut().zip(text.chars()) {
+                *slot = Some((ch, banner_glyph(&spec.font, ch)));
+            }
+            for pass in 0..=BANNER_OUTLINE.len() {
+                let ((dx, dy), tint) = match BANNER_OUTLINE.get(pass) {
+                    Some(&d) => (d, (0, 0, 0)),
+                    // Half strength, as `NitroXide::ink` has it.
+                    None => ((0, 0), (ink.0.div_ceil(2), ink.1.div_ceil(2), ink.2.div_ceil(2))),
+                };
+                let mut cursor = i32::from(x) << 8;
+                for (ch, glyph) in glyphs.iter().flatten() {
+                    let cx = banner_round(cursor) + dx;
+                    if let Some(&(u, v, clut, tpage, gw, gh, glyph_mode)) = glyph.as_ref() {
+                        let (sw, sh) = (banner_side(gw, spec.q8), banner_side(gh, spec.q8));
+                        let y = spec.y + dy;
+                        // The font crate's UVs: the far edge saturates.
+                        let (u1, v1) = (u.saturating_add(gw as u8), v.saturating_add(gh as u8));
+                        if n < BANNER_MAX {
+                            quads[n] = QuadTexturedMaterial::with_material(
+                                [(cx, y), (cx + sw, y), (cx, y + sh), (cx + sw, y + sh)],
+                                [(u, v), (u1, v), (u, v1), (u1, v1)],
+                                TextureMaterial::opaque(clut, tpage, tint),
+                            );
+                            n += 1;
+                            mode = glyph_mode;
+                        }
+                    }
+                    cursor += i32::from(spec.font.glyph_advance(*ch)) * i32::from(spec.q8);
+                }
+            }
+        }
+        unsafe { BANNER_BUILT[SET] = Some((key, n)) };
+        // The table prepends within a slot, so the last glyph goes in first.
+        for k in (0..n).rev() {
+            self.ot.add_packet(0, unsafe { &mut BANNER_QUADS[SET][k] });
+        }
+        if n > 0 {
+            // Last in, so first drawn: the font's draw mode ahead of the glyphs.
+            unsafe {
+                BANNER_MODE[SET].word = mode;
+                self.ot.add_raw(0, core::ptr::from_mut(&mut BANNER_MODE[SET]).cast(), 1);
+            }
         }
     }
 }
