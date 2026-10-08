@@ -812,7 +812,8 @@ const CORNER_X: i32 = sim::CORNER - sim::HALF_Z; // 2944
 // + pads(34, up to 4 each now that each stands on a two-ring plate), with slack.
 // The pads were never in this tally and the plate pushed them past the old 448.
 // The pitch markings add the quads they shade (see LINE_FLAT_SPREAD).
-const MAX_QUADS: usize = 576 + 48;
+// + the stands' aprons (up to three a piece, a dozen pieces in view), with slack.
+const MAX_QUADS: usize = 576 + 48 + 32;
 
 /// GP0 polygon-command bit 25: blend this primitive with what is already in
 /// the framebuffer instead of overwriting it.
@@ -1065,6 +1066,12 @@ const STAND_COUNT: usize = 2 * 8 + 4 + 2 * 3;
 /// bowl seen from within it, so no piece hides another and they need no
 /// sorting; everything in the arena is in front of them.
 const STAND_SLOT: usize = SKY_SLOT - 1;
+/// The apron under the stands, from the pitch's level up to where the crowd
+/// starts: dark, and darker where it meets the ground. Without it a gap of sky
+/// showed between the barrier's top and the crowd, a thin band all round the
+/// arena (and cyan in the day look), and through the goal mouth.
+const APRON_TOP: Rgb = (34, 34, 46);
+const APRON_BOTTOM: Rgb = (10, 10, 18);
 const STAND_TINT_IN: Rgb = (118, 118, 126);
 const STAND_TINT_OUT: Rgb = (72, 72, 88);
 
@@ -5870,6 +5877,35 @@ impl Builder<'_> {
                     if v.sz != 0 {
                         g[j][cols[3]] = Some((v.sx, v.sy));
                     }
+                }
+            }
+            // The apron: the front edge dropped to the ground, in the same
+            // columns the crowd uses (a piece beside the camera is a wide
+            // quad that the rasteriser would refuse whole).
+            for c in cols.windows(2) {
+                let (i0, i1) = (c[0], c[1]);
+                let (Some(t0), Some(t1)) = (g[0][i0], g[0][i1]) else {
+                    continue;
+                };
+                let (a, b) = (st.grid[0][i0], st.grid[0][i1]);
+                let (b0, b1) = (
+                    project(Vec3I16::new(a.x, 0, a.z)),
+                    project(Vec3I16::new(b.x, 0, b.z)),
+                );
+                if b0.sz == 0 || b1.sz == 0 {
+                    continue;
+                }
+                let sp = [t0, t1, (b0.sx, b0.sy), (b1.sx, b1.sy)];
+                if !quad_overlaps_view(&sp) || !gpu_draws_whole(&sp) {
+                    continue;
+                }
+                if let Some(q) = self
+                    .arena
+                    .push(QuadGouraud::new(sp, [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM]))
+                {
+                    self.ot.add_packet(STAND_SLOT, q);
+                } else {
+                    count_overflow!();
                 }
             }
             for r in rows.windows(2) {
