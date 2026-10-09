@@ -2525,6 +2525,10 @@ impl ClutLoad {
 /// they carry the teams' colours and a shimmer through the fans.
 static mut CROWD_CLUT_LOAD: [[ClutLoad; 2]; SET_COUNT] =
     [const { [ClutLoad::EMPTY, ClutLoad::EMPTY] }; SET_COUNT];
+/// What each of those packets' palettes was last worked out for: the team
+/// colour and the shimmer's phase, which move rarely, so the sixteen entries
+/// are not rebuilt every frame.
+static mut CROWD_CLUT_KEY: [[Option<(Rgb, u8)>; 2]; SET_COUNT] = [[None; 2]; SET_COUNT];
 
 /// Crowd palette entries that are not team colour (tools/cook-arena's crowd
 /// tile indexes them): seat shadow, tier step, clothes and faces.
@@ -8017,7 +8021,11 @@ fn build_view(
                 for (seat, clut) in CROWD_CLUTS.iter().enumerate() {
                     let load = &mut CROWD_CLUT_LOAD[SET][seat];
                     load.xy = ((clut.y() as u32) << 16) | clut.x() as u32;
-                    load.data = crowd_clut(seat, CAMERA_TICK);
+                    let key = Some((seat_signal(seat), (CAMERA_TICK / 6 % 3) as u8));
+                    if CROWD_CLUT_KEY[SET][seat] != key {
+                        load.data = crowd_clut(seat, CAMERA_TICK);
+                        CROWD_CLUT_KEY[SET][seat] = key;
+                    }
                     b.ot.add_raw(
                         SKY_SLOT,
                         core::ptr::from_mut(load).cast(),
