@@ -4172,6 +4172,10 @@ static mut WALL_PROFILE: [(i32, i32); PROFILE_LEN] = [(0, 0); PROFILE_LEN];
 /// the upper rail. This preserves one world-space scale through the straight
 /// wall and the roof curve instead of restarting a texture at every band.
 static mut COVER_PROFILE_V: [u8; PROFILE_LEN] = [0; PROFILE_LEN];
+/// How far into the pitch the translucent cover over a goal mouth reaches and
+/// how high it climbs: (lowest and highest inward offset, highest point), over
+/// the crossbar and the rings from the wall top round the roof curve.
+static mut GOAL_COVER_REACH: (i32, i32, i32) = (0, 0, 0);
 
 fn build_meshes() {
     for j in 0..=BALL_LAT {
@@ -4198,9 +4202,16 @@ fn build_meshes() {
         distance += isqrt_i32(dx * dx + dy * dy);
         cover_v[i] = cover_texels(distance).min(COVER_H as u8);
     }
+    let (mut lo, mut hi, mut top) = (0, 0, sim::GOAL_H);
+    for p in &profile[WALL_TOP_RING..] {
+        lo = lo.min(p.0);
+        hi = hi.max(p.0);
+        top = top.max(p.1);
+    }
     unsafe {
         WALL_PROFILE = profile;
         COVER_PROFILE_V = cover_v;
+        GOAL_COVER_REACH = (lo, hi, top);
     }
 }
 
@@ -5942,9 +5953,17 @@ impl Builder<'_> {
     /// of the two lines is cut where it crosses the view's sides.
     fn apron_span(&mut self, t0: (i16, i16), t1: (i16, i16), f0: (i16, i16), f1: (i16, i16)) {
         let (vx0, vx1) = unsafe { (VIEW_MIN_X as i32 - 64, VIEW_MAX_X as i32 + 64) };
-        let (Some((t0, t1)), Some((f0, f1))) = (clip_x(t0, t1, vx0, vx1), clip_x(f0, f1, vx0, vx1))
-        else {
-            return;
+        let inside = |x: i16| (vx0..=vx1).contains(&(x as i32));
+        let (t0, t1, f0, f1) = if inside(t0.0) && inside(t1.0) && inside(f0.0) && inside(f1.0) {
+            // Nothing to cut: all four ends are already within the view's width.
+            (t0, t1, f0, f1)
+        } else {
+            let (Some((t0, t1)), Some((f0, f1))) =
+                (clip_x(t0, t1, vx0, vx1), clip_x(f0, f1, vx0, vx1))
+            else {
+                return;
+            };
+            (t0, t1, f0, f1)
         };
         let sp = [t0, t1, f0, f1];
         if quad_overlaps_view(&sp) && gpu_draws_whole(&sp) {
@@ -6177,6 +6196,17 @@ impl Builder<'_> {
                 continue;
             }
             let gw = sim::GOAL_HALF_W;
+            // Behind the view or off to a side of it, the cover's every band
+            // would be thrown away after its corners were projected.
+            let (reach_lo, reach_hi, reach_top) = unsafe { GOAL_COVER_REACH };
+            let cover_box =
+                cull.extents((gw, (reach_top - sim::GOAL_H) / 2 + 1, (reach_hi - reach_lo) / 2 + 1));
+            if !cull.visible_box(
+                (0, -(sim::GOAL_H + reach_top) / 2, z - sz * (reach_lo + reach_hi) / 2),
+                cover_box,
+            ) {
+                continue;
+            }
             let profile = unsafe { &WALL_PROFILE };
             let profile_v = unsafe { &COVER_PROFILE_V };
             // `build_spans` appends the two end-wall runs for -Z, then the
