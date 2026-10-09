@@ -109,6 +109,7 @@ psx-pad    = { path = "../.psoxide/sdk/crates/psx-pad" }
 # borrows from the demo disc.
 psx-io     = { path = "../.psoxide/sdk/crates/psx-io" }
 psx-spu    = { path = "../.psoxide/sdk/crates/psx-spu" }
+psx-display = { path = "../.psoxide/sdk/crates/psx-display" }
 psx-settings = { path = "../.psoxide/sdk/crates/psx-settings" }
 # The memory card itself: the settings save asks before formatting a blank card.
 psx-mc     = { path = "../.psoxide/sdk/crates/psx-mc" }
