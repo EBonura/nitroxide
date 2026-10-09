@@ -2612,6 +2612,7 @@ impl NitroXide {
 
 #[no_mangle]
 fn main() -> ! {
+    draw::init_view();
     // Sim every vblank, render every second one: 60 Hz control, 30 Hz picture.
     //
     // The default renders as fast as it can, which gives an uneven frame time

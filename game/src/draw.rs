@@ -146,28 +146,78 @@ const EDGE_SLACK: i16 = 80;
 /// bottom of every emit path in this file; threading a viewport through all of
 /// them would touch thirty call sites to say one thing. Set by [`enter_view`],
 /// which is the only way to start drawing a view.
-static mut VIEW_MIN_X: i16 = -EDGE_SLACK;
-static mut VIEW_MAX_X: i16 = SCREEN_W + EDGE_SLACK;
-static mut VIEW_HALF_W: i32 = (SCREEN_W / 2 + EDGE_SLACK) as i32;
-static mut VIEW_MIN_Y: i16 = -EDGE_SLACK;
-static mut VIEW_MAX_Y: i16 = SCREEN_H + EDGE_SLACK;
-static mut VIEW_HALF_H: i32 = (SCREEN_H / 2 + EDGE_SLACK) as i32;
-/// True while drawing a half-width viewport. Detail follows the viewport: a
-/// 160-pixel view cannot show the near tessellation a 320-pixel one can, and
-/// it is drawn twice, so the finest band is paid for twice to be seen half as
-/// well.
-static mut VIEW_SPLIT: bool = false;
+/// The viewport state, at the bottom of the CPU scratchpad: it is read on
+/// every quad, and a main-RAM load stalls about six cycles where the
+/// scratchpad answers in one. The Builder of the current view sits right
+/// after it. The phases' stack ([`PhaseStack`]) starts above both.
+#[repr(C)]
+struct SpadView {
+    min_x: i16,
+    max_x: i16,
+    min_y: i16,
+    max_y: i16,
+    half_w: i32,
+    half_h: i32,
+    /// True while drawing a half-width viewport. Detail follows the viewport:
+    /// a 160-pixel view cannot show the near tessellation a 320-pixel one can,
+    /// and it is drawn twice, so the finest band is paid for twice to be seen
+    /// half as well.
+    split: bool,
+}
+
+/// Byte offset of the current view's [`Builder`] in the scratchpad.
+const SPAD_BUILDER: usize = core::mem::size_of::<SpadView>().next_multiple_of(4);
+/// First byte of the phases' stack: past the view and the Builder.
+const SPAD_STACK_START: usize =
+    (SPAD_BUILDER + core::mem::size_of::<Builder<'static>>()).next_multiple_of(4);
+
+#[inline(always)]
+fn spad_view() -> *mut SpadView {
+    unsafe { psx_engine::scratchpad::ptr_at::<SpadView>(0) }
+}
+
+/// Give the viewport state its whole-screen value. The scratchpad holds
+/// nothing meaningful at boot, and menus draw before any game view is entered.
+pub fn init_view() {
+    unsafe {
+        spad_view().write(SpadView {
+            min_x: -EDGE_SLACK,
+            max_x: SCREEN_W + EDGE_SLACK,
+            min_y: -EDGE_SLACK,
+            max_y: SCREEN_H + EDGE_SLACK,
+            half_w: (SCREEN_W / 2 + EDGE_SLACK) as i32,
+            half_h: (SCREEN_H / 2 + EDGE_SLACK) as i32,
+            split: false,
+        });
+    }
+}
+
+#[inline(always)]
+fn view_bounds() -> (i16, i16, i16, i16) {
+    let v = spad_view();
+    unsafe { ((*v).min_x, (*v).max_x, (*v).min_y, (*v).max_y) }
+}
+
+#[inline(always)]
+fn view_half_w() -> i32 {
+    unsafe { (*spad_view()).half_w }
+}
+
+#[inline(always)]
+fn view_half_h() -> i32 {
+    unsafe { (*spad_view()).half_h }
+}
 
 /// Is the pass being drawn a half-width one?
 #[inline]
 fn split_view() -> bool {
-    unsafe { VIEW_SPLIT }
+    unsafe { (*spad_view()).split }
 }
 
 /// Is a projected vertex close enough to the current viewport to keep?
 #[inline]
 fn on_view(sx: i16, sy: i16) -> bool {
-    let (min_x, max_x, min_y, max_y) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+    let (min_x, max_x, min_y, max_y) = view_bounds();
     sx >= min_x && sx < max_x && sy >= min_y && sy < max_y
 }
 
@@ -196,7 +246,7 @@ fn project_quad(c: &[(i32, i32, i32); 4]) -> Option<([(i16, i16); 4], i32)> {
 /// its corners are outside, which made a visible part of the enclosure vanish.
 #[inline]
 fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
-    let (vx0, vx1, vy0, vy1) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+    let (vx0, vx1, vy0, vy1) = view_bounds();
     corners_overlap(
         sp.map(|c| c.0 as i32),
         sp.map(|c| c.1 as i32),
@@ -414,13 +464,14 @@ fn enter_view(vp: Viewport, buffer_y: u16) {
 /// its own table ([`AreaPacket`]) while another table may still be walking.
 fn enter_view_cpu(vp: Viewport) {
     unsafe {
-        VIEW_MIN_X = vp.x - EDGE_SLACK;
-        VIEW_MAX_X = vp.x + vp.w + EDGE_SLACK;
-        VIEW_HALF_W = (vp.w / 2 + EDGE_SLACK) as i32;
-        VIEW_MIN_Y = vp.y - EDGE_SLACK;
-        VIEW_MAX_Y = vp.y + vp.h + EDGE_SLACK;
-        VIEW_HALF_H = (vp.h / 2 + EDGE_SLACK) as i32;
-        VIEW_SPLIT = vp.w < SCREEN_W || vp.h < SCREEN_H;
+        let v = spad_view();
+        (*v).min_x = vp.x - EDGE_SLACK;
+        (*v).max_x = vp.x + vp.w + EDGE_SLACK;
+        (*v).half_w = (vp.w / 2 + EDGE_SLACK) as i32;
+        (*v).min_y = vp.y - EDGE_SLACK;
+        (*v).max_y = vp.y + vp.h + EDGE_SLACK;
+        (*v).half_h = (vp.h / 2 + EDGE_SLACK) as i32;
+        (*v).split = vp.w < SCREEN_W || vp.h < SCREEN_H;
     }
     scene::set_screen_offset(
         ((vp.x + vp.w / 2) as i32) << 16,
@@ -2743,7 +2794,7 @@ struct Cull {
 /// halves the frustum, which is where the second pass is paid for.
 #[inline]
 fn cull_half_w() -> i32 {
-    unsafe { VIEW_HALF_W }
+    view_half_w()
 }
 
 impl Cull {
@@ -2782,7 +2833,7 @@ impl Cull {
         let y = Self::dot(self.vertical, d);
         // Follows the viewport the way the side planes do: a half-height view
         // has half the vertical frustum, and the roof and far floor go with it.
-        let half_h = unsafe { VIEW_HALF_H };
+        let half_h = view_half_h();
         y.abs() - Self::extent(self.vertical, h) <= z * half_h / PROJ_H as i32
     }
 
@@ -2809,7 +2860,7 @@ impl Cull {
         if Self::dot(self.right, d).abs() - e[1] > z * cull_half_w() / PROJ_H as i32 {
             return false;
         }
-        let half_h = unsafe { VIEW_HALF_H };
+        let half_h = view_half_h();
         Self::dot(self.vertical, d).abs() - e[2] <= z * half_h / PROJ_H as i32
     }
 
@@ -3839,7 +3890,10 @@ fn draw_far_car<'a>(
     if t.2 < DEPTH_RANGE.near() as i32 {
         return;
     }
-    let cx = unsafe { (VIEW_MIN_X + VIEW_MAX_X) as i32 / 2 };
+    let cx = {
+        let (min_x, max_x, _, _) = view_bounds();
+        (min_x + max_x) as i32 / 2
+    };
     let sx = cx + t.0 * PROJ_H as i32 / t.2;
     let sy = (SCREEN_H as i32 / 2) + t.1 * PROJ_H as i32 / t.2;
     // ponytail: one isotropic half-extent between the car's width and length;
@@ -5126,7 +5180,7 @@ impl Builder<'_> {
         // Most queued quads lie beside or behind the camera, out of the view
         // itself: if all four corners are past one of its planes, nothing of
         // the quad shows, and the clip below is the expensive part.
-        let (half_w, half_h) = unsafe { (VIEW_HALF_W, VIEW_HALF_H) };
+        let (half_w, half_h) = (view_half_w(), view_half_h());
         let quad = &bufs[0][..4];
         let past =
             |test: fn(&Corner, i32, i32) -> bool| quad.iter().all(|c| test(c, half_w, half_h));
@@ -5438,8 +5492,9 @@ impl Builder<'_> {
         // eight-gon shows them at any range.
         let (near, mid) = if split_view() { (400, 900) } else { (500, 1800) };
         let curve_near = if split_view() { 900 } else { 2200 };
-        let view = unsafe {
-            (VIEW_MIN_X as i32, VIEW_MAX_X as i32, VIEW_MIN_Y as i32, VIEW_MAX_Y as i32)
+        let view = {
+            let (x0, x1, y0, y1) = view_bounds();
+            (x0 as i32, x1 as i32, y0 as i32, y1 as i32)
         };
         let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
         // Far away a marking seen edge-on is under a pixel thick, and the
@@ -6014,7 +6069,10 @@ impl Builder<'_> {
     /// A straight line in the world is a straight line on the screen, so each
     /// of the two lines is cut where it crosses the view's sides.
     fn apron_span(&mut self, t0: (i16, i16), t1: (i16, i16), f0: (i16, i16), f1: (i16, i16)) {
-        let (vx0, vx1) = unsafe { (VIEW_MIN_X as i32 - 64, VIEW_MAX_X as i32 + 64) };
+        let (vx0, vx1) = {
+            let (x0, x1, _, _) = view_bounds();
+            (x0 as i32 - 64, x1 as i32 + 64)
+        };
         let inside = |x: i16| (vx0..=vx1).contains(&(x as i32));
         let (t0, t1, f0, f1) = if inside(t0.0) && inside(t1.0) && inside(f0.0) && inside(f1.0) {
             // Nothing to cut: all four ends are already within the view's width.
@@ -8005,7 +8063,12 @@ fn render_view(
 }
 
 /// The whole scratchpad, as a call stack for `build_view`'s phases.
-type PhaseStack = psx_rt::scratchpad::ScratchpadStack<0, { psx_rt::scratchpad::SIZE }>;
+type PhaseStack =
+    psx_rt::scratchpad::ScratchpadStack<SPAD_STACK_START, { psx_rt::scratchpad::SIZE }>;
+const _: () = psx_rt::scratchpad::assert_disjoint(&[
+    psx_rt::scratchpad::Region::new(0, SPAD_STACK_START),
+    PhaseStack::REGION,
+]);
 
 /// Run one `build_view` phase with its frames in the scratchpad.
 #[inline(always)]
@@ -8038,7 +8101,7 @@ fn build_view(
 
     // Phase 1: the procedural quads. `begin` clears the table.
     {
-        let mut b = staged!(S_SETUP, {
+        let b_setup = staged!(S_SETUP, {
             let mut b = Builder {
                 ot: unsafe { OtFrame::begin(&mut OT_SETS[SET]) },
                 arena: unsafe { PrimitiveArena::new(&mut QUADS_SETS[SET]) },
@@ -8104,6 +8167,13 @@ fn build_view(
             view.set_world();
             b
         });
+        // The Builder's cursors move on every quad: keep them in the
+        // scratchpad too.
+        let b: &mut Builder<'static> = unsafe {
+            let slot = psx_engine::scratchpad::ptr_at::<Builder<'static>>(SPAD_BUILDER);
+            slot.write(b_setup);
+            &mut *slot
+        };
         let cull = view.cull();
         staged!(S_FLOOR, {
             on_scratchpad(|| {
@@ -8132,8 +8202,8 @@ fn build_view(
                 // sits the same distance in from that view's right edge.
                 if let Some(panels) = &front {
                     match panels {
-                        FrontPanels::Title(menu) => menu_panels(&mut b, menu),
-                        FrontPanels::Select(select) => select_panels(&mut b, select),
+                        FrontPanels::Title(menu) => menu_panels(b, menu),
+                        FrontPanels::Select(select) => select_panels(b, select),
                     }
                 } else {
                     b.boost_gauge(boost_gauge_x(vp), boost_gauge_y(vp), boost);
@@ -8588,7 +8658,7 @@ impl TrackView {
             right: axis(cull.right),
             vertical: axis(cull.vertical),
             half_w: cull_half_w(),
-            half_h: unsafe { VIEW_HALF_H },
+            half_h: view_half_h(),
         }
     }
 }
