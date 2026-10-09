@@ -304,6 +304,18 @@ enum EyeReach {
     Behind,
 }
 
+/// Where a goal's whole box is against the eye (see `Builder::goals`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum GoalReach {
+    /// Every corner is clear of the near depth: plain projection.
+    Clear,
+    /// Some of it may reach the eye: test and clip quad by quad.
+    Near,
+    /// None of it can be seen (behind the eye, or outside the view): nothing
+    /// to draw.
+    Behind,
+}
+
 /// Goal-box quads the camera is too near to project (see [`Builder::goals`]):
 /// nine to a goal, both goals.
 const MAX_GOAL_JOBS: usize = 20;
@@ -1107,13 +1119,32 @@ struct Stand {
     /// U at each grid column, and which end's palette the piece uses.
     u: [u8; 4],
     team: u8,
+    /// Which octagon edge the piece stands on (see [`ApronEdge`]).
+    edge: u8,
 }
+
+/// One octagon edge's apron, as a single quad when the edge can be drawn whole.
+#[derive(Copy, Clone)]
+struct ApronEdge {
+    /// The front edge's two ends at the crowd's foot, then at the ground.
+    top: [Vec3I16; 2],
+    foot: [Vec3I16; 2],
+    centre: (i32, i32, i32),
+    half: (i32, i32, i32),
+}
+static mut APRON_EDGES: [ApronEdge; 8] = [ApronEdge {
+    top: [Vec3I16::ZERO; 2],
+    foot: [Vec3I16::ZERO; 2],
+    centre: (0, 0, 0),
+    half: (0, 0, 0),
+}; 8];
 static mut STANDS: [Stand; STAND_COUNT] = [Stand {
     grid: [[Vec3I16::ZERO; 4]; 3],
     centre: (0, 0, 0),
     half: (0, 0, 0),
     u: [0; 4],
     team: 0,
+    edge: 0,
 }; STAND_COUNT];
 
 /// Lay the stand ring out once at boot. Each octagon vertex moves out along
@@ -1159,6 +1190,18 @@ fn build_stands() {
     for e in 0..8 {
         let (f0, f1) = (mitre(e, STAND_IN), mitre((e + 1) % 8, STAND_IN));
         let (b0, b1) = (mitre(e, STAND_OUT), mitre((e + 1) % 8, STAND_OUT));
+        {
+            let at = |p: (i32, i32), y: i32| Vec3I16::new(p.0 as i16, y as i16, p.1 as i16);
+            let (dx, dz) = ((f1.0 - f0.0).abs(), (f1.1 - f0.1).abs());
+            unsafe {
+                APRON_EDGES[e] = ApronEdge {
+                    top: [at(f0, -STAND_Y_IN), at(f1, -STAND_Y_IN)],
+                    foot: [at(f0, 0), at(f1, 0)],
+                    centre: ((f0.0 + f1.0) / 2, -STAND_Y_IN / 2, (f0.1 + f1.1) / 2),
+                    half: (dx / 2 + 1, STAND_Y_IN / 2 + 1, dz / 2 + 1),
+                };
+            }
+        }
         // Split points along the edge, as fractions of 4096.
         let side = [0, 512, 1024, 1536, 2048, 2560, 3072, 3584, 4096];
         let goal_t = (cx - sim::GOAL_HALF_W) * 4096 / (2 * cx);
@@ -1205,6 +1248,7 @@ fn build_stands() {
                     ),
                     u,
                     team: ((z0 + z1) > 0) as u8,
+                    edge: e as u8,
                 };
             }
             k += 1;
@@ -5859,6 +5903,17 @@ impl Builder<'_> {
         }
     }
 
+    fn apron_quad(&mut self, sp: [(i16, i16); 4]) {
+        if let Some(q) = self
+            .arena
+            .push(QuadGouraud::new(sp, [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM]))
+        {
+            self.ot.add_packet(STAND_SLOT, q);
+        } else {
+            count_overflow!();
+        }
+    }
+
     /// The stands behind the enclosure. A near piece is drawn from its full
     /// three-by-two grid, the way near wall spans are split, so a piece
     /// beside the camera keeps the part in front of the near plane and the
@@ -5875,6 +5930,27 @@ impl Builder<'_> {
             ),
             STAND_TINT_OUT,
         ];
+        // The apron first, a whole edge at a time where one quad will do: the
+        // crowd's foot dropped to the ground, so no sky shows under it.
+        let mut edge_done = [false; 8];
+        for (e, edge) in unsafe { APRON_EDGES.iter() }.enumerate() {
+            if !cull.visible_box(edge.centre, cull.extents(edge.half)) {
+                edge_done[e] = true;
+                continue;
+            }
+            let t = scene::project_triangle_scheduled(edge.top[0], edge.top[1], edge.foot[0]);
+            let d = project(edge.foot[1]);
+            if t[0].sz == 0 || t[1].sz == 0 || t[2].sz == 0 || d.sz == 0 {
+                continue;
+            }
+            let sp = [(t[0].sx, t[0].sy), (t[1].sx, t[1].sy), (t[2].sx, t[2].sy), (d.sx, d.sy)];
+            if !quad_overlaps_view(&sp) {
+                edge_done[e] = true;
+            } else if gpu_draws_whole(&sp) {
+                edge_done[e] = true;
+                self.apron_quad(sp);
+            }
+        }
         for st in unsafe { STANDS.iter() } {
             if !cull.visible_box(st.centre, cull.extents(st.half)) {
                 continue;
@@ -5913,6 +5989,9 @@ impl Builder<'_> {
                 &[(0, last)]
             };
             for (n, &(i0, i1)) in spans.iter().enumerate() {
+                if edge_done[st.edge as usize] {
+                    break;
+                }
                 if n == 1 && apron_whole {
                     break;
                 }
@@ -5939,14 +6018,7 @@ impl Builder<'_> {
                 } else if !gpu_draws_whole(&sp) {
                     continue;
                 }
-                if let Some(q) = self
-                    .arena
-                    .push(QuadGouraud::new(sp, [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM]))
-                {
-                    self.ot.add_packet(STAND_SLOT, q);
-                } else {
-                    count_overflow!();
-                }
+                self.apron_quad(sp);
             }
             for r in rows.windows(2) {
                 let (j0, j1) = (r[0], r[1]);
@@ -6267,6 +6339,17 @@ impl Builder<'_> {
         }
     }
 
+    /// One quad's [`EyeReach`] given its goal's: only a goal that may reach the
+    /// eye is tested corner by corner, and one wholly behind it is skipped.
+    #[inline]
+    fn quad_reach(cull: &Cull, reach: GoalReach, corners: &[(i32, i32, i32); 4]) -> EyeReach {
+        match reach {
+            GoalReach::Clear => EyeReach::Clear,
+            GoalReach::Near => Self::eye_reach(cull, corners),
+            GoalReach::Behind => EyeReach::Behind,
+        }
+    }
+
     /// Queue a goal-box quad for [`Builder::flush_goal_jobs`], which clips it
     /// once the phase is off the scratchpad stack (the clip needs more frame
     /// than the stack has). A quad past the queue's end is dropped, as every
@@ -6312,11 +6395,11 @@ impl Builder<'_> {
     fn goal_quad(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         colors: [Rgb; 4],
     ) {
-        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+        match Self::quad_reach(cull, reach, &corners) {
             EyeReach::Clear => self.quad(corners, colors),
             EyeReach::Cuts => {
                 Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::Flat)
@@ -6328,11 +6411,11 @@ impl Builder<'_> {
     fn goal_quad_flat(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         color: Rgb,
     ) {
-        self.goal_quad(cull, near, corners, [color; 4]);
+        self.goal_quad(cull, reach, corners, [color; 4]);
     }
 
     /// The goal's floor, like the pitch's, is not depth-sorted: it lies under
@@ -6341,11 +6424,11 @@ impl Builder<'_> {
     fn goal_floor(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         colors: [Rgb; 4],
     ) {
-        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+        match Self::quad_reach(cull, reach, &corners) {
             EyeReach::Clear => {
                 if let Some((sp, _)) = project_quad(&corners) {
                     if quad_overlaps_view(&sp) {
@@ -6373,7 +6456,7 @@ impl Builder<'_> {
     fn goal_quad_tex(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         uvs: [u16; 4],
         tints: [Rgb; 4],
@@ -6381,7 +6464,7 @@ impl Builder<'_> {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
     ) {
-        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+        match Self::quad_reach(cull, reach, &corners) {
             EyeReach::Clear => self.quad_tex(corners, uvs, tints, bias, packet, blended),
             EyeReach::Cuts => Self::queue_goal_job(
                 corners,
@@ -6390,6 +6473,24 @@ impl Builder<'_> {
                 Pieces::Net { packet },
             ),
             EyeReach::Behind => {}
+        }
+    }
+
+    /// Where one goal's whole box is against the eye and the view.
+    #[inline(never)]
+    fn goal_reach(cull: &Cull, z_line: i32, back: i32) -> GoalReach {
+        let c = (0, -sim::GOAL_H / 2, (z_line + back) / 2);
+        let e = cull.extents((sim::GOAL_HALF_W, sim::GOAL_H / 2, sim::GOAL_DEPTH / 2));
+        // Wholly behind the eye, or off to a side or above or below the view:
+        // nothing of the box can show.
+        if !cull.visible_box(c, e) {
+            return GoalReach::Behind;
+        }
+        let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
+        if Cull::dot(cull.fwd, d) - e[0] <= GTE_TRUE_SZ + 8 {
+            GoalReach::Near
+        } else {
+            GoalReach::Clear
         }
     }
 
@@ -6404,12 +6505,7 @@ impl Builder<'_> {
             let back = z_line + sim::GOAL_DEPTH * z_line.signum();
             // Can any of this goal's box reach the eye? Its nearest point is no
             // nearer than the box's centre less its reach along the view.
-            let near = {
-                let c = (0, -sim::GOAL_H / 2, (z_line + back) / 2);
-                let reach = cull.extents((sim::GOAL_HALF_W, sim::GOAL_H / 2, sim::GOAL_DEPTH / 2))[0];
-                let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-                Cull::dot(cull.fwd, d) - reach <= GTE_TRUE_SZ + 8
-            };
+            let reach = Self::goal_reach(&cull, z_line, back);
             // There used to be a guard here that skipped this whole box when
             // the camera was inside the goal, on the grounds that an unclipped
             // quad straddling the eye becomes a screen-wide slab. It was
@@ -6420,156 +6516,164 @@ impl Builder<'_> {
             // it feared cannot happen now anyway, since `quad_biased` clips
             // the near plane.
             let (gw, gh) = (sim::GOAL_HALF_W, -sim::GOAL_H);
-            // The box behind the net, lit in the team's colour from inside.
-            // It used to be near black: the team colour lived only on the
-            // frame, and at the far end of the pitch the goal was the
-            // darkest thing on screen. Rocket League's goal is the brightest
-            // thing at its end of the arena. A fraction of orange is brown,
-            // so the box is never less than a third of the signal colour and
-            // the white net and the hot frame are in front of it.
-            let glow = |n: i32| shade(color, n, 16);
-            self.goal_quad(
-                &cull,
-                near,
-                [
-                    (-gw, 0, back),
-                    (gw, 0, back),
-                    (-gw, gh, back),
-                    (gw, gh, back),
-                ],
-                [
-                    glow(GOAL_BACK_LO),
-                    glow(GOAL_BACK_LO),
-                    glow(GOAL_BACK_HI),
-                    glow(GOAL_BACK_HI),
-                ],
-            );
-            for &sx in &[-1i32, 1] {
-                let x = sx * gw;
+            // A box wholly behind the eye shows nothing: not even its colours are
+            // worked out.
+            'boxed: {
+                if reach == GoalReach::Behind {
+                    break 'boxed;
+                }
+                // The box behind the net, lit in the team's colour from inside.
+                // It used to be near black: the team colour lived only on the
+                // frame, and at the far end of the pitch the goal was the
+                // darkest thing on screen. Rocket League's goal is the brightest
+                // thing at its end of the arena. A fraction of orange is brown,
+                // so the box is never less than a third of the signal colour and
+                // the white net and the hot frame are in front of it.
+                let glow = |n: i32| shade(color, n, 16);
                 self.goal_quad(
                     &cull,
-                    near,
-                    [(x, 0, z_line), (x, 0, back), (x, gh, z_line), (x, gh, back)],
+                    reach,
                     [
-                        glow(GOAL_SIDE - 2),
-                        glow(GOAL_SIDE),
-                        glow(GOAL_BACK_HI - 2),
+                        (-gw, 0, back),
+                        (gw, 0, back),
+                        (-gw, gh, back),
+                        (gw, gh, back),
+                    ],
+                    [
+                        glow(GOAL_BACK_LO),
+                        glow(GOAL_BACK_LO),
+                        glow(GOAL_BACK_HI),
                         glow(GOAL_BACK_HI),
                     ],
                 );
-            }
-            self.goal_quad_flat(
-                &cull,
-                near,
-                [
-                    (-gw, gh, z_line),
-                    (gw, gh, z_line),
-                    (-gw, gh, back),
-                    (gw, gh, back),
-                ],
-                glow(GOAL_BACK_HI - 1),
-            );
-            self.goal_floor(
-                &cull,
-                near,
-                [
-                    (-gw, 0, z_line),
-                    (gw, 0, z_line),
-                    (-gw, 0, back),
-                    (gw, 0, back),
-                ],
-                [
-                    glow(GOAL_FLOOR - 2),
-                    glow(GOAL_FLOOR - 2),
-                    glow(GOAL_FLOOR),
-                    glow(GOAL_FLOOR),
-                ],
-            );
-            // The netting itself: back wall, both sides and the roof, hung well
-            // inside the box so the dark panels read as depth behind it rather
-            // than as the net's own colour.
-            //
-            // One quad a face. The holes cost nothing: the GPU discards a texel
-            // that resolves to 0x0000 through `COVER_CLUT`, so this is netting
-            // without a strand of geometry per thread, and because the mesh block
-            // is big enough for the widest face there is nothing to tile and no
-            // seam to line up.
-            //
-            // Hung 60 uu clear of the box, not snug against it. The ordering
-            // table quantises depth into slots about 27 uu apart out here and
-            // prepends within a slot, so a net inset by less than a slot lands in
-            // the same bucket as the panel behind it and draws first, which is to
-            // say underneath. That showed netting across the top only, where
-            // perspective happened to separate the two.
-            let hang = 60;
-            let inset = hang * z_line.signum();
-            let (nw, nh) = (gw - hang, gh + hang);
-            let far = back - inset;
+                for &sx in &[-1i32, 1] {
+                    let x = sx * gw;
+                    self.goal_quad(
+                        &cull,
+                        reach,
+                        [(x, 0, z_line), (x, 0, back), (x, gh, z_line), (x, gh, back)],
+                        [
+                            glow(GOAL_SIDE - 2),
+                            glow(GOAL_SIDE),
+                            glow(GOAL_BACK_HI - 2),
+                            glow(GOAL_BACK_HI),
+                        ],
+                    );
+                }
+                self.goal_quad_flat(
+                    &cull,
+                    reach,
+                    [
+                        (-gw, gh, z_line),
+                        (gw, gh, z_line),
+                        (-gw, gh, back),
+                        (gw, gh, back),
+                    ],
+                    glow(GOAL_BACK_HI - 1),
+                );
+                self.goal_floor(
+                    &cull,
+                    reach,
+                    [
+                        (-gw, 0, z_line),
+                        (gw, 0, z_line),
+                        (-gw, 0, back),
+                        (gw, 0, back),
+                    ],
+                    [
+                        glow(GOAL_FLOOR - 2),
+                        glow(GOAL_FLOOR - 2),
+                        glow(GOAL_FLOOR),
+                        glow(GOAL_FLOOR),
+                    ],
+                );
+                // The netting itself: back wall, both sides and the roof, hung well
+                // inside the box so the dark panels read as depth behind it rather
+                // than as the net's own colour.
+                //
+                // One quad a face. The holes cost nothing: the GPU discards a texel
+                // that resolves to 0x0000 through `COVER_CLUT`, so this is netting
+                // without a strand of geometry per thread, and because the mesh block
+                // is big enough for the widest face there is nothing to tile and no
+                // seam to line up.
+                //
+                // Hung 60 uu clear of the box, not snug against it. The ordering
+                // table quantises depth into slots about 27 uu apart out here and
+                // prepends within a slot, so a net inset by less than a slot lands in
+                // the same bucket as the panel behind it and draws first, which is to
+                // say underneath. That showed netting across the top only, where
+                // perspective happened to separate the two.
+                let hang = 60;
+                let inset = hang * z_line.signum();
+                let (nw, nh) = (gw - hang, gh + hang);
+                let far = back - inset;
 
-            // Each face samples the mesh in proportion to its own size, so the
-            // holes are square and a strand is the same distance from its
-            // neighbour whichever face it is on. Half-open: a span of n texels is
-            // `u0 .. u0 + n`, not `u0 .. u0 + n - 1`, which samples one fewer and
-            // stretches them over the full width.
-            let across = net_texels(2 * gw);
-            let tall = net_texels(sim::GOAL_H);
-            let deep = net_texels(sim::GOAL_DEPTH);
-            let patch = |w: u8, h: u8| {
-                [
-                    uvw(NET_U0, NET_V0),
-                    uvw(NET_U0 + w, NET_V0),
-                    uvw(NET_U0, NET_V0 + h),
-                    uvw(NET_U0 + w, NET_V0 + h),
-                ]
-            };
+                // Each face samples the mesh in proportion to its own size, so the
+                // holes are square and a strand is the same distance from its
+                // neighbour whichever face it is on. Half-open: a span of n texels is
+                // `u0 .. u0 + n`, not `u0 .. u0 + n - 1`, which samples one fewer and
+                // stretches them over the full width.
+                let across = net_texels(2 * gw);
+                let tall = net_texels(sim::GOAL_H);
+                let deep = net_texels(sim::GOAL_DEPTH);
+                let patch = |w: u8, h: u8| {
+                    [
+                        uvw(NET_U0, NET_V0),
+                        uvw(NET_U0 + w, NET_V0),
+                        uvw(NET_U0, NET_V0 + h),
+                        uvw(NET_U0 + w, NET_V0 + h),
+                    ]
+                };
 
-            // Shaded over the whole face rather than per patch, and white: a
-            // near-white strand modulated by the team colour made yellow string
-            // in one goal and blue in the other.
-            let net_hi = shade(COVER_STRAND, 3400, 4096);
-            let net_lo = shade(COVER_STRAND, 2400, 4096);
+                // Shaded over the whole face rather than per patch, and white: a
+                // near-white strand modulated by the team colour made yellow string
+                // in one goal and blue in the other.
+                let net_hi = shade(COVER_STRAND, 3400, 4096);
+                let net_lo = shade(COVER_STRAND, 2400, 4096);
 
-            // Back.
-            self.goal_quad_tex(
-                &cull,
-                near,
-                [(-nw, 0, far), (nw, 0, far), (-nw, nh, far), (nw, nh, far)],
-                patch(across, tall),
-                [net_lo, net_lo, net_hi, net_hi],
-                0,
-                COVER_PACKET,
-                true,
-            );
-            // Sides.
-            for &sx in &[-1i32, 1] {
-                let x = sx * nw;
+                // Back.
                 self.goal_quad_tex(
                     &cull,
-                    near,
-                    [(x, 0, z_line), (x, 0, far), (x, nh, z_line), (x, nh, far)],
-                    patch(deep, tall),
+                    reach,
+                    [(-nw, 0, far), (nw, 0, far), (-nw, nh, far), (nw, nh, far)],
+                    patch(across, tall),
                     [net_lo, net_lo, net_hi, net_hi],
                     0,
                     COVER_PACKET,
                     true,
                 );
+                // Sides.
+                for &sx in &[-1i32, 1] {
+                    let x = sx * nw;
+                    self.goal_quad_tex(
+                        &cull,
+                        reach,
+                        [(x, 0, z_line), (x, 0, far), (x, nh, z_line), (x, nh, far)],
+                        patch(deep, tall),
+                        [net_lo, net_lo, net_hi, net_hi],
+                        0,
+                        COVER_PACKET,
+                        true,
+                    );
+                }
+                // Roof.
+                self.goal_quad_tex(
+                    &cull,
+                    reach,
+                    [
+                        (-nw, nh, z_line),
+                        (nw, nh, z_line),
+                        (-nw, nh, far),
+                        (nw, nh, far),
+                    ],
+                    patch(across, deep),
+                    [net_hi; 4],
+                    0,
+                    COVER_PACKET,
+                    true,
+                );
+
             }
-            // Roof.
-            self.goal_quad_tex(
-                &cull,
-                near,
-                [
-                    (-nw, nh, z_line),
-                    (nw, nh, z_line),
-                    (-nw, nh, far),
-                    (nw, nh, far),
-                ],
-                patch(across, deep),
-                [net_hi; 4],
-                0,
-                COVER_PACKET,
-                true,
-            );
 
             // Hot posts and crossbar, each inside a halo of the team's
             // light, and a glowing strip along the goal line.
