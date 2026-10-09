@@ -2780,6 +2780,7 @@ pub fn setup() {
     build_lines();
     build_lighting();
     build_car_materials();
+    build_burst();
 }
 
 /// Margin the camera keeps from the walls, so it never clips through one.
@@ -8559,6 +8560,90 @@ const FX_NEAR: i32 = 700;
 const FX_HOT: Rgb = (255, 246, 214);
 const FX_FLAME: Rgb = (240, 128, 34);
 
+/// What a blast works out from its particle's index and nothing else, done
+/// once at boot: the trigonometry of every direction and the divisions by a
+/// particle's own life. The detail variant is split screen's half set.
+struct BurstTables {
+    /// sin and cos of each puff's heading.
+    smoke: [[(i32, i32); FX_SMOKE_COUNT as usize]; 2],
+    /// A fireball's direction: sin(yaw) * cos(elev) and cos(yaw) * cos(elev)
+    /// (Q12), and sin(elev).
+    fire: [[(i32, i32, i32); FX_FIRE_COUNT as usize]; 2],
+    /// A spark's direction on the three axes (Q12).
+    spark: [[(i32, i32, i32); FX_SPARK_COUNT as usize]; 2],
+    /// `t * 16 / life` and `80 * t / life` for each fireball, by its age `t`.
+    fire_q: [[u8; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    fire_r: [[u8; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    /// `2^20 / life` rounded up, for [`shade_life`].
+    fire_inv: [u32; FX_FIRE_COUNT as usize],
+    spark_inv: [u32; FX_SPARK_COUNT as usize],
+}
+/// The longest fireball life, plus one: `26 + (i * 5) % 15` is at most 40.
+const FX_FIRE_LIFE_MAX: usize = 41;
+static mut BURST: BurstTables = BurstTables {
+    smoke: [[(0, 0); FX_SMOKE_COUNT as usize]; 2],
+    fire: [[(0, 0, 0); FX_FIRE_COUNT as usize]; 2],
+    spark: [[(0, 0, 0); FX_SPARK_COUNT as usize]; 2],
+    fire_q: [[0; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    fire_r: [[0; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    fire_inv: [0; FX_FIRE_COUNT as usize],
+    spark_inv: [0; FX_SPARK_COUNT as usize],
+};
+
+const fn fx_fire_life(i: i32) -> i32 {
+    26 + (i * 5) % 15
+}
+const fn fx_spark_life(i: i32) -> i32 {
+    16 + (i * 7) % 14
+}
+
+fn build_burst() {
+    let b = unsafe { &mut *core::ptr::addr_of_mut!(BURST) };
+    for (v, half) in [false, true].into_iter().enumerate() {
+        let puffs = if half { FX_SMOKE_COUNT / 2 + 1 } else { FX_SMOKE_COUNT };
+        for i in 0..puffs {
+            let yaw = ((4096 * i / puffs) + 700) as u16;
+            b.smoke[v][i as usize] = (sin_q12(yaw), cos_q12(yaw));
+        }
+        let balls = if half { FX_FIRE_COUNT / 2 } else { FX_FIRE_COUNT };
+        for i in 0..balls {
+            let yaw = ((4096 * i / balls) + ((i * 997) & 511)) as u16;
+            let elev = (300 + ((i * 331) & 511)) as u16;
+            let (ce, se) = (cos_q12(elev), sin_q12(elev));
+            b.fire[v][i as usize] = ((sin_q12(yaw) * ce) >> 12, (cos_q12(yaw) * ce) >> 12, se);
+        }
+        let sparks = if half { FX_SPARK_COUNT / 2 } else { FX_SPARK_COUNT };
+        for i in 0..sparks {
+            let yaw = ((4096 * i / sparks) + ((i * 1013) & 255)) as u16;
+            let elev = (((i * 577) & 1023) + 96) as u16;
+            let (ce, se) = (cos_q12(elev), sin_q12(elev));
+            b.spark[v][i as usize] = ((sin_q12(yaw) * ce) >> 12, se, (cos_q12(yaw) * ce) >> 12);
+        }
+    }
+    for i in 0..FX_FIRE_COUNT {
+        let life = fx_fire_life(i);
+        for t in 0..life {
+            b.fire_q[i as usize][t as usize] = (t * 16 / life) as u8;
+            b.fire_r[i as usize][t as usize] = (80 * t / life) as u8;
+        }
+        b.fire_inv[i as usize] = ((1 << 20) + life as u32 - 1) / life as u32;
+    }
+    for i in 0..FX_SPARK_COUNT {
+        let life = fx_spark_life(i) as u32;
+        b.spark_inv[i as usize] = ((1 << 20) + life - 1) / life;
+    }
+}
+
+/// [`shade`] by `num / life` with `inv` = `2^20 / life` rounded up: the same
+/// result for every `channel * num` below 2^20 / life (the rounding error of
+/// `inv` is under `life`, so the product's error stays under one), which a
+/// life of at most 40 and a channel times a numerator of at most 255 * 80
+/// never leave, and with no divide.
+fn shade_life(c: Rgb, num: i32, inv: u32) -> Rgb {
+    let ch = |v: u8| ((v as u32 * num as u32 * inv) >> 20).min(255) as u8;
+    (ch(c.0), ch(c.1), ch(c.2))
+}
+
 impl Builder<'_> {
     /// A camera-facing glow of `radius` uu, its screen half-size capped.
     #[allow(clippy::too_many_arguments)]
@@ -8659,17 +8744,18 @@ impl Builder<'_> {
         // fire so the fire burns in front of it.
         let puffs = if half_detail { FX_SMOKE_COUNT / 2 + 1 } else { FX_SMOKE_COUNT };
         for i in 0..puffs {
+            let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = 4 + i * 3;
             let t = age - born;
             if t < 0 || t >= FX_SMOKE_LIFE {
                 continue;
             }
-            let yaw = ((4096 * i / puffs) + 700) as u16;
+            let (sin_yaw, cos_yaw) = tab.smoke[half_detail as usize][i as usize];
             let travel = s(26) * t * (2 * FX_SMOKE_LIFE - t) / (2 * FX_SMOKE_LIFE) / 8;
             let p = (
-                origin.0 + ((sin_q12(yaw) * travel) >> 12),
+                origin.0 + ((sin_yaw * travel) >> 12),
                 origin.1 - s(50) - s(12) * t / 2,
-                origin.2 + ((cos_q12(yaw) * travel) >> 12),
+                origin.2 + ((cos_yaw * travel) >> 12),
             );
             let radius = s(40 + 100 * t / FX_SMOKE_LIFE);
             // In over six ticks, out over the last two thirds.
@@ -8681,31 +8767,30 @@ impl Builder<'_> {
         // Fireballs: swell, drift out and up, and cool.
         let balls = if half_detail { FX_FIRE_COUNT / 2 } else { FX_FIRE_COUNT };
         for i in 0..balls {
+            let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = i % 3;
-            let life = 26 + (i * 5) % 15;
+            let life = fx_fire_life(i);
             let t = age - born;
             if t < 0 || t >= life {
                 continue;
             }
-            let yaw = ((4096 * i / balls) + ((i * 997) & 511)) as u16;
-            let elev = (300 + ((i * 331) & 511)) as u16;
-            let (ce, se) = (cos_q12(elev), sin_q12(elev));
+            let (dir_x, dir_z, sin_elev) = tab.fire[half_detail as usize][i as usize];
             let speed = s(9 + (i % 4) * 3);
             let travel = speed * t * (2 * life - t) / (2 * life);
             let p = (
-                origin.0 + ((((sin_q12(yaw) * ce) >> 12) * travel) >> 12),
-                origin.1 - ((se * travel) >> 12) - s(10) - s(2) * t,
-                origin.2 + ((((cos_q12(yaw) * ce) >> 12) * travel) >> 12),
+                origin.0 + ((dir_x * travel) >> 12),
+                origin.1 - ((sin_elev * travel) >> 12) - s(10) - s(2) * t,
+                origin.2 + ((dir_z * travel) >> 12),
             );
-            let radius = s(40 + 80 * t / life);
+            let radius = s(40 + tab.fire_r[i as usize][t as usize] as i32);
             // White for the first sixth, flame by half, then out to nothing.
-            let q = t * 16 / life;
+            let q = tab.fire_q[i as usize][t as usize] as i32;
             let tint = if q < 3 {
                 mix(FX_HOT, FX_FLAME, q * 5)
             } else if q < 8 {
                 mix(mix(FX_FLAME, colour, 5), FX_FLAME, 16 - (q - 3) * 3)
             } else {
-                shade(mix(FX_FLAME, colour, 6), (life - t) * 2, life)
+                shade_life(mix(FX_FLAME, colour, 6), (life - t) * 2, tab.fire_inv[i as usize])
             };
             self.fx_sprite(p, radius, cap, shade(tint, 3, 4), GLOW_PACKET, -10);
         }
@@ -8713,16 +8798,14 @@ impl Builder<'_> {
         // Sparks: fast, eased out, pulled down hard.
         let sparks = if half_detail { FX_SPARK_COUNT / 2 } else { FX_SPARK_COUNT };
         for i in 0..sparks {
+            let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = (i * 3) % 4;
-            let life = 16 + (i * 7) % 14;
+            let life = fx_spark_life(i);
             let t = age - born;
             if t < 0 || t >= life {
                 continue;
             }
-            let yaw = ((4096 * i / sparks) + ((i * 1013) & 255)) as u16;
-            let elev = (((i * 577) & 1023) + 96) as u16;
-            let (ce, se) = (cos_q12(elev), sin_q12(elev));
-            let dir = ((sin_q12(yaw) * ce) >> 12, se, (cos_q12(yaw) * ce) >> 12);
+            let dir = tab.spark[half_detail as usize][i as usize];
             let speed = s(40 - ((i * 7) & 15));
             let at = |t: i32| {
                 let travel = speed * t * ((2 * life) - t) / (2 * life);
@@ -8734,7 +8817,11 @@ impl Builder<'_> {
                 )
             };
             let left = life - t;
-            let tint = shade(mix(colour, FX_HOT, 6 + 10 * left / life), (left * 3).min(life), life);
+            let tint = shade_life(
+                mix(colour, FX_HOT, 6 + 10 * left / life),
+                (left * 3).min(life),
+                tab.spark_inv[i as usize],
+            );
             self.fx_streak(at(t), at((t - 3).max(0)), s(7), tint);
         }
 
