@@ -5979,20 +5979,49 @@ impl Builder<'_> {
             ),
             STAND_TINT_OUT,
         ];
-        // The apron first, a whole edge at a time where one quad will do: the
-        // crowd's foot dropped to the ground, so no sky shows under it.
-        let mut edge_done = [false; 8];
-        for (e, edge) in unsafe { APRON_EDGES.iter() }.enumerate() {
+        // The apron first, a whole edge at a time: the crowd's foot dropped to
+        // the ground, so no sky shows under it. An edge that runs behind the
+        // lens is cut where it crosses the depth the GTE projects true, so one
+        // quad still covers what is in front.
+        const NEAR: i32 = GTE_TRUE_SZ + 8;
+        for edge in unsafe { APRON_EDGES.iter() } {
             if !cull.visible_box(edge.centre, cull.extents(edge.half)) {
-                edge_done[e] = true;
                 continue;
             }
-            let t = scene::project_triangle_scheduled(edge.top[0], edge.top[1], edge.top[1]);
-            let f = scene::project_triangle_scheduled(edge.foot[0], edge.foot[1], edge.foot[1]);
+            let mut pts = [edge.top[0], edge.top[1], edge.foot[0], edge.foot[1]];
+            let depth = |p: Vec3I16| {
+                Cull::dot(
+                    cull.fwd,
+                    (p.x as i32 - cull.pos.0, p.y as i32 - cull.pos.1, p.z as i32 - cull.pos.2),
+                )
+            };
+            let d = [depth(pts[0]), depth(pts[1]), depth(pts[2]), depth(pts[3])];
+            let (end0, end1) = (d[0].min(d[2]) <= NEAR, d[1].min(d[3]) <= NEAR);
+            if end0 && end1 {
+                continue;
+            }
+            // How far along a line, from its end `a` (depth `da`) to its end `b`
+            // (depth `db`), the depth reaches NEAR; Q12.
+            let cut = |da: i32, db: i32| ((NEAR - da) * 4096 / (db - da).max(1)).clamp(0, 4096);
+            let lerp = |a: Vec3I16, b: Vec3I16, t: i32| {
+                Vec3I16::new(
+                    (a.x as i32 + (((b.x as i32 - a.x as i32) * t) >> 12)) as i16,
+                    (a.y as i32 + (((b.y as i32 - a.y as i32) * t) >> 12)) as i16,
+                    (a.z as i32 + (((b.z as i32 - a.z as i32) * t) >> 12)) as i16,
+                )
+            };
+            if end0 {
+                let t = cut(d[0], d[1]).max(cut(d[2], d[3]));
+                (pts[0], pts[2]) = (lerp(pts[0], pts[1], t), lerp(pts[2], pts[3], t));
+            } else if end1 {
+                let t = cut(d[1], d[0]).max(cut(d[3], d[2]));
+                (pts[1], pts[3]) = (lerp(pts[1], pts[0], t), lerp(pts[3], pts[2], t));
+            }
+            let t = scene::project_triangle_scheduled(pts[0], pts[1], pts[1]);
+            let f = scene::project_triangle_scheduled(pts[2], pts[3], pts[3]);
             if t[0].sz == 0 || t[1].sz == 0 || f[0].sz == 0 || f[1].sz == 0 {
                 continue;
             }
-            edge_done[e] = true;
             self.apron_span(
                 (t[0].sx, t[0].sy),
                 (t[1].sx, t[1].sy),
@@ -6023,21 +6052,6 @@ impl Builder<'_> {
                     let v = project(at(3));
                     if v.sz != 0 {
                         g[j][cols[3]] = Some((v.sx, v.sy));
-                    }
-                }
-            }
-            // The apron, piece by piece where its whole edge could not be done at
-            // once (an end of the edge is behind the lens).
-            if !edge_done[st.edge as usize] {
-                let last = cols[cols.len() - 1];
-                if let (Some(t0), Some(t1)) = (g[0][0], g[0][last]) {
-                    let (a, b) = (st.grid[0][0], st.grid[0][last]);
-                    let (f0, f1) = (
-                        project(Vec3I16::new(a.x, 0, a.z)),
-                        project(Vec3I16::new(b.x, 0, b.z)),
-                    );
-                    if f0.sz != 0 && f1.sz != 0 {
-                        self.apron_span(t0, t1, (f0.sx, f0.sy), (f1.sx, f1.sy));
                     }
                 }
             }
