@@ -196,17 +196,32 @@ fn project_quad(c: &[(i32, i32, i32); 4]) -> Option<([(i16, i16); 4], i32)> {
 /// its corners are outside, which made a visible part of the enclosure vanish.
 #[inline]
 fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
-    let (mut min_x, mut max_x) = (i16::MAX, i16::MIN);
-    let (mut min_y, mut max_y) = (i16::MAX, i16::MIN);
-    for &(x, y) in sp {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    let (view_min_x, view_max_x, view_min_y, view_max_y) =
-        unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
-    max_x >= view_min_x && min_x < view_max_x && max_y >= view_min_y && min_y < view_max_y
+    let (vx0, vx1, vy0, vy1) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+    corners_overlap(
+        sp.map(|c| c.0 as i32),
+        sp.map(|c| c.1 as i32),
+        (vx0 as i32, vx1 as i32, vy0 as i32, vy1 as i32),
+    )
+}
+
+/// Does the box around four corners reach the view `(min x, max x, min y,
+/// max y)`: the box's max at or past the min edge, its min short of the max
+/// edge, on both axes?
+///
+/// The R3000 has no min or max instruction, and a box found corner by corner
+/// costs a compare and a branch per corner per bound. The sign bits answer the
+/// same question: every corner left of (above) the view leaves the AND of
+/// their offsets from its near edge negative, every corner at or past the far
+/// edge leaves the OR of their offsets from it non-negative, and the box
+/// reaches the view when neither holds on either axis. Offsets of 16-bit
+/// coordinates from a view edge cannot overflow.
+#[inline(always)]
+fn corners_overlap(x: [i32; 4], y: [i32; 4], (vx0, vx1, vy0, vy1): (i32, i32, i32, i32)) -> bool {
+    let before_x = (x[0] - vx0) & (x[1] - vx0) & (x[2] - vx0) & (x[3] - vx0);
+    let past_x = (x[0] - vx1) | (x[1] - vx1) | (x[2] - vx1) | (x[3] - vx1);
+    let before_y = (y[0] - vy0) & (y[1] - vy0) & (y[2] - vy0) & (y[3] - vy0);
+    let past_y = (y[0] - vy1) | (y[1] - vy1) | (y[2] - vy1) | (y[3] - vy1);
+    (before_x | !past_x | before_y | !past_y) >= 0
 }
 
 /// Did the GTE clamp this screen coordinate? It stores -1024..=1023, so a
@@ -5378,7 +5393,9 @@ impl Builder<'_> {
         // eight-gon shows them at any range.
         let (near, mid) = if split_view() { (400, 900) } else { (500, 1800) };
         let curve_near = if split_view() { 900 } else { 2200 };
-        let (vx0, vx1, vy0, vy1) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+        let view = unsafe {
+            (VIEW_MIN_X as i32, VIEW_MAX_X as i32, VIEW_MIN_Y as i32, VIEW_MAX_Y as i32)
+        };
         let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
         // Far away a marking seen edge-on is under a pixel thick, and the
         // rasteriser then skips most of its columns: a solid line breaks
@@ -5432,11 +5449,11 @@ impl Builder<'_> {
                 if a.sz == 0 || b.sz == 0 || cc.sz == 0 || dd.sz == 0 {
                     continue;
                 }
-                let min_x = a.sx.min(b.sx).min(cc.sx).min(dd.sx);
-                let max_x = a.sx.max(b.sx).max(cc.sx).max(dd.sx);
-                let min_y = a.sy.min(b.sy).min(cc.sy).min(dd.sy);
-                let max_y = a.sy.max(b.sy).max(cc.sy).max(dd.sy);
-                if max_x < vx0 || min_x >= vx1 || max_y < vy0 || min_y >= vy1 {
+                if !corners_overlap(
+                    [a.sx as i32, b.sx as i32, cc.sx as i32, dd.sx as i32],
+                    [a.sy as i32, b.sy as i32, cc.sy as i32, dd.sy as i32],
+                    view,
+                ) {
                     continue;
                 }
                 count_kept!();
