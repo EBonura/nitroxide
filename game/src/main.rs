@@ -34,6 +34,8 @@ use nitroxide_sim::{
 mod assets;
 mod audio;
 mod bonnie;
+#[cfg(feature = "diag-log")]
+mod diaglog;
 mod draw;
 mod music;
 
@@ -953,6 +955,9 @@ impl NitroXide {
         self.ball_cam = [false; 2];
         self.paused = false;
         self.pause_row = 0;
+        // The last match's camera and tyre marks belong to the last match.
+        draw::reset_cameras();
+        draw::reset_tracks();
         self.scoreboard_open = draw::SCOREBOARD_STEPS;
         draw::set_seat_paints(self.paints);
         self.phase = Phase::Play;

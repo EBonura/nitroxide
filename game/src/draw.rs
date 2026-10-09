@@ -2888,6 +2888,12 @@ fn camera(
     split: bool,
     camera_slot: usize,
 ) -> View {
+    // Headings are rebuilt from vectors here, and the SDK's octant-linear
+    // `atan2_q12` is off by up to four degrees mid-octant: through a held turn
+    // that error rises and falls with the car's yaw and swings the view about
+    // the car. The pitch angles below keep the SDK's, which the pitch limits
+    // were tuned against and which depends on a slope that does not sweep.
+    use sim::angle::atan2_q12_fine as atan2_fine;
     let camera_slot = camera_slot.min(1);
     let previous = unsafe { CHASE_CAMERAS[camera_slot] };
     let now = unsafe { CAMERA_TICK };
@@ -2910,9 +2916,9 @@ fn camera(
     // own heading until they separate again.
     let close = dx * dx + dz * dz <= CAM_MIN_SEP * CAM_MIN_SEP;
     let follow_yaw = if !ball_cam || close {
-        atan2_q12(car_fwd.x, car_fwd.z)
+        atan2_fine(car_fwd.x, car_fwd.z)
     } else {
-        atan2_q12(dx, dz)
+        atan2_fine(dx, dz)
     };
     #[cfg(feature = "boot-wheels")]
     // Three-quarter inspection view: exposes the front steer angle and the
@@ -3051,18 +3057,20 @@ fn camera(
     }
     let pitch_min = CAM_PITCH_MIN + (((CAM_WALL_PITCH_MIN - CAM_PITCH_MIN) * wall_amount) >> 12);
     let desired_pitch = signed.clamp(pitch_min, CAM_PITCH_MAX);
-    let mut view_yaw = atan2_q12(aim_x - cx, aim_z - cz);
+    let mut view_yaw = atan2_fine(aim_x - cx, aim_z - cz);
     if ball_cam && hold_car {
         // The end-wall clamp slides the camera sideways at kickoff to retain a
         // useful boom length. On a 63-degree FOV, the resulting car-to-ball
         // subject angle is wider than either subject's safe screen margin.
         // Bias the view away from the ball only as much as needed to retain
         // the car; once the boom is no longer wall-limited this becomes zero.
-        let car_yaw = atan2_q12(car_x - cx, car_z - cz);
+        let car_yaw = atan2_fine(car_x - cx, car_z - cz);
         let delta = ((car_yaw as i32 - view_yaw as i32 + 2048).rem_euclid(4096)) - 2048;
         let shift = (delta.abs() - CAM_BALL_CAR_YAW).max(0);
         view_yaw = (view_yaw as i32 + delta.signum() * shift).rem_euclid(4096) as u16;
     }
+    #[cfg(feature = "diag-log")]
+    let desired_yaw = view_yaw;
     let (view_yaw, pitch) = if previous.valid {
         let yaw_delta = ((view_yaw as i32 - previous.yaw as i32 + 2048).rem_euclid(4096)) - 2048;
         (
@@ -3074,6 +3082,36 @@ fn camera(
     } else {
         (view_yaw, desired_pitch)
     };
+    #[cfg(feature = "diag-log")]
+    crate::diaglog::fill!(cam;
+        now as i32,
+        camera_slot as i32,
+        ball_cam as i32
+            | (hold_car as i32) << 1
+            | (split as i32) << 2
+            | (previous.valid as i32) << 3,
+        cx,
+        cyy,
+        cz,
+        view_yaw as i32,
+        pitch,
+        desired_yaw as i32,
+        desired_pitch,
+        subject.yaw as i32,
+        subject.p.x,
+        subject.p.z,
+        subject.v.x,
+        subject.v.z,
+        subject.steer,
+        subject.slide,
+        subject.grounded as i32 | (subject.up.y << 1),
+        s.kickoff_ticks() as i32,
+        follow_yaw as i32,
+        ticks,
+        s.ball.p.x,
+        s.ball.p.z,
+        offset.0,
+    );
     unsafe {
         CHASE_CAMERAS[camera_slot] = CameraState {
             valid: true,
@@ -3585,8 +3623,9 @@ static mut CAR_NORMAL_Z: [[i16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; 
 static mut CAR_VERT_COUNT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
 /// Triangle indices, decoded the same way and for the same reason: `Mesh::face`
 /// rebuilds three `u16` from six `lbu` behind a stride branch, once per face
-/// per car per view.
-static mut CAR_FACES: [[[u16; 3]; CAR_FACE_CAP]; CAR_SLOTS] = [[[0; 3]; CAR_FACE_CAP]; CAR_SLOTS];
+/// per car per view. Two words a face, `a | b << 16` and `c`: three halfword
+/// loads were three main-RAM stalls, this is two.
+static mut CAR_FACES: [[[u32; 2]; CAR_FACE_CAP]; CAR_SLOTS] = [[[0; 2]; CAR_FACE_CAP]; CAR_SLOTS];
 /// Depth-sorted face keys for one car draw (`submit_car_faces`).
 static mut CAR_SORT_KEYS: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
 static mut CAR_SORT_SPARE: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
@@ -3618,7 +3657,7 @@ fn decode_car_geometry(blob: &[u8], which: usize) {
         if ia as usize >= count || ib as usize >= count || ic as usize >= count {
             continue;
         }
-        unsafe { CAR_FACES[which][kept] = [ia, ib, ic] };
+        unsafe { CAR_FACES[which][kept] = [ia as u32 | (ib as u32) << 16, ic as u32] };
         kept += 1;
     }
     unsafe { CAR_FACE_COUNT[which] = kept as u16 };
@@ -3898,7 +3937,7 @@ fn sort_by_depth(keys: &mut [u32], lo: u32, hi: u32) -> &[u32] {
 }
 
 fn submit_car_faces<'a>(
-    faces: &[[u16; 3]],
+    faces: &[[u32; 2]],
     projected: &[CarLit],
     tris: &mut PrimitiveArena<'a, TriGouraud>,
     ot: &mut OtFrame<'a, OT_DEPTH>,
@@ -3931,13 +3970,15 @@ fn submit_car_faces<'a>(
     debug_assert!(faces
         .iter()
         .take(CAR_FACE_CAP)
-        .all(|f| f.iter().all(|&i| (i as usize) < projected.len())));
+        .all(|f| {
+            [f[0] & 0xffff, f[0] >> 16, f[1]].iter().all(|&i| (i as usize) < projected.len())
+        }));
     for face in faces.iter().take(CAR_FACE_CAP) {
         let (a, b, c) = unsafe {
             (
-                projected.get_unchecked(face[0] as usize),
+                projected.get_unchecked((face[0] & 0xffff) as usize),
+                projected.get_unchecked((face[0] >> 16) as usize),
                 projected.get_unchecked(face[1] as usize),
-                projected.get_unchecked(face[2] as usize),
             )
         };
         if car_back_facing(a, b, c) {
@@ -8233,8 +8274,16 @@ const TRACK_WHEEL_X: i32 = 44;
 /// Sideways speed, in sim sub-units a tick, past which a tyre is scrubbing.
 /// About 250 uu/s.
 const TRACK_SLIP: i32 = 200;
+/// How hard a car has to be cornering to leave a mark without sliding: its
+/// heading change over the two ticks between its updates, in Q12 turns,
+/// times its speed along the nose in uu a tick. A full-lock turn at speed
+/// reaches about 960 (Manny's 2026-10-09 tape, polls 1535..1650); a gentle
+/// arc stays under 400. The sim grips through every corner, so without this
+/// only a handbrake turn ever marked and a player who steers and never
+/// powerslides saw no marks at all.
+const TRACK_CORNER: i32 = 840;
 /// How dark a fresh mark is: subtracted from the pitch.
-const TRACK_DARK: Rgb = (84, 92, 72);
+const TRACK_DARK: Rgb = (36, 40, 31);
 /// The track slot: one in front of the markings.
 const TRACK_SLOT: usize = LINE_SLOT - 1;
 
@@ -8320,7 +8369,7 @@ impl TrackRing {
     }
 }
 
-static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TrackRing {
+const TRACK_RING_NONE: TrackRing = TrackRing {
     pts: [TRACK_POINT_NONE; TRACK_LEN],
     boxes: [None; TRACK_CHUNKS],
     newest: [0; TRACK_CHUNKS],
@@ -8329,9 +8378,16 @@ static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TrackRing {
     open: false,
     last: (0, 0),
     live: None,
-}; TRACK_WHEELS];
+};
+static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TRACK_RING_NONE; TRACK_WHEELS];
 /// Ticks since boot, from 1, so a `born` of 0 can mean "never".
 static mut TRACK_CLOCK: u16 = 1;
+/// Each car's heading when its tracks were last advanced.
+static mut TRACK_YAW: [u16; 2] = [0; 2];
+#[cfg(feature = "diag-log")]
+static mut DIAG_TRK_QUADS: i32 = 0;
+#[cfg(feature = "diag-log")]
+static mut DIAG_TRK_FAIL: i32 = 0;
 
 /// One chunk's vertices on their way through the GTE: two edges per point,
 /// for the chunk's points and the one before it.
@@ -8354,6 +8410,16 @@ static mut TRACK_MODE_OFF: [ModePacket; SET_COUNT] =
 const TRACK_MODE_WORD: u32 = ARENA_MATERIAL
     .with_blend_mode(BlendMode::Subtract)
     .draw_mode_word();
+
+/// Wipe every tyre mark. The marks age on the play clock, which stands still
+/// between matches, so the last match's would otherwise sit on the new pitch
+/// until it had played long enough to fade them.
+pub fn reset_tracks() {
+    unsafe {
+        TRACKS = [TRACK_RING_NONE; TRACK_WHEELS];
+        TRACK_YAW = [0; 2];
+    }
+}
 
 /// Advance the tracks one sim tick: lay a point under every rear wheel that
 /// is scrubbing and has moved far enough since its last one.
@@ -8378,9 +8444,35 @@ pub fn track_tick(s: &Sim) {
         let (fx, fz) = if on_floor { sim::heading(car.yaw) } else { (0, 0) };
         // Right of the nose, on the floor.
         let (rx, rz) = (fz, -fx);
+        // Heading change since this car was last looked at, which is two ticks
+        // ago (one car a tick), kept whether or not it is on the floor.
+        let turned = {
+            let last = unsafe { TRACK_YAW[c] };
+            unsafe { TRACK_YAW[c] = car.yaw };
+            ((car.yaw.wrapping_sub(last) as i16) as i32).abs()
+        };
+        let cornering = on_floor
+            && turned * (((car.v.x * fx + car.v.z * fz) >> 12).abs() >> FP) >= TRACK_CORNER;
         let marking = on_floor
-            && (car.slide > 512 || ((car.v.x * rx + car.v.z * rz) >> 12).abs() > TRACK_SLIP);
+            && (cornering
+                || car.slide > 512
+                || ((car.v.x * rx + car.v.z * rz) >> 12).abs() > TRACK_SLIP);
         let (cx, cz) = (r(car.p.x), r(car.p.z));
+        #[cfg(feature = "diag-log")]
+        crate::diaglog::fill!(trk;
+            clock as i32,
+            c as i32,
+            car.slide,
+            ((car.v.x * rx + car.v.z * rz) >> 12),
+            on_floor as i32
+                | (marking as i32) << 1
+                | (car.grounded as i32) << 2
+                | (car.wrecked() as i32) << 3
+                | (cornering as i32) << 4,
+            car.yaw as i32,
+            car.v.x,
+            car.v.z,
+        );
         for (w, side) in [-1i32, 1].into_iter().enumerate() {
             let ring = unsafe { &mut TRACKS[c * 2 + w] };
             if !marking {
@@ -8438,22 +8530,67 @@ fn track_tint(age: u16, sz: u16) -> Rgb {
 /// nearer than the far fade? [`Cull::visible`] and
 /// [`Cull::visible_vertically`] in one pass, with the box flat on the pitch
 /// so its height terms drop out.
-fn track_box_visible(cull: &Cull, b: (i16, i16, i16, i16)) -> bool {
+fn track_box_visible(cull: &TrackView, b: (i16, i16, i16, i16)) -> bool {
     let (cx, cz) = ((b.0 as i32 + b.2 as i32) >> 1, (b.1 as i32 + b.3 as i32) >> 1);
     let (hx, hz) = ((b.2 as i32 - b.0 as i32) >> 1, (b.3 as i32 - b.1 as i32) >> 1);
-    let d = (cx - cull.pos.0, -cull.pos.1, cz - cull.pos.2);
-    let ext = |n: [i16; 3]| ((n[0] as i32).abs() * hx + (n[2] as i32).abs() * hz) >> 12;
-    let (z, ef) = (Cull::dot(cull.fwd, d), ext(cull.fwd));
+    let (dx, dz) = (cx - cull.pos.0, cz - cull.pos.1);
+    // Each axis is `Cull::dot` over `(dx, -eye height, dz)` with the height
+    // term folded in once per frame, and the extent is the same support
+    // function over absolute components: the same integers either way.
+    let at = |n: &TrackAxis| ((n.x * dx + n.z * dz + n.y_term) >> 12, (n.ax * hx + n.az * hz) >> 12);
+    let (z, ef) = at(&cull.fwd);
     if z + ef <= 0 || z - ef > TRACK_FAR {
         return false;
     }
     let reach = z + ef;
-    let x = Cull::dot(cull.right, d);
-    if x.abs() - ext(cull.right) > reach * cull_half_w() / PROJ_H as i32 {
+    let (x, ex) = at(&cull.right);
+    if x.abs() - ex > reach * cull.half_w / PROJ_H as i32 {
         return false;
     }
-    let y = Cull::dot(cull.vertical, d);
-    y.abs() - ext(cull.vertical) <= reach * unsafe { VIEW_HALF_H } / PROJ_H as i32
+    let (y, ey) = at(&cull.vertical);
+    y.abs() - ey <= reach * cull.half_h / PROJ_H as i32
+}
+
+/// One view axis with everything the floor-box test needs from it.
+struct TrackAxis {
+    x: i32,
+    z: i32,
+    ax: i32,
+    az: i32,
+    /// The axis' height component times the eye's height over the pitch.
+    y_term: i32,
+}
+
+/// [`Cull`] reduced to what a box lying on the pitch needs, built once a
+/// frame.
+struct TrackView {
+    /// The eye's ground position (x, z).
+    pos: (i32, i32),
+    fwd: TrackAxis,
+    right: TrackAxis,
+    vertical: TrackAxis,
+    half_w: i32,
+    half_h: i32,
+}
+
+impl TrackView {
+    fn new(cull: &Cull) -> Self {
+        let axis = |n: [i16; 3]| TrackAxis {
+            x: n[0] as i32,
+            z: n[2] as i32,
+            ax: (n[0] as i32).abs(),
+            az: (n[2] as i32).abs(),
+            y_term: n[1] as i32 * -cull.pos.1,
+        };
+        TrackView {
+            pos: (cull.pos.0, cull.pos.2),
+            fwd: axis(cull.fwd),
+            right: axis(cull.right),
+            vertical: axis(cull.vertical),
+            half_w: cull_half_w(),
+            half_h: unsafe { VIEW_HALF_H },
+        }
+    }
 }
 
 impl Builder<'_> {
@@ -8463,10 +8600,22 @@ impl Builder<'_> {
         let clock = unsafe { TRACK_CLOCK };
         let set = unsafe { SET };
         let mut opened = false;
+        // Most frames most wheels have laid nothing: one test then.
+        #[cfg(not(feature = "diag-log"))]
+        if (0..TRACK_WHEELS).all(|w| unsafe { TRACKS[w].chunks == 0 && TRACKS[w].live.is_none() }) {
+            return;
+        }
+        let view = TrackView::new(cull);
+        #[cfg(feature = "diag-log")]
+        let (mut seen, mut kept) = (0i32, 0i32);
         for w in 0..TRACK_WHEELS {
             let ring = unsafe { &TRACKS[w] };
             if ring.chunks == 0 && ring.live.is_none() {
                 continue;
+            }
+            #[cfg(feature = "diag-log")]
+            {
+                seen |= (ring.chunks as i32) << (w * 4);
             }
             for c in 0..TRACK_CHUNKS {
                 if ring.chunks & (1 << c) == 0 {
@@ -8475,8 +8624,12 @@ impl Builder<'_> {
                 let Some((x0, z0, x1, z1)) = ring.boxes[c] else {
                     continue;
                 };
-                if !track_box_visible(cull, (x0, z0, x1, z1)) {
+                if !track_box_visible(&view, (x0, z0, x1, z1)) {
                     continue;
+                }
+                #[cfg(feature = "diag-log")]
+                {
+                    kept |= 1 << (w * 4 + c);
                 }
                 if !opened {
                     // Inserted before the quads, so drawn after them: the
@@ -8506,7 +8659,7 @@ impl Builder<'_> {
                 (x0, x1) = (x0.min(x), x1.max(x));
                 (z0, z1) = (z0.min(z), z1.max(z));
             }
-            if !track_box_visible(cull, (x0, z0, x1, z1)) {
+            if !track_box_visible(&view, (x0, z0, x1, z1)) {
                 continue;
             }
             let t = scene::project_triangle_scheduled(
@@ -8537,7 +8690,27 @@ impl Builder<'_> {
             if let Some(quad) = self.flats.push(QuadFlat::new(sp, c.0, c.1, c.2)) {
                 quad.color_cmd |= SEMI_TRANSPARENT;
                 self.ot.add_packet(TRACK_SLOT, quad);
+            } else {
+                #[cfg(feature = "diag-log")]
+                unsafe {
+                    DIAG_TRK_FAIL += 1;
+                }
             }
+        }
+        #[cfg(feature = "diag-log")]
+        unsafe {
+            crate::diaglog::fill!(draw;
+                clock as i32,
+                seen,
+                kept,
+                opened as i32,
+                DIAG_TRK_QUADS,
+                DIAG_TRK_FAIL,
+                (0..TRACK_WHEELS).fold(0, |a, w| a | (TRACKS[w].live.is_some() as i32) << w),
+                0,
+            );
+            DIAG_TRK_QUADS = 0;
+            DIAG_TRK_FAIL = 0;
         }
         if opened {
             unsafe {
@@ -8558,6 +8731,21 @@ impl Builder<'_> {
     fn track_chunk(&mut self, w: usize, c: usize, clock: u16) {
         let ring = unsafe { &TRACKS[w] };
         let first = c * TRACK_CHUNK + TRACK_LEN - 1;
+        // A chunk whose segments have all aged out or never joined (a lone
+        // point) draws nothing: find that before the GTE is touched.
+        let live = (1..=TRACK_CHUNK).any(|k| {
+            let slot = (first + k) % TRACK_LEN;
+            let p = &ring.pts[slot];
+            if !p.joined || slot == ring.head as usize {
+                return false;
+            }
+            let q = &ring.pts[(first + k - 1) % TRACK_LEN];
+            let (age_p, age_q) = (clock.wrapping_sub(p.born), clock.wrapping_sub(q.born));
+            p.born != 0 && q.born != 0 && age_p < TRACK_LIFE && age_q < TRACK_LIFE
+        });
+        if !live {
+            return;
+        }
         // The chunk's five points (the one before it and its own four), both
         // edges each: three RTPTs and an RTPS, written out rather than looped
         // so no vertex pays for an index sum, a modulo and an edge select.
@@ -8602,6 +8790,15 @@ impl Builder<'_> {
             if let Some(quad) = self.flats.push(QuadFlat::new(sp, tint.0, tint.1, tint.2)) {
                 quad.color_cmd |= SEMI_TRANSPARENT;
                 self.ot.add_packet(TRACK_SLOT, quad);
+                #[cfg(feature = "diag-log")]
+                unsafe {
+                    DIAG_TRK_QUADS += 1;
+                }
+            } else {
+                #[cfg(feature = "diag-log")]
+                unsafe {
+                    DIAG_TRK_FAIL += 1;
+                }
             }
         }
     }

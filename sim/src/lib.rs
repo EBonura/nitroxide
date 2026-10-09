@@ -30,6 +30,8 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod angle;
+
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
 
