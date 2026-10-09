@@ -8101,7 +8101,7 @@ const TRACK_SLIP: i32 = 200;
 /// powerslides saw no marks at all.
 const TRACK_CORNER: i32 = 840;
 /// How dark a fresh mark is: subtracted from the pitch.
-const TRACK_DARK: Rgb = (84, 92, 72);
+const TRACK_DARK: Rgb = (36, 40, 31);
 /// The track slot: one in front of the markings.
 const TRACK_SLOT: usize = LINE_SLOT - 1;
 
