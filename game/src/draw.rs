@@ -235,6 +235,37 @@ fn gpu_draws_whole(sp: &[(i16, i16); 4]) -> bool {
     fits([sp[0], sp[1], sp[2]]) && fits([sp[1], sp[2], sp[3]])
 }
 
+/// The part of the screen segment `a`..`b` between the vertical lines `x = lo`
+/// and `x = hi`, or `None` when none of it is. Ends keep their order.
+fn clip_x(a: (i16, i16), b: (i16, i16), lo: i32, hi: i32) -> Option<((i16, i16), (i16, i16))> {
+    let (ax, ay, bx, by) = (a.0 as i32, a.1 as i32, b.0 as i32, b.1 as i32);
+    if (ax < lo && bx < lo) || (ax > hi && bx > hi) {
+        return None;
+    }
+    let at = |x: i32, from: (i32, i32), to: (i32, i32)| {
+        // Where the segment from `from` to `to` crosses `x`; it spans more than a
+        // pixel across here, since one end is on each side.
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        (x as i16, (from.1 + dy * (x - from.0) / dx) as i16)
+    };
+    let (p, q) = ((ax, ay), (bx, by));
+    let a2 = if ax < lo {
+        at(lo, p, q)
+    } else if ax > hi {
+        at(hi, p, q)
+    } else {
+        a
+    };
+    let b2 = if bx < lo {
+        at(lo, q, p)
+    } else if bx > hi {
+        at(hi, q, p)
+    } else {
+        b
+    };
+    Some((a2, b2))
+}
+
 /// The nearest depth (SZ) at which the GTE still projects a vertex where it
 /// belongs. RTPS saturates its divide once the depth is half the projection
 /// plane distance or less, and a vertex that close lands short of its true
@@ -5904,6 +5935,23 @@ impl Builder<'_> {
         }
     }
 
+    /// The apron between a crowd's foot line (`t0`..`t1`) and the same line at
+    /// the ground (`f0`..`f1`), cut to the width of the view, which is all that
+    /// shows of it and keeps the quad inside what the rasteriser takes whole.
+    /// A straight line in the world is a straight line on the screen, so each
+    /// of the two lines is cut where it crosses the view's sides.
+    fn apron_span(&mut self, t0: (i16, i16), t1: (i16, i16), f0: (i16, i16), f1: (i16, i16)) {
+        let (vx0, vx1) = unsafe { (VIEW_MIN_X as i32 - 64, VIEW_MAX_X as i32 + 64) };
+        let (Some((t0, t1)), Some((f0, f1))) = (clip_x(t0, t1, vx0, vx1), clip_x(f0, f1, vx0, vx1))
+        else {
+            return;
+        };
+        let sp = [t0, t1, f0, f1];
+        if quad_overlaps_view(&sp) && gpu_draws_whole(&sp) {
+            self.apron_quad(sp);
+        }
+    }
+
     fn apron_quad(&mut self, sp: [(i16, i16); 4]) {
         if let Some(q) = self
             .arena
@@ -5939,25 +5987,24 @@ impl Builder<'_> {
                 edge_done[e] = true;
                 continue;
             }
-            let t = scene::project_triangle_scheduled(edge.top[0], edge.top[1], edge.foot[0]);
-            let d = project(edge.foot[1]);
-            if t[0].sz == 0 || t[1].sz == 0 || t[2].sz == 0 || d.sz == 0 {
+            let t = scene::project_triangle_scheduled(edge.top[0], edge.top[1], edge.top[1]);
+            let f = scene::project_triangle_scheduled(edge.foot[0], edge.foot[1], edge.foot[1]);
+            if t[0].sz == 0 || t[1].sz == 0 || f[0].sz == 0 || f[1].sz == 0 {
                 continue;
             }
-            let sp = [(t[0].sx, t[0].sy), (t[1].sx, t[1].sy), (t[2].sx, t[2].sy), (d.sx, d.sy)];
-            if !quad_overlaps_view(&sp) {
-                edge_done[e] = true;
-            } else if gpu_draws_whole(&sp) {
-                edge_done[e] = true;
-                self.apron_quad(sp);
-            }
+            edge_done[e] = true;
+            self.apron_span(
+                (t[0].sx, t[0].sy),
+                (t[1].sx, t[1].sy),
+                (f[0].sx, f[0].sy),
+                (f[1].sx, f[1].sy),
+            );
         }
         for st in unsafe { STANDS.iter() } {
             if !cull.visible_box(st.centre, cull.extents(st.half)) {
                 continue;
             }
             let near = Self::floor_split(cull.flat_distance(st.centre.0, st.centre.2)) > 2;
-            let mut apron_whole = false;
             let (cols, rows): (&[usize], &[usize]) =
                 if near { (&[0, 1, 2, 3], &[0, 1, 2]) } else { (&[0, 3], &[0, 2]) };
             let packet = CROWD_PACKETS[st.team as usize];
@@ -5979,47 +6026,20 @@ impl Builder<'_> {
                     }
                 }
             }
-            // The apron: the front edge dropped to the ground. The edge is a
-            // straight line, so one quad covers the piece unless it is too wide
-            // for the rasteriser to take whole (a piece beside the camera), and
-            // then it goes in the crowd's own columns.
-            let last = cols[cols.len() - 1];
-            let spans: &[(usize, usize)] = if cols.len() > 2 {
-                &[(0, last), (0, 1), (1, 2), (2, 3)]
-            } else {
-                &[(0, last)]
-            };
-            for (n, &(i0, i1)) in spans.iter().enumerate() {
-                if edge_done[st.edge as usize] {
-                    break;
-                }
-                if n == 1 && apron_whole {
-                    break;
-                }
-                let (Some(t0), Some(t1)) = (g[0][i0], g[0][i1]) else {
-                    continue;
-                };
-                let (a, b) = (st.grid[0][i0], st.grid[0][i1]);
-                let (b0, b1) = (
-                    project(Vec3I16::new(a.x, 0, a.z)),
-                    project(Vec3I16::new(b.x, 0, b.z)),
-                );
-                if b0.sz == 0 || b1.sz == 0 {
-                    continue;
-                }
-                let sp = [t0, t1, (b0.sx, b0.sy), (b1.sx, b1.sy)];
-                if !quad_overlaps_view(&sp) {
-                    continue;
-                }
-                if n == 0 && cols.len() > 2 {
-                    apron_whole = gpu_draws_whole(&sp);
-                    if !apron_whole {
-                        continue;
+            // The apron, piece by piece where its whole edge could not be done at
+            // once (an end of the edge is behind the lens).
+            if !edge_done[st.edge as usize] {
+                let last = cols[cols.len() - 1];
+                if let (Some(t0), Some(t1)) = (g[0][0], g[0][last]) {
+                    let (a, b) = (st.grid[0][0], st.grid[0][last]);
+                    let (f0, f1) = (
+                        project(Vec3I16::new(a.x, 0, a.z)),
+                        project(Vec3I16::new(b.x, 0, b.z)),
+                    );
+                    if f0.sz != 0 && f1.sz != 0 {
+                        self.apron_span(t0, t1, (f0.sx, f0.sy), (f1.sx, f1.sy));
                     }
-                } else if !gpu_draws_whole(&sp) {
-                    continue;
                 }
-                self.apron_quad(sp);
             }
             for r in rows.windows(2) {
                 let (j0, j1) = (r[0], r[1]);
