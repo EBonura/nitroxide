@@ -258,6 +258,15 @@ disc: build
 # PGO_LAUNCH_ARGS adds frontend arguments (--launch-arg X per word).
 TRAIN_TAPE   = $(ROOT)/pgo/train.pxtape
 TRAIN_POLLS  = 396..1200
+# The layout is also trained on two longer routes (poll-bound tapes of a played
+# match, so they replay the same on any build): driving up the walls and the
+# ramps, and the ball-cam views over the whole stands that are the heaviest
+# frames. A layout trained on the menu-to-kickoff tape alone put the heavy
+# frames a percent over the deadline.
+WALL_TAPE    = $(ROOT)/pgo/wall.pxtape
+WALL_POLLS   = 1500..3300
+HEAVY_TAPE   = $(ROOT)/pgo/heavy.pxtape
+HEAVY_POLLS  = 3150..3600
 PGO_LAUNCH_ARGS ?=
 PGO_PACK = '$(MAKE) --no-print-directory -C "$(ROOT)" pack PACK_EXE="$$PSOXIDE_PGO_EXE" PACK_OUT="$$PSOXIDE_PGO_DISC"'
 pgo-collect: psoxide
@@ -271,7 +280,9 @@ pgo-collect: psoxide
 # without it.
 pgo-order: psoxide
 	PSOXIDE="$(PSOXIDE)" $(PGO) order --crate "$(GAME)" --frontend "$(FRONTEND)" \
-		--tape "$(TRAIN_TAPE)" --polls $(TRAIN_POLLS) --pack $(PGO_PACK) \
+		--tape "$(TRAIN_TAPE)" --polls $(TRAIN_POLLS) \
+		--tape "$(WALL_TAPE)" --polls $(WALL_POLLS) \
+		--tape "$(HEAVY_TAPE)" --polls $(HEAVY_POLLS) --pack $(PGO_PACK) \
 		--launch-arg --embedded-playtest $(PGO_LAUNCH_ARGS) --profile "$(PGO_PROFILE)" \
 		--variant "$(patsubst %+order,%,$(PGO_VARIANT))" --out "$(PGO_LAYOUT)" -- $(GAME_CARGO)
 
