@@ -8589,22 +8589,67 @@ fn track_tint(age: u16, sz: u16) -> Rgb {
 /// nearer than the far fade? [`Cull::visible`] and
 /// [`Cull::visible_vertically`] in one pass, with the box flat on the pitch
 /// so its height terms drop out.
-fn track_box_visible(cull: &Cull, b: (i16, i16, i16, i16)) -> bool {
+fn track_box_visible(cull: &TrackView, b: (i16, i16, i16, i16)) -> bool {
     let (cx, cz) = ((b.0 as i32 + b.2 as i32) >> 1, (b.1 as i32 + b.3 as i32) >> 1);
     let (hx, hz) = ((b.2 as i32 - b.0 as i32) >> 1, (b.3 as i32 - b.1 as i32) >> 1);
-    let d = (cx - cull.pos.0, -cull.pos.1, cz - cull.pos.2);
-    let ext = |n: [i16; 3]| ((n[0] as i32).abs() * hx + (n[2] as i32).abs() * hz) >> 12;
-    let (z, ef) = (Cull::dot(cull.fwd, d), ext(cull.fwd));
+    let (dx, dz) = (cx - cull.pos.0, cz - cull.pos.1);
+    // Each axis is `Cull::dot` over `(dx, -eye height, dz)` with the height
+    // term folded in once per frame, and the extent is the same support
+    // function over absolute components: the same integers either way.
+    let at = |n: &TrackAxis| ((n.x * dx + n.z * dz + n.y_term) >> 12, (n.ax * hx + n.az * hz) >> 12);
+    let (z, ef) = at(&cull.fwd);
     if z + ef <= 0 || z - ef > TRACK_FAR {
         return false;
     }
     let reach = z + ef;
-    let x = Cull::dot(cull.right, d);
-    if x.abs() - ext(cull.right) > reach * cull_half_w() / PROJ_H as i32 {
+    let (x, ex) = at(&cull.right);
+    if x.abs() - ex > reach * cull.half_w / PROJ_H as i32 {
         return false;
     }
-    let y = Cull::dot(cull.vertical, d);
-    y.abs() - ext(cull.vertical) <= reach * unsafe { VIEW_HALF_H } / PROJ_H as i32
+    let (y, ey) = at(&cull.vertical);
+    y.abs() - ey <= reach * cull.half_h / PROJ_H as i32
+}
+
+/// One view axis with everything the floor-box test needs from it.
+struct TrackAxis {
+    x: i32,
+    z: i32,
+    ax: i32,
+    az: i32,
+    /// The axis' height component times the eye's height over the pitch.
+    y_term: i32,
+}
+
+/// [`Cull`] reduced to what a box lying on the pitch needs, built once a
+/// frame.
+struct TrackView {
+    /// The eye's ground position (x, z).
+    pos: (i32, i32),
+    fwd: TrackAxis,
+    right: TrackAxis,
+    vertical: TrackAxis,
+    half_w: i32,
+    half_h: i32,
+}
+
+impl TrackView {
+    fn new(cull: &Cull) -> Self {
+        let axis = |n: [i16; 3]| TrackAxis {
+            x: n[0] as i32,
+            z: n[2] as i32,
+            ax: (n[0] as i32).abs(),
+            az: (n[2] as i32).abs(),
+            y_term: n[1] as i32 * -cull.pos.1,
+        };
+        TrackView {
+            pos: (cull.pos.0, cull.pos.2),
+            fwd: axis(cull.fwd),
+            right: axis(cull.right),
+            vertical: axis(cull.vertical),
+            half_w: cull_half_w(),
+            half_h: unsafe { VIEW_HALF_H },
+        }
+    }
 }
 
 impl Builder<'_> {
@@ -8614,6 +8659,12 @@ impl Builder<'_> {
         let clock = unsafe { TRACK_CLOCK };
         let set = unsafe { SET };
         let mut opened = false;
+        // Most frames most wheels have laid nothing: one test then.
+        #[cfg(not(feature = "diag-log"))]
+        if (0..TRACK_WHEELS).all(|w| unsafe { TRACKS[w].chunks == 0 && TRACKS[w].live.is_none() }) {
+            return;
+        }
+        let view = TrackView::new(cull);
         #[cfg(feature = "diag-log")]
         let (mut seen, mut kept) = (0i32, 0i32);
         for w in 0..TRACK_WHEELS {
@@ -8632,7 +8683,7 @@ impl Builder<'_> {
                 let Some((x0, z0, x1, z1)) = ring.boxes[c] else {
                     continue;
                 };
-                if !track_box_visible(cull, (x0, z0, x1, z1)) {
+                if !track_box_visible(&view, (x0, z0, x1, z1)) {
                     continue;
                 }
                 #[cfg(feature = "diag-log")]
@@ -8667,7 +8718,7 @@ impl Builder<'_> {
                 (x0, x1) = (x0.min(x), x1.max(x));
                 (z0, z1) = (z0.min(z), z1.max(z));
             }
-            if !track_box_visible(cull, (x0, z0, x1, z1)) {
+            if !track_box_visible(&view, (x0, z0, x1, z1)) {
                 continue;
             }
             let t = scene::project_triangle_scheduled(
@@ -8739,6 +8790,21 @@ impl Builder<'_> {
     fn track_chunk(&mut self, w: usize, c: usize, clock: u16) {
         let ring = unsafe { &TRACKS[w] };
         let first = c * TRACK_CHUNK + TRACK_LEN - 1;
+        // A chunk whose segments have all aged out or never joined (a lone
+        // point) draws nothing: find that before the GTE is touched.
+        let live = (1..=TRACK_CHUNK).any(|k| {
+            let slot = (first + k) % TRACK_LEN;
+            let p = &ring.pts[slot];
+            if !p.joined || slot == ring.head as usize {
+                return false;
+            }
+            let q = &ring.pts[(first + k - 1) % TRACK_LEN];
+            let (age_p, age_q) = (clock.wrapping_sub(p.born), clock.wrapping_sub(q.born));
+            p.born != 0 && q.born != 0 && age_p < TRACK_LIFE && age_q < TRACK_LIFE
+        });
+        if !live {
+            return;
+        }
         // The chunk's five points (the one before it and its own four), both
         // edges each: three RTPTs and an RTPS, written out rather than looped
         // so no vertex pays for an index sum, a modulo and an edge select.
