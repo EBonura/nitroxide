@@ -24,6 +24,9 @@ use psx_font::{
 };
 use psx_math::fmt::{u32_dec, U32_DEC_MAX};
 use psx_math::sincos::{cos_q12, sin_q12};
+use psx_display::Label;
+use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
+use psx_gpu::Gpu;
 use psx_settings::Profile;
 use psx_vram::{Clut, TexDepth, Tpage};
 
@@ -421,12 +424,19 @@ enum SettingsRow {
     Sound,
     Music,
     Track,
+    Brightness,
+    ScreenX,
+    ScreenY,
     Back,
 }
 
 /// Analog re-assert attempts per plug-in before a pad is taken as
 /// digital-only (the boot handshake in `init` is on top of these).
 const ANALOG_ATTEMPTS: u8 = 4;
+
+/// The display the engine's default `Config` programs, which the picture
+/// options reprogram or overlay.
+const SCREEN_RESOLUTION: Resolution = Resolution::R320X240;
 
 struct NitroXide {
     /// Frames since boot, used only to pace the analog re-assert.
@@ -501,6 +511,9 @@ struct NitroXide {
     intro_t: i32,
     profile: Profile<9, 0>,
     settings_dirty: bool,
+    /// The screen position changed in the settings panel: reprogram the
+    /// display window at the next update, which holds the GPU handle.
+    display_dirty: bool,
     /// Where the "format this card?" question stands. A card with no `MC`
     /// header is never written to unasked: formatting it drops every other
     /// game's save from its directory.
@@ -621,6 +634,7 @@ impl NitroXide {
             seed: 0,
             profile: Profile::new(DRIVE_ACTIONS),
             settings_dirty: false,
+            display_dirty: false,
             card_ask: CardAsk::Idle,
             card_wait: 0,
             idle: 0,
@@ -759,10 +773,20 @@ impl NitroXide {
                 SettingsRow::Sound,
                 SettingsRow::Music,
                 SettingsRow::Track,
+                SettingsRow::Brightness,
+                SettingsRow::ScreenX,
+                SettingsRow::ScreenY,
                 SettingsRow::Back,
             ]
         } else {
-            &[SettingsRow::Arena, SettingsRow::Sound, SettingsRow::Back]
+            &[
+                SettingsRow::Arena,
+                SettingsRow::Sound,
+                SettingsRow::Brightness,
+                SettingsRow::ScreenX,
+                SettingsRow::ScreenY,
+                SettingsRow::Back,
+            ]
         }
     }
 
@@ -806,6 +830,15 @@ impl NitroXide {
         if step == 0 {
             return;
         }
+        // Left and right only: the signed direction for the picture rows.
+        let lr = right as i8 - left as i8;
+        let picture_row = matches!(
+            rows[row],
+            SettingsRow::Brightness | SettingsRow::ScreenX | SettingsRow::ScreenY
+        );
+        if lr == 0 && picture_row {
+            return;
+        }
         match rows[row] {
             SettingsRow::Arena => {
                 self.arena_time = if step > 0 {
@@ -827,6 +860,22 @@ impl NitroXide {
                 self.settings_dirty = true;
             }
             SettingsRow::Track => self.music.cycle_track(step, tick),
+            // The picture rows are steppers that clamp at both ends, so X
+            // (which steps the toggles forward) leaves them alone.
+            SettingsRow::Brightness => {
+                self.profile.brightness = self.profile.brightness.stepped(lr);
+                self.settings_dirty = true;
+            }
+            SettingsRow::ScreenX => {
+                self.profile.screen_offset = self.profile.screen_offset.stepped_x(lr);
+                self.settings_dirty = true;
+                self.display_dirty = true;
+            }
+            SettingsRow::ScreenY => {
+                self.profile.screen_offset = self.profile.screen_offset.stepped_y(lr);
+                self.settings_dirty = true;
+                self.display_dirty = true;
+            }
             SettingsRow::Back => {}
         }
     }
@@ -838,7 +887,7 @@ impl NitroXide {
     /// drive identically is a bug waiting to be reported as one.
     fn read_pad(map: &ActionMap<9>, deadzone: Deadzone, pad: &PadState, prev: &PadState) -> Input {
         let actions = map.input(*pad, *prev);
-        let held = |action: usize| actions.held(action);
+        let held = |action: usize| actions.is_held(action);
 
         let mut steer = 0;
         if held(ACT_LEFT) {
@@ -880,7 +929,7 @@ impl NitroXide {
             steer: steer.clamp(-128, 128),
             pitch: pitch.clamp(-128, 128),
             boost: held(ACT_BOOST),
-            jump_pressed: actions.pressed(ACT_JUMP),
+            jump_pressed: actions.just_pressed(ACT_JUMP),
             // Held as well as tapped: the sim extends a jump for up to a fifth
             // of a second while this is down, which is what makes jump height
             // something the player controls.
@@ -1496,6 +1545,10 @@ impl NitroXide {
             (255, 255, 255),
         );
 
+        // Picture rows say how far they have moved in words (DARKER 2, LEFT 3).
+        let brightness: Label = self.profile.brightness.label();
+        let screen_x: Label = self.profile.screen_offset.label_x();
+        let screen_y: Label = self.profile.screen_offset.label_y();
         for (i, row) in rows.iter().enumerate() {
             // Label and value drawn separately: the track name is not a
             // static string this `no_std` crate could concatenate.
@@ -1511,6 +1564,9 @@ impl NitroXide {
                 SettingsRow::Sound => ("SOUND: ", if audio::muted() { "OFF" } else { "ON" }),
                 SettingsRow::Music => ("MUSIC: ", if self.music.enabled() { "ON" } else { "OFF" }),
                 SettingsRow::Track => ("TRACK: ", self.music.track_name()),
+                SettingsRow::Brightness => ("BRIGHTNESS: ", brightness.as_str()),
+                SettingsRow::ScreenX => ("SCREEN X: ", screen_x.as_str()),
+                SettingsRow::ScreenY => ("SCREEN Y: ", screen_y.as_str()),
                 SettingsRow::Back => ("BACK", ""),
             };
             let lit = i == sel;
@@ -1826,7 +1882,7 @@ impl NitroXide {
 }
 
 impl Scene for NitroXide {
-    fn init(&mut self, _ctx: &mut Ctx) {
+    fn init(&mut self, ctx: &mut Ctx) {
         // Ask both pads for analog mode up front. A DualShock boots in digital
         // and reports the sticks centred until told otherwise, so without this
         // the steering deadzone is reading a stick that never moves and the car
@@ -1836,6 +1892,12 @@ impl Scene for NitroXide {
         let _ = psx_pad::enable_analog_port2();
         if let Ok(profile) = psx_settings::load_slot_one(SETTINGS_FILE) {
             self.profile = profile;
+        }
+        // The saved picture position, programmed once; a centred picture
+        // (the default, and every save from before the option) leaves the
+        // display window as the engine set it.
+        if !self.profile.screen_offset.is_centre() {
+            self.apply_screen_offset(ctx);
         }
         draw::setup();
         assert!(
@@ -2022,6 +2084,10 @@ impl Scene for NitroXide {
     }
 
     fn update(&mut self, ctx: &mut Ctx) {
+        if self.display_dirty {
+            self.display_dirty = false;
+            self.apply_screen_offset(ctx);
+        }
         // Re-assert analog for a pad that missed the boot handshake or was
         // plugged in mid-session. The handshake is three config transactions
         // with spin-delays plus a poll, so it only runs for a port that is
@@ -2410,7 +2476,7 @@ impl Scene for NitroXide {
         draw::set_camera_tick(tick);
         // Where the back buffer starts in VRAM, which is what turns a
         // display-space viewport into the GPU's scissor rectangle.
-        let buffer_y = ctx.fb.buffer_y(ctx.fb.drawing);
+        let buffer_y = ctx.fb.draw_origin().1;
         // Keep the working colour tables in step before anything is drawn
         // from them. A frame that changes nothing does nothing here.
         for seat in 0..2 {
@@ -2507,15 +2573,33 @@ impl Scene for NitroXide {
 }
 
 impl NitroXide {
-    /// The overlay, and over it the card question when one is pending.
+    /// The overlay, and over it the card question when one is pending, and
+    /// over everything the brightness.
     fn draw_overlay(&mut self, ctx: &mut Ctx) {
         self.draw_overlay_scene(ctx);
         if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
             let display = self.display.as_ref().expect("display font");
             let hud = self.hud.as_ref().expect("hud font");
             let busy = self.card_ask == CardAsk::Formatting;
-            Self::draw_card_prompt(display, hud, ctx.fb.buffer_y(ctx.fb.drawing), busy);
+            Self::draw_card_prompt(display, hud, ctx.fb.draw_origin().1, busy);
         }
+        // One semi-transparent grey rectangle over the finished frame, HUD
+        // and menus included, drawn immediate like the rest of the overlay
+        // (the table is walked and the full-screen scissor is back). The
+        // default draws nothing, so an untouched setting costs no packet.
+        if let Some(overlay) = self.profile.brightness.overlay(SCREEN_RESOLUTION) {
+            Gpu::from_dma_mut(ctx.gpu_dma()).draw(&overlay);
+        }
+    }
+
+    /// Move the picture to the saved screen position: a video-signal change,
+    /// nothing per frame.
+    fn apply_screen_offset(&self, ctx: &mut Ctx) {
+        let display = self
+            .profile
+            .screen_offset
+            .apply_to(DisplayConfig::new(VideoMode::Ntsc, SCREEN_RESOLUTION));
+        Gpu::from_dma_mut(ctx.gpu_dma()).set_display(display);
     }
 
     /// "This card is not formatted": the plate, what formatting costs, and
@@ -2549,12 +2633,12 @@ impl NitroXide {
         let hud = self.hud.as_ref().expect("hud font");
         match self.phase {
             Phase::Intro => {
-                self.draw_intro(hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                self.draw_intro(hud, ctx.fb.draw_origin().1);
             }
             Phase::Title => {
                 self.draw_title(display, hud, ctx.sim_tick.as_u32());
                 if self.settings.is_some() {
-                    self.draw_settings(display, hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                    self.draw_settings(display, hud, ctx.fb.draw_origin().1);
                 }
             }
             Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
@@ -2574,9 +2658,9 @@ impl NitroXide {
                 }
                 if self.paused {
                     if self.settings.is_some() {
-                        self.draw_settings(display, hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                        self.draw_settings(display, hud, ctx.fb.draw_origin().1);
                     } else {
-                        self.draw_pause_menu(display, hud, ctx.fb.buffer_y(ctx.fb.drawing));
+                        self.draw_pause_menu(display, hud, ctx.fb.draw_origin().1);
                     }
                 }
                 return;
@@ -2612,6 +2696,7 @@ impl NitroXide {
 
 #[no_mangle]
 fn main() -> ! {
+    draw::init_view();
     // Sim every vblank, render every second one: 60 Hz control, 30 Hz picture.
     //
     // The default renders as fast as it can, which gives an uneven frame time
