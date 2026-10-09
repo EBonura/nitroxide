@@ -510,10 +510,6 @@ struct CameraState {
     pitch: i32,
     /// Sim tick this state was computed on.
     tick: u32,
-    /// The sim's `kickoff_ticks` when it was computed. That counter only ever
-    /// counts up until a kickoff resets it, so a smaller one now means the
-    /// match was kicked off again (a goal, or a new match) since this state.
-    kickoff: u8,
 }
 
 impl CameraState {
@@ -523,7 +519,6 @@ impl CameraState {
         yaw: 0,
         pitch: 0,
         tick: 0,
-        kickoff: 0,
     };
 }
 
@@ -2901,15 +2896,6 @@ fn camera(
     use sim::angle::atan2_q12_fine as atan2_fine;
     let camera_slot = camera_slot.min(1);
     let previous = unsafe { CHASE_CAMERAS[camera_slot] };
-    // A kickoff is a cut: the car is somewhere new, and easing the camera in
-    // from where the last match, or the last goal, left it is a flight across
-    // the arena. Frame the car from scratch, which is the pose the kickoff
-    // camera settles into.
-    let previous = if previous.kickoff > s.kickoff_ticks() {
-        CameraState::EMPTY
-    } else {
-        previous
-    };
     let now = unsafe { CAMERA_TICK };
     let ticks = (now.wrapping_sub(previous.tick).clamp(1, 8)) as i32;
     let offset_step = CAM_OFFSET_STEP * ticks / 2;
@@ -3133,7 +3119,6 @@ fn camera(
             yaw: view_yaw,
             pitch,
             tick: now,
-            kickoff: s.kickoff_ticks(),
         };
     }
     look_from((cx, cyy, cz), view_yaw, pitch.rem_euclid(4096) as u16)
@@ -6127,7 +6112,6 @@ impl Builder<'_> {
                 continue;
             }
             let near = Self::floor_split(cull.flat_distance(st.centre.0, st.centre.2)) > 2;
-            let mut apron_whole = false;
             let (cols, rows): (&[usize], &[usize]) =
                 if near { (&[0, 1, 2, 3], &[0, 1, 2]) } else { (&[0, 3], &[0, 2]) };
             let packet = CROWD_PACKETS[st.team as usize];
@@ -6147,52 +6131,6 @@ impl Builder<'_> {
                     if v.sz != 0 {
                         g[j][cols[3]] = Some((v.sx, v.sy));
                     }
-                }
-            }
-            // The apron: the front edge dropped to the ground. The edge is a
-            // straight line, so one quad covers the piece unless it is too wide
-            // for the rasteriser to take whole (a piece beside the camera), and
-            // then it goes in the crowd's own columns.
-            let last = cols[cols.len() - 1];
-            let spans: &[(usize, usize)] = if cols.len() > 2 {
-                &[(0, last), (0, 1), (1, 2), (2, 3)]
-            } else {
-                &[(0, last)]
-            };
-            for (n, &(i0, i1)) in spans.iter().enumerate() {
-                if n == 1 && apron_whole {
-                    break;
-                }
-                let (Some(t0), Some(t1)) = (g[0][i0], g[0][i1]) else {
-                    continue;
-                };
-                let (a, b) = (st.grid[0][i0], st.grid[0][i1]);
-                let (b0, b1) = (
-                    project(Vec3I16::new(a.x, 0, a.z)),
-                    project(Vec3I16::new(b.x, 0, b.z)),
-                );
-                if b0.sz == 0 || b1.sz == 0 {
-                    continue;
-                }
-                let sp = [t0, t1, (b0.sx, b0.sy), (b1.sx, b1.sy)];
-                if !quad_overlaps_view(&sp) {
-                    continue;
-                }
-                if n == 0 && cols.len() > 2 {
-                    apron_whole = gpu_draws_whole(&sp);
-                    if !apron_whole {
-                        continue;
-                    }
-                } else if !gpu_draws_whole(&sp) {
-                    continue;
-                }
-                if let Some(q) = self
-                    .arena
-                    .push(QuadGouraud::new(sp, [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM]))
-                {
-                    self.ot.add_packet(STAND_SLOT, q);
-                } else {
-                    count_overflow!();
                 }
             }
             for r in rows.windows(2) {
