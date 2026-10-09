@@ -2968,6 +2968,8 @@ fn camera(
         let shift = (delta.abs() - CAM_BALL_CAR_YAW).max(0);
         view_yaw = (view_yaw as i32 + delta.signum() * shift).rem_euclid(4096) as u16;
     }
+    #[cfg(feature = "diag-log")]
+    let desired_yaw = view_yaw;
     let (view_yaw, pitch) = if previous.valid {
         let yaw_delta = ((view_yaw as i32 - previous.yaw as i32 + 2048).rem_euclid(4096)) - 2048;
         (
@@ -2979,6 +2981,36 @@ fn camera(
     } else {
         (view_yaw, desired_pitch)
     };
+    #[cfg(feature = "diag-log")]
+    crate::diaglog::fill!(cam;
+        now as i32,
+        camera_slot as i32,
+        ball_cam as i32
+            | (hold_car as i32) << 1
+            | (split as i32) << 2
+            | (previous.valid as i32) << 3,
+        cx,
+        cyy,
+        cz,
+        view_yaw as i32,
+        pitch,
+        desired_yaw as i32,
+        desired_pitch,
+        subject.yaw as i32,
+        subject.p.x,
+        subject.p.z,
+        subject.v.x,
+        subject.v.z,
+        subject.steer,
+        subject.slide,
+        subject.grounded as i32 | (subject.up.y << 1),
+        s.kickoff_ticks() as i32,
+        follow_yaw as i32,
+        ticks,
+        s.ball.p.x,
+        s.ball.p.z,
+        offset.0,
+    );
     unsafe {
         CHASE_CAMERAS[camera_slot] = CameraState {
             valid: true,
@@ -8138,6 +8170,10 @@ static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TrackRing {
 }; TRACK_WHEELS];
 /// Ticks since boot, from 1, so a `born` of 0 can mean "never".
 static mut TRACK_CLOCK: u16 = 1;
+#[cfg(feature = "diag-log")]
+static mut DIAG_TRK_QUADS: i32 = 0;
+#[cfg(feature = "diag-log")]
+static mut DIAG_TRK_FAIL: i32 = 0;
 
 /// One chunk's vertices on their way through the GTE: two edges per point,
 /// for the chunk's points and the one before it.
@@ -8187,6 +8223,17 @@ pub fn track_tick(s: &Sim) {
         let marking = on_floor
             && (car.slide > 512 || ((car.v.x * rx + car.v.z * rz) >> 12).abs() > TRACK_SLIP);
         let (cx, cz) = (r(car.p.x), r(car.p.z));
+        #[cfg(feature = "diag-log")]
+        crate::diaglog::fill!(trk;
+            clock as i32,
+            c as i32,
+            car.slide,
+            ((car.v.x * rx + car.v.z * rz) >> 12),
+            on_floor as i32 | (marking as i32) << 1 | (car.grounded as i32) << 2 | (car.wrecked() as i32) << 3,
+            car.up.y,
+            car.v.x,
+            car.v.z,
+        );
         for (w, side) in [-1i32, 1].into_iter().enumerate() {
             let ring = unsafe { &mut TRACKS[c * 2 + w] };
             if !marking {
@@ -8269,10 +8316,16 @@ impl Builder<'_> {
         let clock = unsafe { TRACK_CLOCK };
         let set = unsafe { SET };
         let mut opened = false;
+        #[cfg(feature = "diag-log")]
+        let (mut seen, mut kept) = (0i32, 0i32);
         for w in 0..TRACK_WHEELS {
             let ring = unsafe { &TRACKS[w] };
             if ring.chunks == 0 && ring.live.is_none() {
                 continue;
+            }
+            #[cfg(feature = "diag-log")]
+            {
+                seen |= (ring.chunks as i32) << (w * 4);
             }
             for c in 0..TRACK_CHUNKS {
                 if ring.chunks & (1 << c) == 0 {
@@ -8283,6 +8336,10 @@ impl Builder<'_> {
                 };
                 if !track_box_visible(cull, (x0, z0, x1, z1)) {
                     continue;
+                }
+                #[cfg(feature = "diag-log")]
+                {
+                    kept |= 1 << (w * 4 + c);
                 }
                 if !opened {
                     // Inserted before the quads, so drawn after them: the
@@ -8343,7 +8400,27 @@ impl Builder<'_> {
             if let Some(quad) = self.flats.push(QuadFlat::new(sp, c.0, c.1, c.2)) {
                 quad.color_cmd |= SEMI_TRANSPARENT;
                 self.ot.add_packet(TRACK_SLOT, quad);
+            } else {
+                #[cfg(feature = "diag-log")]
+                unsafe {
+                    DIAG_TRK_FAIL += 1;
+                }
             }
+        }
+        #[cfg(feature = "diag-log")]
+        unsafe {
+            crate::diaglog::fill!(draw;
+                clock as i32,
+                seen,
+                kept,
+                opened as i32,
+                DIAG_TRK_QUADS,
+                DIAG_TRK_FAIL,
+                (0..TRACK_WHEELS).fold(0, |a, w| a | (TRACKS[w].live.is_some() as i32) << w),
+                0,
+            );
+            DIAG_TRK_QUADS = 0;
+            DIAG_TRK_FAIL = 0;
         }
         if opened {
             unsafe {
@@ -8408,6 +8485,15 @@ impl Builder<'_> {
             if let Some(quad) = self.flats.push(QuadFlat::new(sp, tint.0, tint.1, tint.2)) {
                 quad.color_cmd |= SEMI_TRANSPARENT;
                 self.ot.add_packet(TRACK_SLOT, quad);
+                #[cfg(feature = "diag-log")]
+                unsafe {
+                    DIAG_TRK_QUADS += 1;
+                }
+            } else {
+                #[cfg(feature = "diag-log")]
+                unsafe {
+                    DIAG_TRK_FAIL += 1;
+                }
             }
         }
     }

@@ -34,6 +34,8 @@ use nitroxide_sim::{
 mod assets;
 mod audio;
 mod bonnie;
+#[cfg(feature = "diag-log")]
+mod diaglog;
 mod draw;
 mod music;
 
