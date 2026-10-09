@@ -452,6 +452,10 @@ struct CameraState {
     pitch: i32,
     /// Sim tick this state was computed on.
     tick: u32,
+    /// The sim's `kickoff_ticks` when it was computed. That counter only ever
+    /// counts up until a kickoff resets it, so a smaller one now means the
+    /// match was kicked off again (a goal, or a new match) since this state.
+    kickoff: u8,
 }
 
 impl CameraState {
@@ -461,6 +465,7 @@ impl CameraState {
         yaw: 0,
         pitch: 0,
         tick: 0,
+        kickoff: 0,
     };
 }
 
@@ -2801,6 +2806,15 @@ fn camera(
     use sim::angle::atan2_q12_fine as atan2_fine;
     let camera_slot = camera_slot.min(1);
     let previous = unsafe { CHASE_CAMERAS[camera_slot] };
+    // A kickoff is a cut: the car is somewhere new, and easing the camera in
+    // from where the last match, or the last goal, left it is a flight across
+    // the arena. Frame the car from scratch, which is the pose the kickoff
+    // camera settles into.
+    let previous = if previous.kickoff > s.kickoff_ticks() {
+        CameraState::EMPTY
+    } else {
+        previous
+    };
     let now = unsafe { CAMERA_TICK };
     let ticks = (now.wrapping_sub(previous.tick).clamp(1, 8)) as i32;
     let offset_step = CAM_OFFSET_STEP * ticks / 2;
@@ -3024,6 +3038,7 @@ fn camera(
             yaw: view_yaw,
             pitch,
             tick: now,
+            kickoff: s.kickoff_ticks(),
         };
     }
     look_from((cx, cyy, cz), view_yaw, pitch.rem_euclid(4096) as u16)
@@ -8077,6 +8092,14 @@ const TRACK_WHEEL_X: i32 = 44;
 /// Sideways speed, in sim sub-units a tick, past which a tyre is scrubbing.
 /// About 250 uu/s.
 const TRACK_SLIP: i32 = 200;
+/// How hard a car has to be cornering to leave a mark without sliding: its
+/// heading change over the two ticks between its updates, in Q12 turns,
+/// times its speed along the nose in uu a tick. A full-lock turn at speed
+/// reaches about 960 (Manny's 2026-10-09 tape, polls 1535..1650); a gentle
+/// arc stays under 400. The sim grips through every corner, so without this
+/// only a handbrake turn ever marked and a player who steers and never
+/// powerslides saw no marks at all.
+const TRACK_CORNER: i32 = 840;
 /// How dark a fresh mark is: subtracted from the pitch.
 const TRACK_DARK: Rgb = (84, 92, 72);
 /// The track slot: one in front of the markings.
@@ -8164,7 +8187,7 @@ impl TrackRing {
     }
 }
 
-static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TrackRing {
+const TRACK_RING_NONE: TrackRing = TrackRing {
     pts: [TRACK_POINT_NONE; TRACK_LEN],
     boxes: [None; TRACK_CHUNKS],
     newest: [0; TRACK_CHUNKS],
@@ -8173,9 +8196,12 @@ static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TrackRing {
     open: false,
     last: (0, 0),
     live: None,
-}; TRACK_WHEELS];
+};
+static mut TRACKS: [TrackRing; TRACK_WHEELS] = [TRACK_RING_NONE; TRACK_WHEELS];
 /// Ticks since boot, from 1, so a `born` of 0 can mean "never".
 static mut TRACK_CLOCK: u16 = 1;
+/// Each car's heading when its tracks were last advanced.
+static mut TRACK_YAW: [u16; 2] = [0; 2];
 #[cfg(feature = "diag-log")]
 static mut DIAG_TRK_QUADS: i32 = 0;
 #[cfg(feature = "diag-log")]
@@ -8203,6 +8229,16 @@ const TRACK_MODE_WORD: u32 = ARENA_MATERIAL
     .with_blend_mode(BlendMode::Subtract)
     .draw_mode_word();
 
+/// Wipe every tyre mark. The marks age on the play clock, which stands still
+/// between matches, so the last match's would otherwise sit on the new pitch
+/// until it had played long enough to fade them.
+pub fn reset_tracks() {
+    unsafe {
+        TRACKS = [TRACK_RING_NONE; TRACK_WHEELS];
+        TRACK_YAW = [0; 2];
+    }
+}
+
 /// Advance the tracks one sim tick: lay a point under every rear wheel that
 /// is scrubbing and has moved far enough since its last one.
 pub fn track_tick(s: &Sim) {
@@ -8226,8 +8262,19 @@ pub fn track_tick(s: &Sim) {
         let (fx, fz) = if on_floor { sim::heading(car.yaw) } else { (0, 0) };
         // Right of the nose, on the floor.
         let (rx, rz) = (fz, -fx);
+        // Heading change since this car was last looked at, which is two ticks
+        // ago (one car a tick), kept whether or not it is on the floor.
+        let turned = {
+            let last = unsafe { TRACK_YAW[c] };
+            unsafe { TRACK_YAW[c] = car.yaw };
+            ((car.yaw.wrapping_sub(last) as i16) as i32).abs()
+        };
+        let cornering = on_floor
+            && turned * (((car.v.x * fx + car.v.z * fz) >> 12).abs() >> FP) >= TRACK_CORNER;
         let marking = on_floor
-            && (car.slide > 512 || ((car.v.x * rx + car.v.z * rz) >> 12).abs() > TRACK_SLIP);
+            && (cornering
+                || car.slide > 512
+                || ((car.v.x * rx + car.v.z * rz) >> 12).abs() > TRACK_SLIP);
         let (cx, cz) = (r(car.p.x), r(car.p.z));
         #[cfg(feature = "diag-log")]
         crate::diaglog::fill!(trk;
@@ -8235,8 +8282,12 @@ pub fn track_tick(s: &Sim) {
             c as i32,
             car.slide,
             ((car.v.x * rx + car.v.z * rz) >> 12),
-            on_floor as i32 | (marking as i32) << 1 | (car.grounded as i32) << 2 | (car.wrecked() as i32) << 3,
-            car.up.y,
+            on_floor as i32
+                | (marking as i32) << 1
+                | (car.grounded as i32) << 2
+                | (car.wrecked() as i32) << 3
+                | (cornering as i32) << 4,
+            car.yaw as i32,
             car.v.x,
             car.v.z,
         );
