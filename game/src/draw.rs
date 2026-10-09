@@ -196,17 +196,32 @@ fn project_quad(c: &[(i32, i32, i32); 4]) -> Option<([(i16, i16); 4], i32)> {
 /// its corners are outside, which made a visible part of the enclosure vanish.
 #[inline]
 fn quad_overlaps_view(sp: &[(i16, i16); 4]) -> bool {
-    let (mut min_x, mut max_x) = (i16::MAX, i16::MIN);
-    let (mut min_y, mut max_y) = (i16::MAX, i16::MIN);
-    for &(x, y) in sp {
-        min_x = min_x.min(x);
-        max_x = max_x.max(x);
-        min_y = min_y.min(y);
-        max_y = max_y.max(y);
-    }
-    let (view_min_x, view_max_x, view_min_y, view_max_y) =
-        unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
-    max_x >= view_min_x && min_x < view_max_x && max_y >= view_min_y && min_y < view_max_y
+    let (vx0, vx1, vy0, vy1) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+    corners_overlap(
+        sp.map(|c| c.0 as i32),
+        sp.map(|c| c.1 as i32),
+        (vx0 as i32, vx1 as i32, vy0 as i32, vy1 as i32),
+    )
+}
+
+/// Does the box around four corners reach the view `(min x, max x, min y,
+/// max y)`: the box's max at or past the min edge, its min short of the max
+/// edge, on both axes?
+///
+/// The R3000 has no min or max instruction, and a box found corner by corner
+/// costs a compare and a branch per corner per bound. The sign bits answer the
+/// same question: every corner left of (above) the view leaves the AND of
+/// their offsets from its near edge negative, every corner at or past the far
+/// edge leaves the OR of their offsets from it non-negative, and the box
+/// reaches the view when neither holds on either axis. Offsets of 16-bit
+/// coordinates from a view edge cannot overflow.
+#[inline(always)]
+fn corners_overlap(x: [i32; 4], y: [i32; 4], (vx0, vx1, vy0, vy1): (i32, i32, i32, i32)) -> bool {
+    let before_x = (x[0] - vx0) & (x[1] - vx0) & (x[2] - vx0) & (x[3] - vx0);
+    let past_x = (x[0] - vx1) | (x[1] - vx1) | (x[2] - vx1) | (x[3] - vx1);
+    let before_y = (y[0] - vy0) & (y[1] - vy0) & (y[2] - vy0) & (y[3] - vy0);
+    let past_y = (y[0] - vy1) | (y[1] - vy1) | (y[2] - vy1) | (y[3] - vy1);
+    (before_x | !past_x | before_y | !past_y) >= 0
 }
 
 /// Did the GTE clamp this screen coordinate? It stores -1024..=1023, so a
@@ -233,6 +248,37 @@ fn gpu_draws_whole(sp: &[(i16, i16); 4]) -> bool {
         (x1 as i32 - x0 as i32) < 1024 && (y1 as i32 - y0 as i32) < 512
     };
     fits([sp[0], sp[1], sp[2]]) && fits([sp[1], sp[2], sp[3]])
+}
+
+/// The part of the screen segment `a`..`b` between the vertical lines `x = lo`
+/// and `x = hi`, or `None` when none of it is. Ends keep their order.
+fn clip_x(a: (i16, i16), b: (i16, i16), lo: i32, hi: i32) -> Option<((i16, i16), (i16, i16))> {
+    let (ax, ay, bx, by) = (a.0 as i32, a.1 as i32, b.0 as i32, b.1 as i32);
+    if (ax < lo && bx < lo) || (ax > hi && bx > hi) {
+        return None;
+    }
+    let at = |x: i32, from: (i32, i32), to: (i32, i32)| {
+        // Where the segment from `from` to `to` crosses `x`; it spans more than a
+        // pixel across here, since one end is on each side.
+        let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+        (x as i16, (from.1 + dy * (x - from.0) / dx) as i16)
+    };
+    let (p, q) = ((ax, ay), (bx, by));
+    let a2 = if ax < lo {
+        at(lo, p, q)
+    } else if ax > hi {
+        at(hi, p, q)
+    } else {
+        a
+    };
+    let b2 = if bx < lo {
+        at(lo, q, p)
+    } else if bx > hi {
+        at(hi, q, p)
+    } else {
+        b
+    };
+    Some((a2, b2))
 }
 
 /// The nearest depth (SZ) at which the GTE still projects a vertex where it
@@ -301,6 +347,18 @@ static mut PIECE_JOB_COUNT: usize = 0;
 enum EyeReach {
     Clear,
     Cuts,
+    Behind,
+}
+
+/// Where a goal's whole box is against the eye (see `Builder::goals`).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum GoalReach {
+    /// Every corner is clear of the near depth: plain projection.
+    Clear,
+    /// Some of it may reach the eye: test and clip quad by quad.
+    Near,
+    /// None of it can be seen (behind the eye, or outside the view): nothing
+    /// to draw.
     Behind,
 }
 
@@ -1112,13 +1170,32 @@ struct Stand {
     /// U at each grid column, and which end's palette the piece uses.
     u: [u8; 4],
     team: u8,
+    /// Which octagon edge the piece stands on (see [`ApronEdge`]).
+    edge: u8,
 }
+
+/// One octagon edge's apron, as a single quad when the edge can be drawn whole.
+#[derive(Copy, Clone)]
+struct ApronEdge {
+    /// The front edge's two ends at the crowd's foot, then at the ground.
+    top: [Vec3I16; 2],
+    foot: [Vec3I16; 2],
+    centre: (i32, i32, i32),
+    half: (i32, i32, i32),
+}
+static mut APRON_EDGES: [ApronEdge; 8] = [ApronEdge {
+    top: [Vec3I16::ZERO; 2],
+    foot: [Vec3I16::ZERO; 2],
+    centre: (0, 0, 0),
+    half: (0, 0, 0),
+}; 8];
 static mut STANDS: [Stand; STAND_COUNT] = [Stand {
     grid: [[Vec3I16::ZERO; 4]; 3],
     centre: (0, 0, 0),
     half: (0, 0, 0),
     u: [0; 4],
     team: 0,
+    edge: 0,
 }; STAND_COUNT];
 
 /// Lay the stand ring out once at boot. Each octagon vertex moves out along
@@ -1164,6 +1241,18 @@ fn build_stands() {
     for e in 0..8 {
         let (f0, f1) = (mitre(e, STAND_IN), mitre((e + 1) % 8, STAND_IN));
         let (b0, b1) = (mitre(e, STAND_OUT), mitre((e + 1) % 8, STAND_OUT));
+        {
+            let at = |p: (i32, i32), y: i32| Vec3I16::new(p.0 as i16, y as i16, p.1 as i16);
+            let (dx, dz) = ((f1.0 - f0.0).abs(), (f1.1 - f0.1).abs());
+            unsafe {
+                APRON_EDGES[e] = ApronEdge {
+                    top: [at(f0, -STAND_Y_IN), at(f1, -STAND_Y_IN)],
+                    foot: [at(f0, 0), at(f1, 0)],
+                    centre: ((f0.0 + f1.0) / 2, -STAND_Y_IN / 2, (f0.1 + f1.1) / 2),
+                    half: (dx / 2 + 1, STAND_Y_IN / 2 + 1, dz / 2 + 1),
+                };
+            }
+        }
         // Split points along the edge, as fractions of 4096.
         let side = [0, 512, 1024, 1536, 2048, 2560, 3072, 3584, 4096];
         let goal_t = (cx - sim::GOAL_HALF_W) * 4096 / (2 * cx);
@@ -1210,6 +1299,7 @@ fn build_stands() {
                     ),
                     u,
                     team: ((z0 + z1) > 0) as u8,
+                    edge: e as u8,
                 };
             }
             k += 1;
@@ -2440,6 +2530,10 @@ impl ClutLoad {
 /// they carry the teams' colours and a shimmer through the fans.
 static mut CROWD_CLUT_LOAD: [[ClutLoad; 2]; SET_COUNT] =
     [const { [ClutLoad::EMPTY, ClutLoad::EMPTY] }; SET_COUNT];
+/// What each of those packets' palettes was last worked out for: the team
+/// colour and the shimmer's phase, which move rarely, so the sixteen entries
+/// are not rebuilt every frame.
+static mut CROWD_CLUT_KEY: [[Option<(Rgb, u8)>; 2]; SET_COUNT] = [[None; 2]; SET_COUNT];
 
 /// Crowd palette entries that are not team colour (tools/cook-arena's crowd
 /// tile indexes them): seat shadow, tier step, clothes and faces.
@@ -2741,6 +2835,7 @@ pub fn setup() {
     build_lines();
     build_lighting();
     build_car_materials();
+    build_burst();
 }
 
 /// Margin the camera keeps from the walls, so it never clips through one.
@@ -4149,6 +4244,10 @@ static mut WALL_PROFILE: [(i32, i32); PROFILE_LEN] = [(0, 0); PROFILE_LEN];
 /// the upper rail. This preserves one world-space scale through the straight
 /// wall and the roof curve instead of restarting a texture at every band.
 static mut COVER_PROFILE_V: [u8; PROFILE_LEN] = [0; PROFILE_LEN];
+/// How far into the pitch the translucent cover over a goal mouth reaches and
+/// how high it climbs: (lowest and highest inward offset, highest point), over
+/// the crossbar and the rings from the wall top round the roof curve.
+static mut GOAL_COVER_REACH: (i32, i32, i32) = (0, 0, 0);
 
 fn build_meshes() {
     for j in 0..=BALL_LAT {
@@ -4175,9 +4274,16 @@ fn build_meshes() {
         distance += isqrt_i32(dx * dx + dy * dy);
         cover_v[i] = cover_texels(distance).min(COVER_H as u8);
     }
+    let (mut lo, mut hi, mut top) = (0, 0, sim::GOAL_H);
+    for p in &profile[WALL_TOP_RING..] {
+        lo = lo.min(p.0);
+        hi = hi.max(p.0);
+        top = top.max(p.1);
+    }
     unsafe {
         WALL_PROFILE = profile;
         COVER_PROFILE_V = cover_v;
+        GOAL_COVER_REACH = (lo, hi, top);
     }
 }
 
@@ -5344,7 +5450,9 @@ impl Builder<'_> {
         // eight-gon shows them at any range.
         let (near, mid) = if split_view() { (400, 900) } else { (500, 1800) };
         let curve_near = if split_view() { 900 } else { 2200 };
-        let (vx0, vx1, vy0, vy1) = unsafe { (VIEW_MIN_X, VIEW_MAX_X, VIEW_MIN_Y, VIEW_MAX_Y) };
+        let view = unsafe {
+            (VIEW_MIN_X as i32, VIEW_MAX_X as i32, VIEW_MIN_Y as i32, VIEW_MAX_Y as i32)
+        };
         let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
         // Far away a marking seen edge-on is under a pixel thick, and the
         // rasteriser then skips most of its columns: a solid line breaks
@@ -5398,11 +5506,11 @@ impl Builder<'_> {
                 if a.sz == 0 || b.sz == 0 || cc.sz == 0 || dd.sz == 0 {
                     continue;
                 }
-                let min_x = a.sx.min(b.sx).min(cc.sx).min(dd.sx);
-                let max_x = a.sx.max(b.sx).max(cc.sx).max(dd.sx);
-                let min_y = a.sy.min(b.sy).min(cc.sy).min(dd.sy);
-                let max_y = a.sy.max(b.sy).max(cc.sy).max(dd.sy);
-                if max_x < vx0 || min_x >= vx1 || max_y < vy0 || min_y >= vy1 {
+                if !corners_overlap(
+                    [a.sx as i32, b.sx as i32, cc.sx as i32, dd.sx as i32],
+                    [a.sy as i32, b.sy as i32, cc.sy as i32, dd.sy as i32],
+                    view,
+                ) {
                     continue;
                 }
                 count_kept!();
@@ -5912,6 +6020,42 @@ impl Builder<'_> {
         }
     }
 
+    /// The apron between a crowd's foot line (`t0`..`t1`) and the same line at
+    /// the ground (`f0`..`f1`), cut to the width of the view, which is all that
+    /// shows of it and keeps the quad inside what the rasteriser takes whole.
+    /// A straight line in the world is a straight line on the screen, so each
+    /// of the two lines is cut where it crosses the view's sides.
+    fn apron_span(&mut self, t0: (i16, i16), t1: (i16, i16), f0: (i16, i16), f1: (i16, i16)) {
+        let (vx0, vx1) = unsafe { (VIEW_MIN_X as i32 - 64, VIEW_MAX_X as i32 + 64) };
+        let inside = |x: i16| (vx0..=vx1).contains(&(x as i32));
+        let (t0, t1, f0, f1) = if inside(t0.0) && inside(t1.0) && inside(f0.0) && inside(f1.0) {
+            // Nothing to cut: all four ends are already within the view's width.
+            (t0, t1, f0, f1)
+        } else {
+            let (Some((t0, t1)), Some((f0, f1))) =
+                (clip_x(t0, t1, vx0, vx1), clip_x(f0, f1, vx0, vx1))
+            else {
+                return;
+            };
+            (t0, t1, f0, f1)
+        };
+        let sp = [t0, t1, f0, f1];
+        if quad_overlaps_view(&sp) && gpu_draws_whole(&sp) {
+            self.apron_quad(sp);
+        }
+    }
+
+    fn apron_quad(&mut self, sp: [(i16, i16); 4]) {
+        if let Some(q) = self
+            .arena
+            .push(QuadGouraud::new(sp, [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM]))
+        {
+            self.ot.add_packet(STAND_SLOT, q);
+        } else {
+            count_overflow!();
+        }
+    }
+
     /// The stands behind the enclosure. A near piece is drawn from its full
     /// three-by-two grid, the way near wall spans are split, so a piece
     /// beside the camera keeps the part in front of the near plane and the
@@ -5928,6 +6072,56 @@ impl Builder<'_> {
             ),
             STAND_TINT_OUT,
         ];
+        // The apron first, a whole edge at a time: the crowd's foot dropped to
+        // the ground, so no sky shows under it. An edge that runs behind the
+        // lens is cut where it crosses the depth the GTE projects true, so one
+        // quad still covers what is in front.
+        const NEAR: i32 = GTE_TRUE_SZ + 8;
+        for edge in unsafe { APRON_EDGES.iter() } {
+            if !cull.visible_box(edge.centre, cull.extents(edge.half)) {
+                continue;
+            }
+            let mut pts = [edge.top[0], edge.top[1], edge.foot[0], edge.foot[1]];
+            let depth = |p: Vec3I16| {
+                Cull::dot(
+                    cull.fwd,
+                    (p.x as i32 - cull.pos.0, p.y as i32 - cull.pos.1, p.z as i32 - cull.pos.2),
+                )
+            };
+            let d = [depth(pts[0]), depth(pts[1]), depth(pts[2]), depth(pts[3])];
+            let (end0, end1) = (d[0].min(d[2]) <= NEAR, d[1].min(d[3]) <= NEAR);
+            if end0 && end1 {
+                continue;
+            }
+            // How far along a line, from its end `a` (depth `da`) to its end `b`
+            // (depth `db`), the depth reaches NEAR; Q12.
+            let cut = |da: i32, db: i32| ((NEAR - da) * 4096 / (db - da).max(1)).clamp(0, 4096);
+            let lerp = |a: Vec3I16, b: Vec3I16, t: i32| {
+                Vec3I16::new(
+                    (a.x as i32 + (((b.x as i32 - a.x as i32) * t) >> 12)) as i16,
+                    (a.y as i32 + (((b.y as i32 - a.y as i32) * t) >> 12)) as i16,
+                    (a.z as i32 + (((b.z as i32 - a.z as i32) * t) >> 12)) as i16,
+                )
+            };
+            if end0 {
+                let t = cut(d[0], d[1]).max(cut(d[2], d[3]));
+                (pts[0], pts[2]) = (lerp(pts[0], pts[1], t), lerp(pts[2], pts[3], t));
+            } else if end1 {
+                let t = cut(d[1], d[0]).max(cut(d[3], d[2]));
+                (pts[1], pts[3]) = (lerp(pts[1], pts[0], t), lerp(pts[3], pts[2], t));
+            }
+            let t = scene::project_triangle_scheduled(pts[0], pts[1], pts[1]);
+            let f = scene::project_triangle_scheduled(pts[2], pts[3], pts[3]);
+            if t[0].sz == 0 || t[1].sz == 0 || f[0].sz == 0 || f[1].sz == 0 {
+                continue;
+            }
+            self.apron_span(
+                (t[0].sx, t[0].sy),
+                (t[1].sx, t[1].sy),
+                (f[0].sx, f[0].sy),
+                (f[1].sx, f[1].sy),
+            );
+        }
         for st in unsafe { STANDS.iter() } {
             if !cull.visible_box(st.centre, cull.extents(st.half)) {
                 continue;
@@ -6123,6 +6317,17 @@ impl Builder<'_> {
                 continue;
             }
             let gw = sim::GOAL_HALF_W;
+            // Behind the view or off to a side of it, the cover's every band
+            // would be thrown away after its corners were projected.
+            let (reach_lo, reach_hi, reach_top) = unsafe { GOAL_COVER_REACH };
+            let cover_box =
+                cull.extents((gw, (reach_top - sim::GOAL_H) / 2 + 1, (reach_hi - reach_lo) / 2 + 1));
+            if !cull.visible_box(
+                (0, -(sim::GOAL_H + reach_top) / 2, z - sz * (reach_lo + reach_hi) / 2),
+                cover_box,
+            ) {
+                continue;
+            }
             let profile = unsafe { &WALL_PROFILE };
             let profile_v = unsafe { &COVER_PROFILE_V };
             // `build_spans` appends the two end-wall runs for -Z, then the
@@ -6320,6 +6525,17 @@ impl Builder<'_> {
         }
     }
 
+    /// One quad's [`EyeReach`] given its goal's: only a goal that may reach the
+    /// eye is tested corner by corner, and one wholly behind it is skipped.
+    #[inline]
+    fn quad_reach(cull: &Cull, reach: GoalReach, corners: &[(i32, i32, i32); 4]) -> EyeReach {
+        match reach {
+            GoalReach::Clear => EyeReach::Clear,
+            GoalReach::Near => Self::eye_reach(cull, corners),
+            GoalReach::Behind => EyeReach::Behind,
+        }
+    }
+
     /// Queue a goal-box quad for [`Builder::flush_goal_jobs`], which clips it
     /// once the phase is off the scratchpad stack (the clip needs more frame
     /// than the stack has). A quad past the queue's end is dropped, as every
@@ -6365,11 +6581,11 @@ impl Builder<'_> {
     fn goal_quad(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         colors: [Rgb; 4],
     ) {
-        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+        match Self::quad_reach(cull, reach, &corners) {
             EyeReach::Clear => self.quad(corners, colors),
             EyeReach::Cuts => {
                 Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::Flat)
@@ -6381,11 +6597,11 @@ impl Builder<'_> {
     fn goal_quad_flat(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         color: Rgb,
     ) {
-        self.goal_quad(cull, near, corners, [color; 4]);
+        self.goal_quad(cull, reach, corners, [color; 4]);
     }
 
     /// The goal's floor, like the pitch's, is not depth-sorted: it lies under
@@ -6394,11 +6610,11 @@ impl Builder<'_> {
     fn goal_floor(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         colors: [Rgb; 4],
     ) {
-        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+        match Self::quad_reach(cull, reach, &corners) {
             EyeReach::Clear => {
                 if let Some((sp, _)) = project_quad(&corners) {
                     if quad_overlaps_view(&sp) {
@@ -6426,7 +6642,7 @@ impl Builder<'_> {
     fn goal_quad_tex(
         &mut self,
         cull: &Cull,
-        near: bool,
+        reach: GoalReach,
         corners: [(i32, i32, i32); 4],
         uvs: [u16; 4],
         tints: [Rgb; 4],
@@ -6434,7 +6650,7 @@ impl Builder<'_> {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
     ) {
-        match if near { Self::eye_reach(cull, &corners) } else { EyeReach::Clear } {
+        match Self::quad_reach(cull, reach, &corners) {
             EyeReach::Clear => self.quad_tex(corners, uvs, tints, bias, packet, blended),
             EyeReach::Cuts => Self::queue_goal_job(
                 corners,
@@ -6443,6 +6659,24 @@ impl Builder<'_> {
                 Pieces::Net { packet },
             ),
             EyeReach::Behind => {}
+        }
+    }
+
+    /// Where one goal's whole box is against the eye and the view.
+    #[inline(never)]
+    fn goal_reach(cull: &Cull, z_line: i32, back: i32) -> GoalReach {
+        let c = (0, -sim::GOAL_H / 2, (z_line + back) / 2);
+        let e = cull.extents((sim::GOAL_HALF_W, sim::GOAL_H / 2, sim::GOAL_DEPTH / 2));
+        // Wholly behind the eye, or off to a side or above or below the view:
+        // nothing of the box can show.
+        if !cull.visible_box(c, e) {
+            return GoalReach::Behind;
+        }
+        let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
+        if Cull::dot(cull.fwd, d) - e[0] <= GTE_TRUE_SZ + 8 {
+            GoalReach::Near
+        } else {
+            GoalReach::Clear
         }
     }
 
@@ -6457,12 +6691,7 @@ impl Builder<'_> {
             let back = z_line + sim::GOAL_DEPTH * z_line.signum();
             // Can any of this goal's box reach the eye? Its nearest point is no
             // nearer than the box's centre less its reach along the view.
-            let near = {
-                let c = (0, -sim::GOAL_H / 2, (z_line + back) / 2);
-                let reach = cull.extents((sim::GOAL_HALF_W, sim::GOAL_H / 2, sim::GOAL_DEPTH / 2))[0];
-                let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-                Cull::dot(cull.fwd, d) - reach <= GTE_TRUE_SZ + 8
-            };
+            let reach = Self::goal_reach(&cull, z_line, back);
             // There used to be a guard here that skipped this whole box when
             // the camera was inside the goal, on the grounds that an unclipped
             // quad straddling the eye becomes a screen-wide slab. It was
@@ -6473,156 +6702,164 @@ impl Builder<'_> {
             // it feared cannot happen now anyway, since `quad_biased` clips
             // the near plane.
             let (gw, gh) = (sim::GOAL_HALF_W, -sim::GOAL_H);
-            // The box behind the net, lit in the team's colour from inside.
-            // It used to be near black: the team colour lived only on the
-            // frame, and at the far end of the pitch the goal was the
-            // darkest thing on screen. Rocket League's goal is the brightest
-            // thing at its end of the arena. A fraction of orange is brown,
-            // so the box is never less than a third of the signal colour and
-            // the white net and the hot frame are in front of it.
-            let glow = |n: i32| shade(color, n, 16);
-            self.goal_quad(
-                &cull,
-                near,
-                [
-                    (-gw, 0, back),
-                    (gw, 0, back),
-                    (-gw, gh, back),
-                    (gw, gh, back),
-                ],
-                [
-                    glow(GOAL_BACK_LO),
-                    glow(GOAL_BACK_LO),
-                    glow(GOAL_BACK_HI),
-                    glow(GOAL_BACK_HI),
-                ],
-            );
-            for &sx in &[-1i32, 1] {
-                let x = sx * gw;
+            // A box wholly behind the eye shows nothing: not even its colours are
+            // worked out.
+            'boxed: {
+                if reach == GoalReach::Behind {
+                    break 'boxed;
+                }
+                // The box behind the net, lit in the team's colour from inside.
+                // It used to be near black: the team colour lived only on the
+                // frame, and at the far end of the pitch the goal was the
+                // darkest thing on screen. Rocket League's goal is the brightest
+                // thing at its end of the arena. A fraction of orange is brown,
+                // so the box is never less than a third of the signal colour and
+                // the white net and the hot frame are in front of it.
+                let glow = |n: i32| shade(color, n, 16);
                 self.goal_quad(
                     &cull,
-                    near,
-                    [(x, 0, z_line), (x, 0, back), (x, gh, z_line), (x, gh, back)],
+                    reach,
                     [
-                        glow(GOAL_SIDE - 2),
-                        glow(GOAL_SIDE),
-                        glow(GOAL_BACK_HI - 2),
+                        (-gw, 0, back),
+                        (gw, 0, back),
+                        (-gw, gh, back),
+                        (gw, gh, back),
+                    ],
+                    [
+                        glow(GOAL_BACK_LO),
+                        glow(GOAL_BACK_LO),
+                        glow(GOAL_BACK_HI),
                         glow(GOAL_BACK_HI),
                     ],
                 );
-            }
-            self.goal_quad_flat(
-                &cull,
-                near,
-                [
-                    (-gw, gh, z_line),
-                    (gw, gh, z_line),
-                    (-gw, gh, back),
-                    (gw, gh, back),
-                ],
-                glow(GOAL_BACK_HI - 1),
-            );
-            self.goal_floor(
-                &cull,
-                near,
-                [
-                    (-gw, 0, z_line),
-                    (gw, 0, z_line),
-                    (-gw, 0, back),
-                    (gw, 0, back),
-                ],
-                [
-                    glow(GOAL_FLOOR - 2),
-                    glow(GOAL_FLOOR - 2),
-                    glow(GOAL_FLOOR),
-                    glow(GOAL_FLOOR),
-                ],
-            );
-            // The netting itself: back wall, both sides and the roof, hung well
-            // inside the box so the dark panels read as depth behind it rather
-            // than as the net's own colour.
-            //
-            // One quad a face. The holes cost nothing: the GPU discards a texel
-            // that resolves to 0x0000 through `COVER_CLUT`, so this is netting
-            // without a strand of geometry per thread, and because the mesh block
-            // is big enough for the widest face there is nothing to tile and no
-            // seam to line up.
-            //
-            // Hung 60 uu clear of the box, not snug against it. The ordering
-            // table quantises depth into slots about 27 uu apart out here and
-            // prepends within a slot, so a net inset by less than a slot lands in
-            // the same bucket as the panel behind it and draws first, which is to
-            // say underneath. That showed netting across the top only, where
-            // perspective happened to separate the two.
-            let hang = 60;
-            let inset = hang * z_line.signum();
-            let (nw, nh) = (gw - hang, gh + hang);
-            let far = back - inset;
+                for &sx in &[-1i32, 1] {
+                    let x = sx * gw;
+                    self.goal_quad(
+                        &cull,
+                        reach,
+                        [(x, 0, z_line), (x, 0, back), (x, gh, z_line), (x, gh, back)],
+                        [
+                            glow(GOAL_SIDE - 2),
+                            glow(GOAL_SIDE),
+                            glow(GOAL_BACK_HI - 2),
+                            glow(GOAL_BACK_HI),
+                        ],
+                    );
+                }
+                self.goal_quad_flat(
+                    &cull,
+                    reach,
+                    [
+                        (-gw, gh, z_line),
+                        (gw, gh, z_line),
+                        (-gw, gh, back),
+                        (gw, gh, back),
+                    ],
+                    glow(GOAL_BACK_HI - 1),
+                );
+                self.goal_floor(
+                    &cull,
+                    reach,
+                    [
+                        (-gw, 0, z_line),
+                        (gw, 0, z_line),
+                        (-gw, 0, back),
+                        (gw, 0, back),
+                    ],
+                    [
+                        glow(GOAL_FLOOR - 2),
+                        glow(GOAL_FLOOR - 2),
+                        glow(GOAL_FLOOR),
+                        glow(GOAL_FLOOR),
+                    ],
+                );
+                // The netting itself: back wall, both sides and the roof, hung well
+                // inside the box so the dark panels read as depth behind it rather
+                // than as the net's own colour.
+                //
+                // One quad a face. The holes cost nothing: the GPU discards a texel
+                // that resolves to 0x0000 through `COVER_CLUT`, so this is netting
+                // without a strand of geometry per thread, and because the mesh block
+                // is big enough for the widest face there is nothing to tile and no
+                // seam to line up.
+                //
+                // Hung 60 uu clear of the box, not snug against it. The ordering
+                // table quantises depth into slots about 27 uu apart out here and
+                // prepends within a slot, so a net inset by less than a slot lands in
+                // the same bucket as the panel behind it and draws first, which is to
+                // say underneath. That showed netting across the top only, where
+                // perspective happened to separate the two.
+                let hang = 60;
+                let inset = hang * z_line.signum();
+                let (nw, nh) = (gw - hang, gh + hang);
+                let far = back - inset;
 
-            // Each face samples the mesh in proportion to its own size, so the
-            // holes are square and a strand is the same distance from its
-            // neighbour whichever face it is on. Half-open: a span of n texels is
-            // `u0 .. u0 + n`, not `u0 .. u0 + n - 1`, which samples one fewer and
-            // stretches them over the full width.
-            let across = net_texels(2 * gw);
-            let tall = net_texels(sim::GOAL_H);
-            let deep = net_texels(sim::GOAL_DEPTH);
-            let patch = |w: u8, h: u8| {
-                [
-                    uvw(NET_U0, NET_V0),
-                    uvw(NET_U0 + w, NET_V0),
-                    uvw(NET_U0, NET_V0 + h),
-                    uvw(NET_U0 + w, NET_V0 + h),
-                ]
-            };
+                // Each face samples the mesh in proportion to its own size, so the
+                // holes are square and a strand is the same distance from its
+                // neighbour whichever face it is on. Half-open: a span of n texels is
+                // `u0 .. u0 + n`, not `u0 .. u0 + n - 1`, which samples one fewer and
+                // stretches them over the full width.
+                let across = net_texels(2 * gw);
+                let tall = net_texels(sim::GOAL_H);
+                let deep = net_texels(sim::GOAL_DEPTH);
+                let patch = |w: u8, h: u8| {
+                    [
+                        uvw(NET_U0, NET_V0),
+                        uvw(NET_U0 + w, NET_V0),
+                        uvw(NET_U0, NET_V0 + h),
+                        uvw(NET_U0 + w, NET_V0 + h),
+                    ]
+                };
 
-            // Shaded over the whole face rather than per patch, and white: a
-            // near-white strand modulated by the team colour made yellow string
-            // in one goal and blue in the other.
-            let net_hi = shade(COVER_STRAND, 3400, 4096);
-            let net_lo = shade(COVER_STRAND, 2400, 4096);
+                // Shaded over the whole face rather than per patch, and white: a
+                // near-white strand modulated by the team colour made yellow string
+                // in one goal and blue in the other.
+                let net_hi = shade(COVER_STRAND, 3400, 4096);
+                let net_lo = shade(COVER_STRAND, 2400, 4096);
 
-            // Back.
-            self.goal_quad_tex(
-                &cull,
-                near,
-                [(-nw, 0, far), (nw, 0, far), (-nw, nh, far), (nw, nh, far)],
-                patch(across, tall),
-                [net_lo, net_lo, net_hi, net_hi],
-                0,
-                COVER_PACKET,
-                true,
-            );
-            // Sides.
-            for &sx in &[-1i32, 1] {
-                let x = sx * nw;
+                // Back.
                 self.goal_quad_tex(
                     &cull,
-                    near,
-                    [(x, 0, z_line), (x, 0, far), (x, nh, z_line), (x, nh, far)],
-                    patch(deep, tall),
+                    reach,
+                    [(-nw, 0, far), (nw, 0, far), (-nw, nh, far), (nw, nh, far)],
+                    patch(across, tall),
                     [net_lo, net_lo, net_hi, net_hi],
                     0,
                     COVER_PACKET,
                     true,
                 );
+                // Sides.
+                for &sx in &[-1i32, 1] {
+                    let x = sx * nw;
+                    self.goal_quad_tex(
+                        &cull,
+                        reach,
+                        [(x, 0, z_line), (x, 0, far), (x, nh, z_line), (x, nh, far)],
+                        patch(deep, tall),
+                        [net_lo, net_lo, net_hi, net_hi],
+                        0,
+                        COVER_PACKET,
+                        true,
+                    );
+                }
+                // Roof.
+                self.goal_quad_tex(
+                    &cull,
+                    reach,
+                    [
+                        (-nw, nh, z_line),
+                        (nw, nh, z_line),
+                        (-nw, nh, far),
+                        (nw, nh, far),
+                    ],
+                    patch(across, deep),
+                    [net_hi; 4],
+                    0,
+                    COVER_PACKET,
+                    true,
+                );
+
             }
-            // Roof.
-            self.goal_quad_tex(
-                &cull,
-                near,
-                [
-                    (-nw, nh, z_line),
-                    (nw, nh, z_line),
-                    (-nw, nh, far),
-                    (nw, nh, far),
-                ],
-                patch(across, deep),
-                [net_hi; 4],
-                0,
-                COVER_PACKET,
-                true,
-            );
 
             // Hot posts and crossbar, each inside a halo of the team's
             // light, and a glowing strip along the goal line.
@@ -7884,7 +8121,11 @@ fn build_view(
                 for (seat, clut) in CROWD_CLUTS.iter().enumerate() {
                     let load = &mut CROWD_CLUT_LOAD[SET][seat];
                     load.xy = ((clut.y() as u32) << 16) | clut.x() as u32;
-                    load.data = crowd_clut(seat, CAMERA_TICK);
+                    let key = Some((seat_signal(seat), (CAMERA_TICK / 6 % 3) as u8));
+                    if CROWD_CLUT_KEY[SET][seat] != key {
+                        load.data = crowd_clut(seat, CAMERA_TICK);
+                        CROWD_CLUT_KEY[SET][seat] = key;
+                    }
                     b.ot.add_raw(
                         SKY_SLOT,
                         core::ptr::from_mut(load).cast(),
@@ -8598,6 +8839,90 @@ const FX_NEAR: i32 = 700;
 const FX_HOT: Rgb = (255, 246, 214);
 const FX_FLAME: Rgb = (240, 128, 34);
 
+/// What a blast works out from its particle's index and nothing else, done
+/// once at boot: the trigonometry of every direction and the divisions by a
+/// particle's own life. The detail variant is split screen's half set.
+struct BurstTables {
+    /// sin and cos of each puff's heading.
+    smoke: [[(i32, i32); FX_SMOKE_COUNT as usize]; 2],
+    /// A fireball's direction: sin(yaw) * cos(elev) and cos(yaw) * cos(elev)
+    /// (Q12), and sin(elev).
+    fire: [[(i32, i32, i32); FX_FIRE_COUNT as usize]; 2],
+    /// A spark's direction on the three axes (Q12).
+    spark: [[(i32, i32, i32); FX_SPARK_COUNT as usize]; 2],
+    /// `t * 16 / life` and `80 * t / life` for each fireball, by its age `t`.
+    fire_q: [[u8; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    fire_r: [[u8; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    /// `2^20 / life` rounded up, for [`shade_life`].
+    fire_inv: [u32; FX_FIRE_COUNT as usize],
+    spark_inv: [u32; FX_SPARK_COUNT as usize],
+}
+/// The longest fireball life, plus one: `26 + (i * 5) % 15` is at most 40.
+const FX_FIRE_LIFE_MAX: usize = 41;
+static mut BURST: BurstTables = BurstTables {
+    smoke: [[(0, 0); FX_SMOKE_COUNT as usize]; 2],
+    fire: [[(0, 0, 0); FX_FIRE_COUNT as usize]; 2],
+    spark: [[(0, 0, 0); FX_SPARK_COUNT as usize]; 2],
+    fire_q: [[0; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    fire_r: [[0; FX_FIRE_LIFE_MAX]; FX_FIRE_COUNT as usize],
+    fire_inv: [0; FX_FIRE_COUNT as usize],
+    spark_inv: [0; FX_SPARK_COUNT as usize],
+};
+
+const fn fx_fire_life(i: i32) -> i32 {
+    26 + (i * 5) % 15
+}
+const fn fx_spark_life(i: i32) -> i32 {
+    16 + (i * 7) % 14
+}
+
+fn build_burst() {
+    let b = unsafe { &mut *core::ptr::addr_of_mut!(BURST) };
+    for (v, half) in [false, true].into_iter().enumerate() {
+        let puffs = if half { FX_SMOKE_COUNT / 2 + 1 } else { FX_SMOKE_COUNT };
+        for i in 0..puffs {
+            let yaw = ((4096 * i / puffs) + 700) as u16;
+            b.smoke[v][i as usize] = (sin_q12(yaw), cos_q12(yaw));
+        }
+        let balls = if half { FX_FIRE_COUNT / 2 } else { FX_FIRE_COUNT };
+        for i in 0..balls {
+            let yaw = ((4096 * i / balls) + ((i * 997) & 511)) as u16;
+            let elev = (300 + ((i * 331) & 511)) as u16;
+            let (ce, se) = (cos_q12(elev), sin_q12(elev));
+            b.fire[v][i as usize] = ((sin_q12(yaw) * ce) >> 12, (cos_q12(yaw) * ce) >> 12, se);
+        }
+        let sparks = if half { FX_SPARK_COUNT / 2 } else { FX_SPARK_COUNT };
+        for i in 0..sparks {
+            let yaw = ((4096 * i / sparks) + ((i * 1013) & 255)) as u16;
+            let elev = (((i * 577) & 1023) + 96) as u16;
+            let (ce, se) = (cos_q12(elev), sin_q12(elev));
+            b.spark[v][i as usize] = ((sin_q12(yaw) * ce) >> 12, se, (cos_q12(yaw) * ce) >> 12);
+        }
+    }
+    for i in 0..FX_FIRE_COUNT {
+        let life = fx_fire_life(i);
+        for t in 0..life {
+            b.fire_q[i as usize][t as usize] = (t * 16 / life) as u8;
+            b.fire_r[i as usize][t as usize] = (80 * t / life) as u8;
+        }
+        b.fire_inv[i as usize] = ((1 << 20) + life as u32 - 1) / life as u32;
+    }
+    for i in 0..FX_SPARK_COUNT {
+        let life = fx_spark_life(i) as u32;
+        b.spark_inv[i as usize] = ((1 << 20) + life - 1) / life;
+    }
+}
+
+/// [`shade`] by `num / life` with `inv` = `2^20 / life` rounded up: the same
+/// result for every `channel * num` below 2^20 / life (the rounding error of
+/// `inv` is under `life`, so the product's error stays under one), which a
+/// life of at most 40 and a channel times a numerator of at most 255 * 80
+/// never leave, and with no divide.
+fn shade_life(c: Rgb, num: i32, inv: u32) -> Rgb {
+    let ch = |v: u8| ((v as u32 * num as u32 * inv) >> 20).min(255) as u8;
+    (ch(c.0), ch(c.1), ch(c.2))
+}
+
 impl Builder<'_> {
     /// A camera-facing glow of `radius` uu, its screen half-size capped.
     #[allow(clippy::too_many_arguments)]
@@ -8698,17 +9023,18 @@ impl Builder<'_> {
         // fire so the fire burns in front of it.
         let puffs = if half_detail { FX_SMOKE_COUNT / 2 + 1 } else { FX_SMOKE_COUNT };
         for i in 0..puffs {
+            let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = 4 + i * 3;
             let t = age - born;
             if t < 0 || t >= FX_SMOKE_LIFE {
                 continue;
             }
-            let yaw = ((4096 * i / puffs) + 700) as u16;
+            let (sin_yaw, cos_yaw) = tab.smoke[half_detail as usize][i as usize];
             let travel = s(26) * t * (2 * FX_SMOKE_LIFE - t) / (2 * FX_SMOKE_LIFE) / 8;
             let p = (
-                origin.0 + ((sin_q12(yaw) * travel) >> 12),
+                origin.0 + ((sin_yaw * travel) >> 12),
                 origin.1 - s(50) - s(12) * t / 2,
-                origin.2 + ((cos_q12(yaw) * travel) >> 12),
+                origin.2 + ((cos_yaw * travel) >> 12),
             );
             let radius = s(40 + 100 * t / FX_SMOKE_LIFE);
             // In over six ticks, out over the last two thirds.
@@ -8720,31 +9046,30 @@ impl Builder<'_> {
         // Fireballs: swell, drift out and up, and cool.
         let balls = if half_detail { FX_FIRE_COUNT / 2 } else { FX_FIRE_COUNT };
         for i in 0..balls {
+            let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = i % 3;
-            let life = 26 + (i * 5) % 15;
+            let life = fx_fire_life(i);
             let t = age - born;
             if t < 0 || t >= life {
                 continue;
             }
-            let yaw = ((4096 * i / balls) + ((i * 997) & 511)) as u16;
-            let elev = (300 + ((i * 331) & 511)) as u16;
-            let (ce, se) = (cos_q12(elev), sin_q12(elev));
+            let (dir_x, dir_z, sin_elev) = tab.fire[half_detail as usize][i as usize];
             let speed = s(9 + (i % 4) * 3);
             let travel = speed * t * (2 * life - t) / (2 * life);
             let p = (
-                origin.0 + ((((sin_q12(yaw) * ce) >> 12) * travel) >> 12),
-                origin.1 - ((se * travel) >> 12) - s(10) - s(2) * t,
-                origin.2 + ((((cos_q12(yaw) * ce) >> 12) * travel) >> 12),
+                origin.0 + ((dir_x * travel) >> 12),
+                origin.1 - ((sin_elev * travel) >> 12) - s(10) - s(2) * t,
+                origin.2 + ((dir_z * travel) >> 12),
             );
-            let radius = s(40 + 80 * t / life);
+            let radius = s(40 + tab.fire_r[i as usize][t as usize] as i32);
             // White for the first sixth, flame by half, then out to nothing.
-            let q = t * 16 / life;
+            let q = tab.fire_q[i as usize][t as usize] as i32;
             let tint = if q < 3 {
                 mix(FX_HOT, FX_FLAME, q * 5)
             } else if q < 8 {
                 mix(mix(FX_FLAME, colour, 5), FX_FLAME, 16 - (q - 3) * 3)
             } else {
-                shade(mix(FX_FLAME, colour, 6), (life - t) * 2, life)
+                shade_life(mix(FX_FLAME, colour, 6), (life - t) * 2, tab.fire_inv[i as usize])
             };
             self.fx_sprite(p, radius, cap, shade(tint, 3, 4), GLOW_PACKET, -10);
         }
@@ -8752,16 +9077,14 @@ impl Builder<'_> {
         // Sparks: fast, eased out, pulled down hard.
         let sparks = if half_detail { FX_SPARK_COUNT / 2 } else { FX_SPARK_COUNT };
         for i in 0..sparks {
+            let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = (i * 3) % 4;
-            let life = 16 + (i * 7) % 14;
+            let life = fx_spark_life(i);
             let t = age - born;
             if t < 0 || t >= life {
                 continue;
             }
-            let yaw = ((4096 * i / sparks) + ((i * 1013) & 255)) as u16;
-            let elev = (((i * 577) & 1023) + 96) as u16;
-            let (ce, se) = (cos_q12(elev), sin_q12(elev));
-            let dir = ((sin_q12(yaw) * ce) >> 12, se, (cos_q12(yaw) * ce) >> 12);
+            let dir = tab.spark[half_detail as usize][i as usize];
             let speed = s(40 - ((i * 7) & 15));
             let at = |t: i32| {
                 let travel = speed * t * ((2 * life) - t) / (2 * life);
@@ -8773,7 +9096,11 @@ impl Builder<'_> {
                 )
             };
             let left = life - t;
-            let tint = shade(mix(colour, FX_HOT, 6 + 10 * left / life), (left * 3).min(life), life);
+            let tint = shade_life(
+                mix(colour, FX_HOT, 6 + 10 * left / life),
+                (left * 3).min(life),
+                tab.spark_inv[i as usize],
+            );
             self.fx_streak(at(t), at((t - 3).max(0)), s(7), tint);
         }
 
