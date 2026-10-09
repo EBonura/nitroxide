@@ -2793,6 +2793,12 @@ fn camera(
     split: bool,
     camera_slot: usize,
 ) -> View {
+    // Headings are rebuilt from vectors here, and the SDK's octant-linear
+    // `atan2_q12` is off by up to four degrees mid-octant: through a held turn
+    // that error rises and falls with the car's yaw and swings the view about
+    // the car. The pitch angles below keep the SDK's, which the pitch limits
+    // were tuned against and which depends on a slope that does not sweep.
+    use sim::angle::atan2_q12_fine as atan2_fine;
     let camera_slot = camera_slot.min(1);
     let previous = unsafe { CHASE_CAMERAS[camera_slot] };
     let now = unsafe { CAMERA_TICK };
@@ -2815,9 +2821,9 @@ fn camera(
     // own heading until they separate again.
     let close = dx * dx + dz * dz <= CAM_MIN_SEP * CAM_MIN_SEP;
     let follow_yaw = if !ball_cam || close {
-        atan2_q12(car_fwd.x, car_fwd.z)
+        atan2_fine(car_fwd.x, car_fwd.z)
     } else {
-        atan2_q12(dx, dz)
+        atan2_fine(dx, dz)
     };
     #[cfg(feature = "boot-wheels")]
     // Three-quarter inspection view: exposes the front steer angle and the
@@ -2956,14 +2962,14 @@ fn camera(
     }
     let pitch_min = CAM_PITCH_MIN + (((CAM_WALL_PITCH_MIN - CAM_PITCH_MIN) * wall_amount) >> 12);
     let desired_pitch = signed.clamp(pitch_min, CAM_PITCH_MAX);
-    let mut view_yaw = atan2_q12(aim_x - cx, aim_z - cz);
+    let mut view_yaw = atan2_fine(aim_x - cx, aim_z - cz);
     if ball_cam && hold_car {
         // The end-wall clamp slides the camera sideways at kickoff to retain a
         // useful boom length. On a 63-degree FOV, the resulting car-to-ball
         // subject angle is wider than either subject's safe screen margin.
         // Bias the view away from the ball only as much as needed to retain
         // the car; once the boom is no longer wall-limited this becomes zero.
-        let car_yaw = atan2_q12(car_x - cx, car_z - cz);
+        let car_yaw = atan2_fine(car_x - cx, car_z - cz);
         let delta = ((car_yaw as i32 - view_yaw as i32 + 2048).rem_euclid(4096)) - 2048;
         let shift = (delta.abs() - CAM_BALL_CAR_YAW).max(0);
         view_yaw = (view_yaw as i32 + delta.signum() * shift).rem_euclid(4096) as u16;
