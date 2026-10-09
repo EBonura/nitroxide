@@ -82,6 +82,9 @@ arena-sunset = []
 # Dev: wreck the opponent in front of the camera at kickoff, so a headless
 # capture frames a demolition explosion at a known tick.
 boot-demo-fx = []
+# Dev: keep per-frame camera, tyre-track and draw state in RAM rings
+# (diaglog.rs) for a headless replay to read back with --dump-ram.
+diag-log = []
 
 [[bin]]
 name = "nitroxide"
