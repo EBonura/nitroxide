@@ -3623,8 +3623,9 @@ static mut CAR_NORMAL_Z: [[i16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; 
 static mut CAR_VERT_COUNT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
 /// Triangle indices, decoded the same way and for the same reason: `Mesh::face`
 /// rebuilds three `u16` from six `lbu` behind a stride branch, once per face
-/// per car per view.
-static mut CAR_FACES: [[[u16; 3]; CAR_FACE_CAP]; CAR_SLOTS] = [[[0; 3]; CAR_FACE_CAP]; CAR_SLOTS];
+/// per car per view. Two words a face, `a | b << 16` and `c`: three halfword
+/// loads were three main-RAM stalls, this is two.
+static mut CAR_FACES: [[[u32; 2]; CAR_FACE_CAP]; CAR_SLOTS] = [[[0; 2]; CAR_FACE_CAP]; CAR_SLOTS];
 /// Depth-sorted face keys for one car draw (`submit_car_faces`).
 static mut CAR_SORT_KEYS: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
 static mut CAR_SORT_SPARE: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
@@ -3656,7 +3657,7 @@ fn decode_car_geometry(blob: &[u8], which: usize) {
         if ia as usize >= count || ib as usize >= count || ic as usize >= count {
             continue;
         }
-        unsafe { CAR_FACES[which][kept] = [ia, ib, ic] };
+        unsafe { CAR_FACES[which][kept] = [ia as u32 | (ib as u32) << 16, ic as u32] };
         kept += 1;
     }
     unsafe { CAR_FACE_COUNT[which] = kept as u16 };
@@ -3936,7 +3937,7 @@ fn sort_by_depth(keys: &mut [u32], lo: u32, hi: u32) -> &[u32] {
 }
 
 fn submit_car_faces<'a>(
-    faces: &[[u16; 3]],
+    faces: &[[u32; 2]],
     projected: &[CarLit],
     tris: &mut PrimitiveArena<'a, TriGouraud>,
     ot: &mut OtFrame<'a, OT_DEPTH>,
@@ -3969,13 +3970,15 @@ fn submit_car_faces<'a>(
     debug_assert!(faces
         .iter()
         .take(CAR_FACE_CAP)
-        .all(|f| f.iter().all(|&i| (i as usize) < projected.len())));
+        .all(|f| {
+            [f[0] & 0xffff, f[0] >> 16, f[1]].iter().all(|&i| (i as usize) < projected.len())
+        }));
     for face in faces.iter().take(CAR_FACE_CAP) {
         let (a, b, c) = unsafe {
             (
-                projected.get_unchecked(face[0] as usize),
+                projected.get_unchecked((face[0] & 0xffff) as usize),
+                projected.get_unchecked((face[0] >> 16) as usize),
                 projected.get_unchecked(face[1] as usize),
-                projected.get_unchecked(face[2] as usize),
             )
         };
         if car_back_facing(a, b, c) {
