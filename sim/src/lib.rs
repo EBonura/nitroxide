@@ -701,6 +701,10 @@ fn turned(v: V3) -> V3 {
 
 /// Ticks the world holds still after a goal before kickoff.
 pub const GOAL_FREEZE_TICKS: u16 = 150;
+/// Ticks every car and the ball stay parked on their kickoff spots after a
+/// goal, before play is released: Rocket League's three-two-one, a second a
+/// number. Nothing runs in it, not the clock, the bots or either pad.
+pub const KICKOFF_HOLD_TICKS: u16 = 180;
 /// How close the opponent has to be to the kickoff ball before it burns.
 ///
 /// Symmetric in effect rather than in rule, and only until the launch angle is
@@ -928,7 +932,7 @@ fn damp12(v: i32, num: i32) -> i32 {
 // ---- state -----------------------------------------------------------------
 
 /// The ball.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Ball {
     /// Centre position.
     pub p: V3,
@@ -955,7 +959,7 @@ pub fn spin_rad_per_s(w: V3) -> i32 {
 }
 
 /// The player car.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Car {
     /// Centre position (`CAR_REST_Y` above the floor when parked).
     pub p: V3,
@@ -1054,6 +1058,22 @@ impl Car {
         self.jump_bonus_rem = 0;
         self.jump_sticky_rem = 0;
         self.jump_normal = V3::ZERO;
+    }
+
+    /// A car parked on a spot of the floor, upright, at rest, with a spawn's
+    /// worth of boost and every other field at its default. `x` and `z` are
+    /// in uu. Kickoff and respawn both build their cars here, so there is one
+    /// definition of what a car at the start of a play looks like.
+    fn placed(x: i32, z: i32, yaw: u16) -> Car {
+        Car {
+            p: V3::new(uu(x), uu(CAR_REST_Y), uu(z)),
+            yaw,
+            // RL spawns you with a third of a tank.
+            boost: BOOST_MAX / 3,
+            grounded: true,
+            up: V3::new(0, 4096, 0),
+            ..Car::default()
+        }
     }
 
     /// True while this car is wrecked and waiting to come back, i.e. it is not
@@ -1297,6 +1317,10 @@ pub struct Sim {
     /// which is free play, and is also what the ball-physics tests want: with
     /// it on, anything left alone near the ball gets hit by a car.
     pub opponent_ai: bool,
+    /// Ticks left of the hold after a goal's kickoff (see
+    /// [`KICKOFF_HOLD_TICKS`]); zero while play is live. Counts down
+    /// whatever is on the pads, and the game draws its countdown from it.
+    pub kickoff_hold: u16,
     /// Ticks since the cars were placed for kickoff.
     kickoff_ticks: u8,
     /// What the opponent is currently driving at, held between ticks.
@@ -1365,6 +1389,7 @@ impl Sim {
             demo: false,
             pad_timers: [0; PADS.len()],
             opponent_ai: true,
+            kickoff_hold: 0,
             kickoff_ticks: 0,
             ai_target: AiTarget::None,
             ai_target_ticks: 0,
@@ -1386,65 +1411,43 @@ impl Sim {
         sim
     }
 
-    /// Reset ball and car to kickoff positions, keeping the score and clock.
+    /// Put the ball and both cars back on their kickoff spots, keeping the
+    /// score, the clock and the boost pads.
+    ///
+    /// Everything that is not a score is rebuilt rather than patched: each car
+    /// is a fresh [`Car`] and the ball a fresh [`Ball`] with only the spot
+    /// filled in. A field added to either later is then reset by default, and
+    /// cannot ride across a goal the way `slide` once did, which a list of
+    /// fields to clear could not promise.
     pub fn kickoff(&mut self) {
-        self.ball.p = V3::new(0, uu(BALL_R), 0);
-        self.ball.v = V3::ZERO;
-        // Spin too, or the ball rolls itself off the spot: a spinning ball
-        // standing still is slipping against the floor, and friction turns
-        // that slip into motion. Which is correct, and not what a kickoff is.
-        self.ball.w = V3::ZERO;
-        self.ball.grounded = true;
-        // RL's back-middle kickoff spot.
+        self.ball = Ball {
+            p: V3::new(0, uu(BALL_R), 0),
+            // Spin zero too, or the ball rolls itself off the spot: a
+            // spinning ball standing still is slipping against the floor, and
+            // friction turns that slip into motion. Which is correct, and not
+            // what a kickoff is.
+            grounded: true,
+            ..Ball::default()
+        };
+        // RL's back-middle kickoff spot, facing the ball: +Z from the
+        // back-centre spot, toward the centre spot from the others.
         let (sx, sz) = KICKOFF_SPOTS[self.kickoff_spot % KICKOFF_SPOTS.len()];
-        self.car.p = V3::new(uu(sx), uu(CAR_REST_Y), uu(sz));
-        self.car.v = V3::ZERO;
-        // Facing the ball: +Z from the back-centre spot, toward the centre
-        // spot from the others.
-        self.car.yaw = atan2_q12(-sx, -sz);
-        self.car.boost = BOOST_MAX / 3; // RL spawns you with a third of a tank
-        self.car.grounded = true;
-        self.car.up = V3::new(0, 4096, 0);
-        self.car.steer = 0;
-        self.car.wheel_spin = 0;
-        self.car.suspension = [0; 2];
-        self.car.suspension_velocity = [0; 2];
-
+        let yaw = atan2_q12(-sx, -sz);
+        self.car = Car::placed(sx, sz, yaw);
         // Mirrored: same spot at the other end, facing back down the pitch.
-        self.opponent.p = V3::new(-uu(sx), uu(CAR_REST_Y), -uu(sz));
-        self.opponent.v = V3::ZERO;
-        self.opponent.yaw = self.car.yaw.wrapping_add(2048); // half a turn round
-        self.opponent.boost = BOOST_MAX / 3;
-        self.opponent.grounded = true;
-        self.opponent.up = V3::new(0, 4096, 0);
-        self.opponent.steer = 0;
-        self.opponent.wheel_spin = 0;
-        self.opponent.suspension = [0; 2];
-        self.opponent.suspension_velocity = [0; 2];
+        self.opponent = Car::placed(-sx, -sz, yaw.wrapping_add(2048));
         self.kickoff_ticks = 0;
-
-        // Everybody is back for a kickoff, including whoever was wrecked when
-        // the goal went in. Serving out a demolition across the restart would
-        // hand the other side the kickoff for free.
-        for car in [&mut self.car, &mut self.opponent] {
-            car.demo_timer = 0;
-            car.supersonic = false;
-            car.sonic_grace = 0;
-            car.bump_cool = 0;
-            // And everything that describes what the car was in the middle of
-            // doing when the goal went in. A car that was mid-dodge, mid-jump
-            // or still turning in the air would otherwise arrive at the
-            // restart doing it, which is both wrong and invisible until it
-            // drives off the spot sideways.
-            car.clear_jump_state();
-            car.dodge_window = 0;
-            car.dodge_timer = 0;
-            car.dodge_dir = 0;
-            car.boosting = false;
-            car.boost_ticks = 0;
-            car.boost_rem = 0;
-            car.air_throttle_rem = 0;
-        }
+        self.kickoff_hold = 0;
+        // And the bots' plans. A target held from before the goal, or an
+        // escape latched in the net, would have the car start its restart
+        // carrying out a decision about a ball that is no longer there. Their
+        // scatter seeds stay: they are a stream, and a replay needs it whole.
+        self.ai_target = AiTarget::None;
+        self.ai_target_ticks = 0;
+        self.ai_escape = 0;
+        self.blue_bot.target = AiTarget::None;
+        self.blue_bot.target_ticks = 0;
+        self.blue_bot.escape = 0;
     }
 
     /// What the opponent wants to do this tick.
@@ -1948,6 +1951,7 @@ impl Sim {
                 // match still reset exactly as before.
                 if !self.goal_limit_reached() {
                     self.kickoff();
+                    self.kickoff_hold = KICKOFF_HOLD_TICKS;
                 }
                 return;
             }
@@ -1970,6 +1974,14 @@ impl Sim {
                     Self::tick_car(car, &Input::default(), gravity);
                 }
             }
+            return;
+        }
+        // Parked for the countdown: every car and the ball sit on their spots
+        // and nothing at all advances, so both sides leave the line together
+        // on the tick the number runs out. Gravity's remainder is not spent
+        // either, which keeps a replayed input stream continuous.
+        if self.kickoff_hold > 0 {
+            self.kickoff_hold -= 1;
             return;
         }
         if matches!(self.win_condition, WinCondition::TimeLimit(_)) && self.clock > 0 {
@@ -2091,17 +2103,9 @@ impl Sim {
     /// A car as it arrives on the pitch: at its own end, upright, facing the
     /// middle, with a spawn's worth of boost.
     fn spawned(team: Team) -> Car {
-        let (home, yaw) = match team {
-            Team::Blue => (-uu(4608), 0),
-            Team::Orange => (uu(4608), 2048),
-        };
-        Car {
-            p: V3::new(0, uu(CAR_REST_Y), home),
-            yaw,
-            up: V3::new(0, 4096, 0),
-            grounded: true,
-            boost: BOOST_MAX / 3,
-            ..Car::default()
+        match team {
+            Team::Blue => Car::placed(0, -4608, 0),
+            Team::Orange => Car::placed(0, 4608, 2048),
         }
     }
 
@@ -4222,6 +4226,248 @@ mod tests {
             V3::new(0, uu(BALL_R), 0),
             "kickoff should recentre the ball"
         );
+    }
+
+    /// A car with every field away from its rest value, written out in full
+    /// with no `..Default`: a field added to [`Car`] stops this compiling until
+    /// it is given a dirty value here, and the reset tests below then prove
+    /// the reset clears it.
+    fn scrambled_car(x: i32) -> Car {
+        Car {
+            p: V3::new(uu(x), uu(900), uu(-1234)),
+            v: V3::new(1111, -222, 3333),
+            yaw: 777,
+            boost: 12_345,
+            grounded: false,
+            boosting: true,
+            steer: -900,
+            slide: 1024,
+            wheel_spin: 4321,
+            suspension: [-300, 250],
+            suspension_velocity: [41, -52],
+            jumps_used: 2,
+            dodge_window: 9,
+            dodge_timer: 7,
+            dodge_dir: 1234,
+            supersonic: true,
+            sonic_grace: 33,
+            demo_timer: 0,
+            bump_cool: 5,
+            up: V3::new(4096, 0, 0),
+            jump_slices: 11,
+            jump_min_left: 3,
+            jump_holding: true,
+            jump_bonus_rem: 17,
+            jump_sticky_rem: 19,
+            jump_normal: V3::new(0, 0, 4096),
+            boost_ticks: 6,
+            boost_rem: 21,
+            air_throttle_rem: 8,
+            w_pitch: 80,
+            w_yaw: -90,
+            w_roll: 100,
+        }
+    }
+
+    /// What a car looks like on its kickoff spot, spelled out from the
+    /// rules rather than built by the code under test: parked on the spot
+    /// (`x`, `z` in uu), facing the centre spot (`facing` is the spot's own
+    /// heading, turned half a turn for the far end), upright and grounded, a
+    /// third of a tank, and not moving, spinning, boosting or mid-anything.
+    fn parked_car(x: i32, z: i32, yaw: u16) -> Car {
+        Car {
+            p: V3::new(uu(x), uu(CAR_REST_Y), uu(z)),
+            yaw,
+            boost: BOOST_MAX / 3,
+            grounded: true,
+            up: V3::new(0, 4096, 0),
+            ..Car::default()
+        }
+    }
+
+    /// Both cars and the ball exactly as a kickoff leaves them.
+    fn assert_kickoff_state(sim: &Sim, what: &str) {
+        let (sx, sz) = KICKOFF_SPOTS[sim.kickoff_spot % KICKOFF_SPOTS.len()];
+        let blue = atan2_q12(-sx, -sz);
+        assert_eq!(sim.car, parked_car(sx, sz, blue), "{what}: blue car");
+        assert_eq!(
+            sim.opponent,
+            parked_car(-sx, -sz, blue.wrapping_add(2048)),
+            "{what}: orange car"
+        );
+        assert_eq!(
+            sim.ball,
+            Ball {
+                p: V3::new(0, uu(BALL_R), 0),
+                grounded: true,
+                ..Ball::default()
+            },
+            "{what}: ball"
+        );
+        assert_eq!(sim.ai_target, AiTarget::None, "{what}: orange bot's plan");
+        assert_eq!(sim.ai_escape, 0, "{what}: orange bot's escape");
+        assert_eq!(sim.blue_bot.target, AiTarget::None, "{what}: blue bot's plan");
+        assert_eq!(sim.blue_bot.escape, 0, "{what}: blue bot's escape");
+        assert_eq!(sim.kickoff_ticks(), 0, "{what}: live ticks since placement");
+    }
+
+    /// Play until a goal goes in, then through the whole celebration, and
+    /// stop on the first tick of the countdown.
+    fn through_the_goal(sim: &mut Sim, p1: &Input, p2: Option<&Input>) -> u32 {
+        let mut ticks = 0;
+        while sim.goal_freeze == 0 {
+            match p2 {
+                Some(p2) => sim.tick_versus(p1, p2),
+                None => sim.tick(p1),
+            }
+            ticks += 1;
+            assert!(ticks < 4000, "no goal in {ticks} ticks");
+        }
+        while sim.goal_freeze > 0 {
+            match p2 {
+                Some(p2) => sim.tick_versus(p1, p2),
+                None => sim.tick(p1),
+            }
+        }
+        ticks
+    }
+
+    #[test]
+    fn kickoff_resets_every_field_of_every_car_and_the_ball() {
+        for spot in 0..KICKOFF_SPOTS.len() {
+            let mut sim = Sim::new();
+            sim.kickoff_spot = spot;
+            sim.car = scrambled_car(500);
+            sim.opponent = scrambled_car(-500);
+            sim.opponent.demo_timer = 40; // wrecked when the goal went in
+            sim.ball = Ball {
+                p: V3::new(uu(300), uu(900), uu(5000)),
+                v: V3::new(100, 200, 300),
+                w: V3::new(400, 500, 600),
+                grounded: false,
+                roll: 99,
+                roll_dir: 77,
+            };
+            sim.ai_target = AiTarget::Position(5, 6);
+            sim.ai_target_ticks = 90;
+            sim.ai_escape = 30;
+            sim.blue_bot.target = AiTarget::Boost(3);
+            sim.blue_bot.target_ticks = 90;
+            sim.blue_bot.escape = 30;
+            sim.kickoff();
+            assert_kickoff_state(&sim, "after kickoff()");
+        }
+    }
+
+    #[test]
+    fn after_a_goal_a_driving_opponent_is_back_on_its_spot_and_still() {
+        let mut sim = Sim::new();
+        // Off the middle, so the ball goes in and the AI's car is already
+        // out chasing it, boosting, when the goal is scored.
+        sim.ball.v.z = 5500;
+        sim.ball.v.x = 800;
+        let ticks = through_the_goal(&mut sim, &Input::default(), None);
+        assert_eq!(sim.score_blue, 1);
+        assert!(ticks < 200, "the shot should score at once, took {ticks}");
+        assert_eq!(sim.kickoff_hold, KICKOFF_HOLD_TICKS);
+        assert_kickoff_state(&sim, "first tick of the countdown");
+    }
+
+    #[test]
+    fn nothing_moves_through_the_countdown_whatever_the_pads_and_bots_do() {
+        let mut sim = Sim::new();
+        sim.ball.v.z = 5500;
+        sim.ball.v.x = 800;
+        through_the_goal(&mut sim, &Input::default(), None);
+        let clock = sim.clock;
+        let pads = sim.pad_timers;
+        let full = Input {
+            throttle: 128,
+            steer: 90,
+            pitch: -60,
+            boost: true,
+            jump_pressed: true,
+            jump_held: true,
+            air_roll: true,
+            handbrake: true,
+        };
+        for tick in 0..KICKOFF_HOLD_TICKS {
+            assert_eq!(sim.kickoff_hold, KICKOFF_HOLD_TICKS - tick);
+            assert_kickoff_state(&sim, "mid countdown");
+            assert_eq!(sim.clock, clock, "the clock runs during the countdown");
+            assert_eq!(sim.pad_timers, pads);
+            sim.tick(&full);
+        }
+        assert_eq!(sim.kickoff_hold, 0);
+        assert_kickoff_state(&sim, "the tick the countdown ends");
+        // Released: both cars are live from this tick on.
+        sim.tick(&full);
+        assert!(sim.car.v != V3::ZERO, "the player's car should be away");
+        assert!(sim.opponent.v != V3::ZERO, "the opponent's car should be away");
+        assert_eq!(sim.clock, clock - 1);
+    }
+
+    #[test]
+    fn after_a_goal_in_versus_both_pads_start_from_rest_together() {
+        let mut sim = Sim::new();
+        sim.opponent_ai = false;
+        sim.ball.v.z = 5500;
+        sim.ball.v.x = 800;
+        let drive = Input {
+            throttle: 128,
+            boost: true,
+            ..Input::default()
+        };
+        // Blue drives the ball in while orange, on its own pad, charges about.
+        let ticks = through_the_goal(&mut sim, &drive, Some(&drive));
+        assert!(ticks < 200);
+        assert_kickoff_state(&sim, "versus, first tick of the countdown");
+        for _ in 0..KICKOFF_HOLD_TICKS {
+            sim.tick_versus(&drive, &drive);
+        }
+        assert_kickoff_state(&sim, "versus, countdown over");
+        sim.tick_versus(&drive, &drive);
+        assert!(sim.car.v.z > 0 && sim.opponent.v.z < 0, "both away, toward each other");
+    }
+
+    #[test]
+    fn after_a_goal_between_bots_both_cars_start_from_rest() {
+        for spot in 0..KICKOFF_SPOTS.len() {
+            for seed in 1u32..=4 {
+                let mut sim = Sim::new();
+                sim.blue_ai = true;
+                sim.bot_flair = true;
+                sim.kickoff_spot = spot;
+                sim.kickoff();
+                sim.seed_ai(seed.wrapping_mul(0x9E37_79B9), seed.wrapping_mul(0x85EB_CA6B));
+                let mut ticks = 0;
+                while sim.goal_freeze == 0 && ticks < 5000 {
+                    sim.tick(&Input::default());
+                    ticks += 1;
+                }
+                if sim.goal_freeze == 0 {
+                    continue; // no goal for this pairing within the window
+                }
+                while sim.goal_freeze > 0 {
+                    sim.tick(&Input::default());
+                }
+                assert_kickoff_state(&sim, "bots, first tick of the countdown");
+                for _ in 0..KICKOFF_HOLD_TICKS {
+                    sim.tick(&Input::default());
+                }
+                assert_kickoff_state(&sim, "bots, countdown over");
+            }
+        }
+    }
+
+    #[test]
+    fn the_winning_goal_does_not_start_a_countdown() {
+        let mut sim = solo();
+        sim.win_condition = WinCondition::GoalLimit(1);
+        sim.ball.v.z = 5500;
+        through_the_goal(&mut sim, &Input::default(), None);
+        assert!(sim.finished());
+        assert_eq!(sim.kickoff_hold, 0);
     }
 
     #[test]
