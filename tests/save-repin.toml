@@ -1,0 +1,116 @@
+# Change Sound in the title settings, save it to the slot-one card, then boot
+# from that same card and verify the loaded setting is visible in the UI.
+name = "nitroxide-save-repin"
+title = "NitroXide: settings save and persisted reboot"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 1800
+
+[[step]]
+wait = 440
+[[step]]
+checkpoint = "title-before-save"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
+
+# SETTINGS is the fourth title row.
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "sound-on"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+
+# Cross toggles the Sound row to OFF. Circle closes the panel and saves.
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "sound-off-before-save"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "sound-on"
+region = { x = 118, y = 82, w = 20, h = 12 }
+min_changed = 0.05
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 200
+[[step]]
+checkpoint = "title-after-save"
+golden = false
+[[step.assert]]
+kind = "card_writes"
+min_count = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
+[[step]]
+card = { action = "snapshot" }
+[[step]]
+card = { action = "reboot" }
+
+[[step]]
+wait = 440
+[[step]]
+checkpoint = "title-after-reboot"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "sound-off-after-reboot"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "sound-off-before-save"
+region = { x = 118, y = 82, w = 20, h = 12 }
+max_changed = 0.01
+[[step]]
+card = { action = "snapshot" }
