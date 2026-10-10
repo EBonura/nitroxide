@@ -1951,6 +1951,10 @@ impl Sim {
                 // match still reset exactly as before.
                 if !self.goal_limit_reached() {
                     self.kickoff();
+                    // Every pad is back, as in Rocket League: a goal restarts
+                    // the pitch, not only the cars. A match start has none
+                    // spent, so this changes nothing there.
+                    self.pad_timers = [0; PADS.len()];
                     self.kickoff_hold = KICKOFF_HOLD_TICKS;
                 }
                 return;
@@ -4458,6 +4462,19 @@ mod tests {
                 assert_kickoff_state(&sim, "bots, countdown over");
             }
         }
+    }
+
+    #[test]
+    fn every_boost_pad_is_back_after_a_goal() {
+        let mut sim = solo();
+        sim.ball.v.z = 5500;
+        // Pads spent when the goal goes in, a different wait on each.
+        for (i, t) in sim.pad_timers.iter_mut().enumerate() {
+            *t = 600 + i as u16;
+        }
+        through_the_goal(&mut sim, &Input::default(), None);
+        assert_eq!(sim.score_blue, 1);
+        assert_eq!(sim.pad_timers, [0; PADS.len()], "pads should respawn at kickoff");
     }
 
     #[test]
