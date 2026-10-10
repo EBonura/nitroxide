@@ -22,6 +22,7 @@ min_changes = 5
 wait = 280
 [[step]]
 checkpoint = "menu"
+mask = [{ x = 10, y = 10, w = 176, h = 16 }]
 [[step.assert]]
 kind = "presenting"
 window = 120
@@ -37,13 +38,55 @@ op = "eq"
 value = 1
 
 [[step]]
+checkpoint = "menu-animation"
+golden = false
+[[step.assert]]
+kind = "pixels"
+color = [174, 205, 255]
+color_tol = 65
+region = { x = 10, y = 10, w = 176, h = 16 }
+min_count = 800
+note = "breathing title logo remains visible"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
+
+[[step]]
 press = ["cross"]
 hold = 4
 wait = 120
 [[step]]
 checkpoint = "select"
+mask = [{ x = 70, y = 106, w = 204, h = 31 }]
 [[step.assert]]
 kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+
+[[step]]
+checkpoint = "select-animation"
+golden = false
+[[step.assert]]
+kind = "pixels"
+color = [49, 123, 255]
+color_tol = 25
+region = { x = 65, y = 95, w = 85, h = 43 }
+min_count = 200
+note = "left blue car remains visible"
+[[step.assert]]
+kind = "pixels"
+color = [255, 57, 82]
+color_tol = 25
+region = { x = 185, y = 95, w = 90, h = 43 }
+min_count = 200
+note = "right red car remains visible"
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_GATE_STATE"
@@ -58,6 +101,20 @@ wait = 0
 [[step]]
 checkpoint = "kickoff"
 golden = false
+[[step.assert]]
+kind = "pixels"
+color = [115, 165, 0]
+color_tol = 60
+region = { x = 20, y = 60, w = 100, h = 110 }
+min_count = 3000
+note = "kickoff pitch is rendered"
+[[step.assert]]
+kind = "pixels"
+color = [49, 123, 255]
+color_tol = 30
+region = { x = 137, y = 160, w = 45, h = 77 }
+min_count = 800
+note = "blue car is visible at kickoff"
 [[step.assert]]
 kind = "presenting"
 window = 60
