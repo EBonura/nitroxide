@@ -1,23 +1,25 @@
-# NitroXide journey (WIP): splash, menu, match select, kickoff. The goal and
-# kickoff-hold steps (every car and the ball still during the 3-2-1, then
-# released) are not written yet: the match state lives on main's stack, so the
-# ram asserts need an anchor (see TESTING.md, known gaps). Until then the hold
-# can be checked with frame_diff over a post-goal route.
+# A normal single-pad match. The throttle and boost input scores through
+# the simulation, then the journey observes the full reset and countdown.
 name = "nitroxide"
-title = "NitroXide: splash to kickoff"
-disc = ["build/shot/NitroXide.cue"]
+title = "NitroXide: splash through scored goal and kickoff reset"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
 max_ticks = 3000
 
 [[step]]
-wait = 100
+wait = 160
 [[step]]
 checkpoint = "splash"
-golden = false
-no_matrix = true
-# TODO: land on the logo (it fades in near tick 200) and add strict text regions.
+strict = [{ x = 110, y = 145, w = 110, h = 20 }]
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 5
 
 [[step]]
-wait = 340
+wait = 280
 [[step]]
 checkpoint = "menu"
 [[step.assert]]
@@ -27,6 +29,12 @@ min_changes = 5
 [[step.assert]]
 kind = "audio"
 window = 240
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
 
 [[step]]
 press = ["cross"]
@@ -36,11 +44,17 @@ wait = 120
 checkpoint = "select"
 [[step.assert]]
 kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
 
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 120
+wait = 0
 [[step]]
 checkpoint = "kickoff"
 golden = false
@@ -51,3 +65,416 @@ min_changes = 5
 [[step.assert]]
 kind = "pc_not_stuck"
 window = 60
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 0
+op = "eq"
+value = 1381255502
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 4
+op = "eq"
+value = 1
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 8
+op = "eq"
+value = 256
+
+# Drive into real boost pads and shoot from the default kickoff.
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 44
+op = "gt"
+value = 0
+
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "ge", value = 1 }
+timeout = 400
+[[step]]
+checkpoint = "goal"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "eq"
+value = 1
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "gt"
+value = 0
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 44
+op = "gt"
+value = 0
+
+# Wait through the goal celebration until the new kickoff begins.
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 200
+[[step]]
+wait = 4
+[[step]]
+checkpoint = "countdown-3"
+strict = [{ x = 150, y = 43, w = 20, h = 4 }]
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "between"
+value = 120
+value_hi = 180
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 44
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 48
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 52
+op = "eq"
+value = 1792
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 56
+op = "eq"
+value = -294912
+signed = true
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 72
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 76
+op = "eq"
+value = 1792
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 80
+op = "eq"
+value = 294912
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 96
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 100
+op = "eq"
+value = 5824
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 104
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 60
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 84
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 108
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 120
+op = "zero"
+each = { count = 34, stride = 4 }
+
+[[step]]
+wait = 64
+[[step]]
+checkpoint = "countdown-2"
+strict = [{ x = 152, y = 43, w = 16, h = 4 }]
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "between"
+value = 60
+value_hi = 120
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 44
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 48
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 52
+op = "eq"
+value = 1792
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 56
+op = "eq"
+value = -294912
+signed = true
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 72
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 76
+op = "eq"
+value = 1792
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 80
+op = "eq"
+value = 294912
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 96
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 100
+op = "eq"
+value = 5824
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 104
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 60
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 84
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 108
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 120
+op = "zero"
+each = { count = 34, stride = 4 }
+
+[[step]]
+wait = 60
+[[step]]
+checkpoint = "countdown-1"
+strict = [{ x = 158, y = 43, w = 4, h = 4 }]
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "between"
+value = 1
+value_hi = 60
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 44
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 48
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 52
+op = "eq"
+value = 1792
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 56
+op = "eq"
+value = -294912
+signed = true
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 72
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 76
+op = "eq"
+value = 1792
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 80
+op = "eq"
+value = 294912
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 96
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 100
+op = "eq"
+value = 5824
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 104
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 60
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 84
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 108
+op = "zero"
+each = { count = 3, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 120
+op = "zero"
+each = { count = 34, stride = 4 }
+
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 70
+[[step]]
+checkpoint = "restart-line"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "zero"
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 120
+op = "zero"
+each = { count = 34, stride = 4 }
+
+[[step]]
+press = ["r2", "circle"]
+hold = 20
+[[step]]
+checkpoint = "resumed"
+golden = false
+[[step.assert]]
+kind = "presenting"
+window = 40
+min_changes = 5
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "zero"
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 68
+op = "gt"
+value = 0
+signed = true
+
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 92
+op = "lt"
+value = 0
+signed = true
