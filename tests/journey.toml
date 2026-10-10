@@ -1,0 +1,53 @@
+# NitroXide journey (WIP): splash, menu, match select, kickoff. The goal and
+# kickoff-hold steps (every car and the ball still during the 3-2-1, then
+# released) are not written yet: the match state lives on main's stack, so the
+# ram asserts need an anchor (see TESTING.md, known gaps). Until then the hold
+# can be checked with frame_diff over a post-goal route.
+name = "nitroxide"
+title = "NitroXide: splash to kickoff"
+disc = ["build/shot/NitroXide.cue"]
+max_ticks = 3000
+
+[[step]]
+wait = 100
+[[step]]
+checkpoint = "splash"
+golden = false
+no_matrix = true
+# TODO: land on the logo (it fades in near tick 200) and add strict text regions.
+
+[[step]]
+wait = 340
+[[step]]
+checkpoint = "menu"
+[[step.assert]]
+kind = "presenting"
+window = 120
+min_changes = 5
+[[step.assert]]
+kind = "audio"
+window = 240
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+[[step]]
+checkpoint = "select"
+[[step.assert]]
+kind = "not_flat"
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+[[step]]
+checkpoint = "kickoff"
+golden = false
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 5
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 60
