@@ -13,7 +13,7 @@ PSOXIDE   := $(ROOT)/.psoxide
 MKISOPSX  := $(PSOXIDE)/tools/mkisopsx
 FRONTEND  ?= frontend
 TARGET    := mipsel-sony-psx
-EXE       := $(GAME)/target/$(TARGET)/release/nitroxide.exe
+EXE       := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),$(GAME)/target)/$(TARGET)/release/nitroxide.exe
 ARENA_SOURCE   := $(ROOT)/assets-src/grass.bmp
 ARENA_DISC_DIR := $(GAME)/assets/disc
 ARENA_PSXT     := $(ARENA_DISC_DIR)/chunk_1.psxt
@@ -60,7 +60,7 @@ STEPS  ?= 120000000
 PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
-.PHONY: help test assets textures bake compile build pack disc run shot clean psoxide \
+.PHONY: help test assets textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide \
 	pgo-collect pgo-choose pgo-order demo-check
 
 help:
@@ -247,6 +247,20 @@ pack: $(ARENA_PSXT)
 disc: build
 	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(OUT)/$(GAME_NAME).bin"
 	@echo "DISC -> $(OUT)/$(GAME_NAME).cue"
+
+# The journey reads a named static in the exact image it tests. Locate its
+# versioned initializer in that PS-X EXE, rather than trusting a link map from
+# another build or fixing a layout-dependent address in the journey.
+GATE_DISC_OUT ?= $(ROOT)/build/gate/NitroXide.bin
+gate-symbols: build
+	@set -eu; mkdir -p "$(ROOT)/build"; \
+		rustc --edition=2021 "$(ROOT)/tools/gate-symbols.rs" -o "$(ROOT)/build/gate-symbols-tool"; \
+		"$(ROOT)/build/gate-symbols-tool" "$(EXE)" > "$(ROOT)/build/gate-symbols.txt"; \
+		echo "GATE SYMBOLS -> $(ROOT)/build/gate-symbols.txt"
+
+gate-disc: gate-symbols
+	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(GATE_DISC_OUT)"
+	@echo "GATE DISC -> $(patsubst %.bin,%.cue,$(GATE_DISC_OUT))"
 
 # Regenerating the profile and picking the variant need the emulator:
 #   make pgo-collect FRONTEND=/path/to/frontend CDDA_DIR=...  (after gameplay code changes or an SDK repin)

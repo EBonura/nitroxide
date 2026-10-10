@@ -40,6 +40,7 @@ mod bonnie;
 #[cfg(feature = "diag-log")]
 mod diaglog;
 mod draw;
+mod gate_state;
 mod music;
 
 /// Two faces, the way most games do it: a wide display one for headings and a
@@ -2114,6 +2115,9 @@ impl Scene for NitroXide {
     }
 
     fn update(&mut self, ctx: &mut Ctx) {
+        // Publish the prior completed simulation tick before this update can
+        // return early for a menu, pause, card prompt or attract transition.
+        gate_state::publish(self, ctx.sim_tick.as_u32().saturating_sub(1));
         if self.display_dirty {
             self.display_dirty = false;
             self.apply_screen_offset(ctx);
