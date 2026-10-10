@@ -1325,16 +1325,39 @@ impl NitroXide {
         }
     }
 
+    /// The kickoff countdown's number: 3, 2, 1 across the hold after a goal,
+    /// a second each, centred high in the frame like the goal banner.
+    fn kickoff_banner(&self, font: &FontAtlas) -> draw::Banner {
+        const DIGITS: [&str; 3] = ["1", "2", "3"];
+        let digit = DIGITS[(usize::from(self.sim.kickoff_hold).div_ceil(60)).clamp(1, 3) - 1];
+        let q8: i32 = 512;
+        let x = (160 - font.text_width(digit) as i32 * q8 / 256 / 2) as i16;
+        draw::Banner {
+            font: *font,
+            y: 34,
+            q8: q8 as u16,
+            parts: [(x, digit, (255, 232, 130)), (x, "", (255, 232, 130))],
+        }
+    }
+
     /// The banner written straight to the GPU over the finished frame: split
     /// screen, whose two tables have no tail of their own to carry it. A
     /// single view files it in its table instead (`draw::set_banner`).
     fn draw_goal_banner(&self, font: &FontAtlas) {
-        let banner = self.goal_banner(font);
+        Self::draw_banner(self.goal_banner(font));
+    }
+
+    /// The same for the kickoff countdown.
+    fn draw_kickoff_banner(&self, font: &FontAtlas) {
+        Self::draw_banner(self.kickoff_banner(font));
+    }
+
+    fn draw_banner(banner: draw::Banner) {
         // Outlined: the team colour is its true shade now rather than washed
         // out by saturation, and the cobalt is too dark to hold its edges
         // against the stands' grey lattice alone.
         for (x, text, tint) in banner.parts {
-            Self::outlined(font, x, banner.y, text, banner.q8, tint);
+            Self::outlined(&banner.font, x, banner.y, text, banner.q8, tint);
         }
     }
 
@@ -1982,6 +2005,13 @@ impl Scene for NitroXide {
             self.sim.opponent_ai = false;
             self.rearm_demo_fx();
         }
+        #[cfg(feature = "boot-goal-ai")]
+        {
+            self.phase = Phase::Play;
+            self.sim.ball.v.z = 5500;
+            self.sim.ball.v.x = 800;
+            psx_rt::tty::println("boot-goal-ai: ball kicked");
+        }
         #[cfg(feature = "boot-goal")]
         {
             self.phase = Phase::Play;
@@ -2414,9 +2444,45 @@ impl Scene for NitroXide {
                     ];
                 }
                 audio::update(&self.sim);
-                #[cfg(feature = "boot-goal")]
+                #[cfg(any(feature = "boot-goal", feature = "boot-goal-ai"))]
                 if self.sim.goal_freeze == nitroxide_sim::GOAL_FREEZE_TICKS {
                     psx_rt::tty::println("boot-goal: GOAL, freeze started");
+                }
+                // The state of both cars on the guest at fixed ticks counted
+                // from the end of the goal freeze (the tick the kickoff is
+                // set), so a build with a countdown and one without line up:
+                // p, v, the three air rates and boost, in hex, blue then
+                // orange.
+                #[cfg(feature = "boot-goal-ai")]
+                {
+                    static mut SINCE: i32 = -1;
+                    let sim = &self.sim;
+                    let n = unsafe {
+                        if sim.goal_freeze > 0 {
+                            SINCE = 0;
+                        } else if SINCE >= 0 {
+                            SINCE += 1;
+                        }
+                        SINCE
+                    };
+                    let show = sim.goal_freeze == nitroxide_sim::GOAL_FREEZE_TICKS
+                        || matches!(n, 1 | 2 | 30 | 90 | 179 | 180 | 181 | 182 | 210);
+                    if show {
+                        psx_rt::tty::print("state since-freeze-end ");
+                        psx_rt::tty::print_hex_u32(n as u32);
+                        psx_rt::tty::println("");
+                        for car in [&sim.car, &sim.opponent] {
+                            for v in [
+                                car.p.x, car.p.y, car.p.z, car.v.x, car.v.y, car.v.z,
+                                car.w_pitch as i32, car.w_yaw as i32, car.w_roll as i32,
+                                car.boost,
+                            ] {
+                                psx_rt::tty::print_hex_u32(v as u32);
+                                psx_rt::tty::print(" ");
+                            }
+                            psx_rt::tty::println("");
+                        }
+                    }
                 }
                 if self.sim.finished() {
                     audio::stop_all();
@@ -2492,6 +2558,9 @@ impl Scene for NitroXide {
         let banner = match (self.phase, self.display.as_ref()) {
             (Phase::Play | Phase::Demo, Some(font)) if self.sim.goal_freeze > 0 && !self.two_player => {
                 Some(self.goal_banner(font))
+            }
+            (Phase::Play, Some(font)) if self.sim.kickoff_hold > 0 && !self.two_player => {
+                Some(self.kickoff_banner(font))
             }
             _ => None,
         };
@@ -2654,6 +2723,9 @@ impl NitroXide {
                         self.draw_goal_banner(display);
                     }
                 } else {
+                    if self.sim.kickoff_hold > 0 && self.two_player {
+                        self.draw_kickoff_banner(display);
+                    }
                     self.draw_now_playing(hud, ctx.sim_tick.as_u32());
                 }
                 if self.paused {

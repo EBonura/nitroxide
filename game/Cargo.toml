@@ -24,6 +24,9 @@ profile = ["profile-frame", "psx-telemetry/emit"]
 # Dev: kick off with the ball rolling at the far net, so a headless run
 # reaches a goal at a predictable tick and the celebration can be looked at.
 boot-goal = []
+# Dev: boot-goal with the opponent left on its AI, so the goal and the kickoff
+# after it are seen with a car that was driving when the ball went in.
+boot-goal-ai = []
 # Dev: park the car against a side wall, ball ahead of it, so a headless
 # capture always frames the same shot. Driving there with scheduled pad
 # presses does not repeat: one extra tick of steer and the car is somewhere
