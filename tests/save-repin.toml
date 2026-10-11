@@ -40,7 +40,7 @@ golden = false
 [[step.assert]]
 kind = "not_flat"
 
-# Cross toggles the Sound row to OFF. Circle closes the panel and saves.
+# Cross toggles Sound to OFF. Only Cross on Save Settings writes the card.
 [[step]]
 press = ["cross"]
 hold = 4
@@ -53,8 +53,17 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "sound-on"
-region = { x = 118, y = 82, w = 20, h = 12 }
+region = { x = 118, y = 74, w = 20, h = 36 }
 min_changed = 0.05
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 100
 [[step]]
 press = ["circle"]
 hold = 4
@@ -110,7 +119,7 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "sound-off-before-save"
-region = { x = 118, y = 82, w = 20, h = 12 }
+region = { x = 118, y = 74, w = 20, h = 36 }
 max_changed = 0.01
 [[step]]
 card = { action = "snapshot" }

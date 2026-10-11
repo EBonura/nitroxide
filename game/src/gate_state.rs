@@ -9,7 +9,35 @@
 
 use nitroxide_sim::{Sim, PADS, V3};
 
-use crate::{NitroXide, Phase};
+use crate::{CardAsk, NitroXide, Phase};
+
+/// Independent settings receipt. All words are little-endian u32s; this
+/// block is never consulted by gameplay or card persistence.
+#[repr(C)]
+pub struct SettingsState {
+    magic: u32,
+    version: u32,
+    size_bytes: u32,
+    /// Zero when closed, otherwise the selected row plus one.
+    panel_row: u32,
+    row_count: u32,
+    dirty: u32,
+    /// Idle=0, asking=1, formatting=2, declined=3.
+    card_prompt: u32,
+    /// None=0, saved=1, failed=2, no card=3, canceled=4.
+    save_status: u32,
+    sfx_volume: u32,
+}
+
+#[used]
+#[no_mangle]
+pub static mut NITRO_SETTINGS_STATE: SettingsState = SettingsState {
+    magic: u32::from_le_bytes(*b"NSET"), version: 1, size_bytes: 36,
+    panel_row: 0, row_count: 0, dirty: 0, card_prompt: 0, save_status: 0,
+    sfx_volume: 0,
+};
+
+const _: () = assert!(core::mem::size_of::<SettingsState>() == 36);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -75,6 +103,22 @@ pub static mut NITRO_GATE_STATE: GateState = GateState {
 };
 
 pub fn publish(game: &NitroXide, completed_tick: u32) {
+    let settings = SettingsState {
+        magic: u32::from_le_bytes(*b"NSET"), version: 1, size_bytes: 36,
+        panel_row: game.settings.map_or(0, |row| row as u32 + 1),
+        row_count: game.settings_rows().len() as u32,
+        dirty: u32::from(game.settings_dirty),
+        card_prompt: match game.card_ask {
+            CardAsk::Idle => 0, CardAsk::Asking => 1,
+            CardAsk::Formatting => 2, CardAsk::Declined => 3,
+        },
+        save_status: match game.settings_save_status {
+            "SAVED" => 1, "FAILED" => 2, "NO CARD" => 3,
+            "CANCELED" => 4, _ => 0,
+        },
+        sfx_volume: game.profile.sfx_volume as u32,
+    };
+    unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_SETTINGS_STATE), settings) };
     let sim: &Sim = &game.sim;
     let phase = match game.phase {
         Phase::Intro => 0,

@@ -36,6 +36,8 @@ use nitroxide_sim::{
 
 mod assets;
 mod audio;
+mod settings_menu;
+use settings_menu::{Action as SettingsAction, SettingsRow};
 mod bonnie;
 #[cfg(feature = "diag-log")]
 mod diaglog;
@@ -96,7 +98,7 @@ const DRIVE_ACTIONS: ActionMap<9> = ActionMap::new([
     ActionBinding::new(button::L1, 0),
 ]);
 
-/// The answer to a card that holds no `MC` header, asked once a session.
+/// The answer to an unformatted card after the player requests Save Settings.
 #[derive(Clone, Copy, PartialEq)]
 enum CardAsk {
     /// Nothing pending: the card was fine, absent, or not asked about yet.
@@ -417,20 +419,6 @@ enum PauseRow {
     Quit,
 }
 
-/// One entry in the settings panel, reached from the title menu and the pause
-/// menu alike. One list, so the two places cannot drift apart.
-#[derive(Clone, Copy, PartialEq)]
-enum SettingsRow {
-    Arena,
-    Sound,
-    Music,
-    Track,
-    Brightness,
-    ScreenX,
-    ScreenY,
-    Back,
-}
-
 /// Analog re-assert attempts per plug-in before a pad is taken as
 /// digital-only (the boot handshake in `init` is on top of these).
 const ANALOG_ATTEMPTS: u8 = 4;
@@ -512,6 +500,7 @@ struct NitroXide {
     intro_t: i32,
     profile: Profile<9, 0>,
     settings_dirty: bool,
+    settings_save_status: &'static str,
     /// The screen position changed in the settings panel: reprogram the
     /// display window at the next update, which holds the GPU handle.
     display_dirty: bool,
@@ -635,6 +624,7 @@ impl NitroXide {
             seed: 0,
             profile: Profile::new(DRIVE_ACTIONS),
             settings_dirty: false,
+            settings_save_status: "",
             display_dirty: false,
             card_ask: CardAsk::Idle,
             card_wait: 0,
@@ -777,6 +767,7 @@ impl NitroXide {
                 SettingsRow::Brightness,
                 SettingsRow::ScreenX,
                 SettingsRow::ScreenY,
+                SettingsRow::Save,
                 SettingsRow::Back,
             ]
         } else {
@@ -786,6 +777,7 @@ impl NitroXide {
                 SettingsRow::Brightness,
                 SettingsRow::ScreenX,
                 SettingsRow::ScreenY,
+                SettingsRow::Save,
                 SettingsRow::Back,
             ]
         }
@@ -814,23 +806,12 @@ impl NitroXide {
             row = (row + 1) % rows.len();
         }
         self.settings = Some(row);
-        if back || (cross && rows[row] == SettingsRow::Back) {
-            self.settings = None;
-            self.persist_settings();
-            return;
-        }
-        // X steps forward like the old pause toggles did; left and right step
-        // both ways for the rows where direction means something.
-        let step = if right || cross {
-            1
-        } else if left {
-            -1
-        } else {
-            0
+        let step = match settings_menu::action(rows[row], left, right, cross, back) {
+            SettingsAction::Close => { self.settings = None; return; }
+            SettingsAction::Save => { self.save_settings(); return; }
+            SettingsAction::Adjust(step) => step as i32,
+            SettingsAction::None => return,
         };
-        if step == 0 {
-            return;
-        }
         // Left and right only: the signed direction for the picture rows.
         let lr = right as i8 - left as i8;
         let picture_row = matches!(
@@ -840,6 +821,7 @@ impl NitroXide {
         if lr == 0 && picture_row {
             return;
         }
+        self.settings_save_status = "";
         match rows[row] {
             SettingsRow::Arena => {
                 self.arena_time = if step > 0 {
@@ -877,7 +859,7 @@ impl NitroXide {
                 self.settings_dirty = true;
                 self.display_dirty = true;
             }
-            SettingsRow::Back => {}
+            SettingsRow::Save | SettingsRow::Back => {}
         }
     }
 
@@ -944,8 +926,8 @@ impl NitroXide {
         }
     }
 
-    fn persist_settings(&mut self) {
-        if !self.settings_dirty || self.card_ask != CardAsk::Idle {
+    fn save_settings(&mut self) {
+        if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
             return;
         }
         let mut card = psx_mc::Card::new(psx_mc::HardwareCard::new(psx_mc::Slot::One));
@@ -955,18 +937,21 @@ impl NitroXide {
                     .is_ok()
                 {
                     self.settings_dirty = false;
+                    self.settings_save_status = "SAVED";
+                } else {
+                    self.settings_save_status = "FAILED";
                 }
             }
             // A card that answers but holds no header: ask, do not format.
             Ok(false) => self.card_ask = CardAsk::Asking,
             // No card in the slot, or it would not talk: nothing to ask.
-            Err(_) => {}
+            Err(_) => self.settings_save_status = "NO CARD",
         }
     }
 
     /// The player's answer to the format question: Cross formats the card and
-    /// saves, Circle or Start leaves the card alone for the rest of the
-    /// session.
+    /// saves, Circle or Start cancels this save request. Another explicit
+    /// Save Settings selection can retry it.
     fn card_answer(&mut self, ctx: &Ctx) {
         if self.card_ask == CardAsk::Formatting {
             // Render is every second vblank: give it a few updates to show
@@ -982,17 +967,26 @@ impl NitroXide {
             if saved {
                 self.settings_dirty = false;
             }
-            // A card that would not format is not asked about again either.
+            self.settings_save_status = if saved { "SAVED" } else { "FAILED" };
+            // A failed request ends the modal and permits an explicit retry.
             self.card_ask = if saved {
                 CardAsk::Idle
             } else {
                 CardAsk::Declined
             };
-        } else if ctx.just_pressed(button::CROSS) {
-            self.card_ask = CardAsk::Formatting;
-            self.card_wait = 0;
-        } else if ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START) {
-            self.card_ask = CardAsk::Declined;
+        } else {
+            match settings_menu::format_action(ctx.just_pressed(button::CROSS),
+                ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START)) {
+                settings_menu::FormatAction::Cancel => {
+                    self.card_ask = CardAsk::Declined;
+                    self.settings_save_status = "CANCELED";
+                }
+                settings_menu::FormatAction::Confirm => {
+                    self.card_ask = CardAsk::Formatting;
+                    self.card_wait = 0;
+                }
+                settings_menu::FormatAction::None => {}
+            }
         }
     }
 
@@ -1591,6 +1585,10 @@ impl NitroXide {
                 SettingsRow::Brightness => ("BRIGHTNESS: ", brightness.as_str()),
                 SettingsRow::ScreenX => ("SCREEN X: ", screen_x.as_str()),
                 SettingsRow::ScreenY => ("SCREEN Y: ", screen_y.as_str()),
+                SettingsRow::Save => ("SAVE SETTINGS: ",
+                    if self.settings_save_status.is_empty() && self.settings_dirty {
+                        "UNSAVED"
+                    } else { self.settings_save_status }),
                 SettingsRow::Back => ("BACK", ""),
             };
             let lit = i == sel;

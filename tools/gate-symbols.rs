@@ -18,6 +18,10 @@ fn word(bytes: &[u8], offset: usize) -> Result<u32, String> {
 }
 
 fn symbol_address(path: &Path) -> Result<u32, String> {
+    block_address(path, MAGIC, VERSION, BLOCK_LEN, "NITRO_GATE_STATE")
+}
+
+fn block_address(path: &Path, magic: &[u8; 4], version: u32, block_len: usize, name: &str) -> Result<u32, String> {
     let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if bytes.get(..8) != Some(b"PS-X EXE") {
         return Err("input is not a PS-X EXE".into());
@@ -28,10 +32,10 @@ fn symbol_address(path: &Path) -> Result<u32, String> {
         .get(HEADER_LEN..HEADER_LEN + image_len)
         .ok_or("PS-X EXE payload is shorter than its header says")?;
     let mut matches = Vec::new();
-    for (offset, block) in image.windows(BLOCK_LEN).enumerate() {
-        if &block[..4] == MAGIC
-            && word(block, 4)? == VERSION
-            && word(block, 8)? == BLOCK_LEN as u32
+    for (offset, block) in image.windows(block_len).enumerate() {
+        if &block[..4] == magic
+            && word(block, 4)? == version
+            && word(block, 8)? == block_len as u32
             && block[12..].iter().all(|&byte| byte == 0)
         {
             matches.push(offset);
@@ -39,7 +43,7 @@ fn symbol_address(path: &Path) -> Result<u32, String> {
     }
     if matches.len() != 1 {
         return Err(format!(
-            "expected one initialized NITRO_GATE_STATE block, found {}",
+            "expected one initialized {name} block, found {}",
             matches.len()
         ));
     }
@@ -59,7 +63,11 @@ fn main() {
     }
     match symbol_address(Path::new(&exe)) {
         Ok(addr) => {
-            writeln!(std::io::stdout(), "{addr:#010x} NITRO_GATE_STATE").expect("write address")
+            writeln!(std::io::stdout(), "{addr:#010x} NITRO_GATE_STATE").expect("write address");
+            match block_address(Path::new(&exe), b"NSET", 1, 36, "NITRO_SETTINGS_STATE") {
+                Ok(settings) => writeln!(std::io::stdout(), "{settings:#010x} NITRO_SETTINGS_STATE").expect("write settings address"),
+                Err(error) => { eprintln!("gate-symbols: {error}"); std::process::exit(1); }
+            }
         }
         Err(error) => {
             eprintln!("gate-symbols: {error}");
@@ -126,5 +134,20 @@ mod tests {
             check("invalid", b"not a PS-X EXE").unwrap_err(),
             "input is not a PS-X EXE"
         );
+    }
+
+    #[test]
+    fn settings_block_uses_its_own_magic_and_checked_size() {
+        let mut bytes = sample(&[0x40], 0x300);
+        let block = &mut bytes[HEADER_LEN + 0x180..HEADER_LEN + 0x180 + 36];
+        block[..4].copy_from_slice(b"NSET");
+        block[4..8].copy_from_slice(&1u32.to_le_bytes());
+        block[8..12].copy_from_slice(&36u32.to_le_bytes());
+        let path = env::temp_dir().join(format!("settings-symbol-{}", std::process::id()));
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(block_address(&path, b"NSET", 1, 36, "NITRO_SETTINGS_STATE").unwrap(), 0x8001_0180);
+        assert!(block_address(&path, b"NSET", 2, 36, "NITRO_SETTINGS_STATE").is_err());
+        assert!(block_address(&path, b"NSET", 1, 40, "NITRO_SETTINGS_STATE").is_err());
+        fs::remove_file(path).unwrap();
     }
 }

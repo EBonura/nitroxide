@@ -1,6 +1,6 @@
 name = "nitroxide-supported-settings"
 title = "NitroXide: supported settings changes, real card save and cold reboot"
-disc = ["build/gate/NitroXide.cue"]
+disc = ["build/gate-music/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2400
 [[step]]
@@ -67,6 +67,15 @@ from = "default-settings"
 region = { x = 75, y = 95, w = 170, h = 85 }
 min_changed = 0.01
 [[step]]
+press = ["up"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 100
+[[step]]
 press = ["circle"]
 hold = 4
 wait = 200
@@ -99,20 +108,20 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 100, w = 164, h = 12 }
+region = { x = 76, y = 92, w = 164, h = 12 }
 max_changed = 0.0
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 132, w = 164, h = 12 }
+region = { x = 76, y = 124, w = 164, h = 12 }
 max_changed = 0.0
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 148, w = 164, h = 12 }
+region = { x = 76, y = 140, w = 164, h = 12 }
 max_changed = 0.0
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 164, w = 164, h = 12 }
+region = { x = 76, y = 156, w = 164, h = 12 }
 max_changed = 0.0

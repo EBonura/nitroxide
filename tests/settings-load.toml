@@ -1,0 +1,52 @@
+# Fixture is the byte-for-byte receipt from the explicit Save Settings gate.
+# It stores SFX OFF, whereas a fresh profile defaults to volume 100.
+name = "nitroxide-settings-load"
+title = "NitroXide: cold load and settings exits preserve a saved card"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+memcard = "fresh"
+max_ticks = 900
+[card_fixture]
+path = "tests/fixtures/manual-saved.mcd"
+sha256 = "3a5d8e40c349a3c219ba711bfa6551bf2dda43ad539156429dc31bc479dcd79f"
+[[step]]
+wait = 440
+[[step]]
+checkpoint = "saved-profile-loaded-without-write"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 32
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 20
+op = "zero"
+[[step.assert]]
+kind = "card_unchanged"
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "loaded-profile-exit-without-write"
+golden = false
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "zero"
+[[step]]
+card = { action = "snapshot" }

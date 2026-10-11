@@ -1,0 +1,145 @@
+# Zero-filled fixture has no MC header. No format prompt may appear on exit.
+name = "nitroxide-settings-unformatted"
+title = "NitroXide: unformatted card remains untouched until explicit Save and format consent"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2400
+memcard = "fresh"
+[card_fixture]
+path = "tests/fixtures/unformatted.mcd"
+sha256 = "fa43239bcee7b97ca62f007cc68487560a39e19f74f3dde7486db3f98df8e471"
+
+[[step]]
+wait = 440
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 32
+op = "eq"
+value = 100
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "unformatted-exit-no-prompt"
+golden = false
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 20
+op = "eq"
+value = 1
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "explicit-save-format-question"
+golden = false
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "eq"
+value = 1
+
+[[step]]
+press = ["circle", "cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "format-cancel-preserves-card"
+golden = false
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 4
+
+# A canceled save can be retried explicitly. The first Cross asks; only a
+# distinct Cross press on the format question authorizes formatting.
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "eq"
+value = 1
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_SETTINGS_STATE", offset = 28, op = "eq", value = 1 }
+timeout = 1200
+[[step]]
+checkpoint = "explicit-format-and-save"
+golden = false
+[[step.assert]]
+kind = "card_writes"
+min_count = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 20
+op = "zero"
+[[step]]
+card = { action = "snapshot" }
