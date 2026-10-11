@@ -1,0 +1,124 @@
+name = "nitroxide-first-to-three"
+title = "NitroXide: normal first-to-three match, celebration, results and return"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 6500
+
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+# Up wraps the initial car row to the rule row. Right moves default 5:00 to first-to-three.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+checkpoint = "first-to-three-selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 1 }
+timeout = 400
+[[step]]
+checkpoint = "first-goal-celebration"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 200
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 190
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 2 }
+timeout = 400
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 200
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 190
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 3 }
+timeout = 400
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 200
+[[step]]
+checkpoint = "first-to-three-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 28
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "zero"
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "returned-title"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1

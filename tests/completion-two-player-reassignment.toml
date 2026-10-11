@@ -1,0 +1,178 @@
+name = "nitroxide-two-player-reassignment"
+title = "NitroXide: normal two-player match, celebration, results and return"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+pad2 = "analog"
+max_ticks = 6100
+
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+# Up wraps the initial car row to the rule row. Right moves default 5:00 to two-player.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["left"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+checkpoint = "two-player-selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+other = { press = ["cross"] }
+hold = 4
+wait = 0
+[[step]]
+checkpoint = "timed-kickoff"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "between"
+value = 3590
+value_hi = 3600
+[[step]]
+wait = 200
+[[step]]
+press = ["r2"]
+other = { press = ["r2"] }
+hold = 20
+[[step]]
+checkpoint = "both-players-driving"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 68
+op = "gt"
+value = 0
+signed = true
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 92
+op = "lt"
+value = 0
+signed = true
+[[step]]
+press = ["start"]
+hold = 4
+wait = 8
+[[step]]
+checkpoint = "paused"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+port = 2
+press = ["down"]
+hold = 4
+wait = 8
+[[step]]
+port = 2
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
+checkpoint = "swapped-by-port-two"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "paused"
+region = { x = 0, y = 0, w = 320, h = 240 }
+min_changed = 0.1
+[[step]]
+port = 2
+press = ["start"]
+hold = 4
+wait = 8
+[[step]]
+wait = 300
+[[step]]
+port = 2
+press = ["r2"]
+hold = 20
+[[step]]
+checkpoint = "port-two-drives-orange-after-swap"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 92
+op = "lt"
+value = 0
+signed = true
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 68
+op = "zero"
+[[step]]
+press = ["r2"]
+hold = 20
+[[step]]
+checkpoint = "port-one-drives-blue-after-swap"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 68
+op = "gt"
+value = 0
+signed = true
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 4800
+[[step]]
+checkpoint = "timed-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 20
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "zero"
+each = { count = 2, stride = 4 }
+[[step]]
+press = ["start"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "returned-title"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1

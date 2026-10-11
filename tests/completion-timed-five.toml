@@ -1,0 +1,76 @@
+name = "nitroxide-timed-five"
+title = "NitroXide: normal timed-five match, celebration, results and return"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 36000
+
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+# Up wraps the initial car row to the rule row. Right moves default 5:00 to timed-five.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+wait = 8
+[[step]]
+checkpoint = "timed-five-selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 8
+checkpoint = "timed-kickoff"
+golden = false
+[[step.assert]]
+kind = "not_dark"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "between"
+value = 17980
+value_hi = 18000
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 34000
+[[step]]
+checkpoint = "timed-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "zero"
+[[step]]
+press = ["start"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "returned-title"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1

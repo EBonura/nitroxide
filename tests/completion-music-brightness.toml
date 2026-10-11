@@ -1,0 +1,92 @@
+name = "nitroxide-music-brightness"
+title = "NitroXide: Music and Brightness changes, real card save and cold reboot"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2400
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "default-settings"
+golden = false
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+press = ["left"]
+hold = 4
+wait = 8
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+repeat = 4
+[[step]]
+checkpoint = "changed-settings-before-save"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "default-settings"
+region = { x = 75, y = 95, w = 170, h = 85 }
+min_changed = 0.01
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 200
+[[step]]
+checkpoint = "saved-title"
+golden = false
+[[step.assert]]
+kind = "card_writes"
+min_count = 1
+[[step]]
+card = { action = "snapshot" }
+[[step]]
+card = { action = "reboot" }
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "persisted-settings-after-reboot"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "changed-settings-before-save"
+region = { x = 76, y = 100, w = 164, h = 12 }
+max_changed = 0.0
+[[step.assert]]
+kind = "frame_diff"
+from = "changed-settings-before-save"
+region = { x = 76, y = 132, w = 164, h = 12 }
+max_changed = 0.0

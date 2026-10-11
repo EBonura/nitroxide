@@ -1,0 +1,140 @@
+name = "nitroxide-movement-inputs"
+title = "NitroXide: camera, movement inputs, quit and fresh match reset"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2400
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 60
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 190
+[[step]]
+checkpoint = "free-camera"
+golden = false
+[[step]]
+press = ["triangle"]
+hold = 4
+wait = 16
+[[step]]
+checkpoint = "ball-camera"
+golden = false
+[[step.assert]]
+kind = "frame_diff"
+from = "free-camera"
+region = { x = 0, y = 60, w = 320, h = 180 }
+min_changed = 0.1
+[[step]]
+press = ["triangle"]
+hold = 4
+wait = 16
+[[step]]
+press = ["r2", "left", "l1"]
+hold = 40
+[[step]]
+checkpoint = "powerslide-input"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 48
+op = "lt"
+value = 0
+signed = true
+[[step]]
+press = ["cross", "up"]
+hold = 12
+[[step]]
+checkpoint = "jump-input"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 52
+op = "gt"
+value = 1792
+signed = true
+[[step]]
+press = ["l1", "right", "circle"]
+hold = 24
+[[step]]
+checkpoint = "air-roll-boost-input"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 52
+op = "gt"
+value = 1792
+signed = true
+[[step]]
+press = ["start"]
+hold = 4
+wait = 8
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "quit-to-title"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+checkpoint = "fresh-match-reset"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "zero"
+each = { count = 2, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 48
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 52
+op = "eq"
+value = 1792
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 56
+op = "eq"
+value = -294912
+signed = true

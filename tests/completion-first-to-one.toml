@@ -1,0 +1,99 @@
+name = "nitroxide-first-to-one"
+title = "NitroXide: normal first-to-one match, celebration, results and return"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 3000
+
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+# Up wraps the initial car row to the rule row. Right moves default 5:00 to first-to-one.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+[[step]]
+checkpoint = "first-to-one-selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 1 }
+timeout = 400
+[[step]]
+checkpoint = "final-goal-celebration"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 200
+[[step]]
+checkpoint = "first-to-one-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 28
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "zero"
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "returned-title"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1

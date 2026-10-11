@@ -1,0 +1,109 @@
+name = "nitroxide-demo-cycle"
+title = "NitroXide: complete authored four-show attract cycle and automatic return"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 13000
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+[[step]]
+checkpoint = "show-1"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 20
+op = "eq"
+value = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 20, op = "eq", value = 1 }
+timeout = 3200
+[[step]]
+wait = 60
+[[step]]
+checkpoint = "show-2"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 20
+op = "eq"
+value = 1
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 20, op = "eq", value = 0 }
+timeout = 3200
+[[step]]
+wait = 60
+[[step]]
+checkpoint = "show-3"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 20
+op = "eq"
+value = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 20, op = "eq", value = 1 }
+timeout = 3200
+[[step]]
+wait = 60
+[[step]]
+checkpoint = "show-4"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 20
+op = "eq"
+value = 1
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 1 }
+timeout = 3200
+[[step]]
+wait = 12
+[[step]]
+checkpoint = "automatic-title-return"
+golden = false
+[[step.assert]]
+kind = "not_flat"
