@@ -60,7 +60,7 @@ STEPS  ?= 120000000
 PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
-.PHONY: help test assets textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx recordings \
+.PHONY: help test assets assets-pavel textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx recordings \
 	pgo-collect pgo-choose pgo-order demo-check
 
 help:
@@ -69,6 +69,7 @@ help:
 	@echo "  make sfx       - re-render the synthesised sound effects"
 	@echo "  make recordings SOURCES_DIR=x - cut the crowd and tyre sounds from the source recordings"
 	@echo "  make assets    - bake + cook the car models from $(MODELS_DIR)"
+	@echo "  make assets-pavel PAVEL_DIR=x - cook the six Pavel 3D cars (CC BY 4.0) from the unzipped pack"
 	@echo "  make textures  - cook the arena atlas to shared .psxt"
 	@echo "  make build     - build the PSX-EXE (PGO_VARIANT=off for no PGO; alias: compile)"
 	@echo "  make disc      - build + pack the disc into '$(OUT)'"
@@ -130,6 +131,39 @@ assets:
 		cp "$(LOD_OUT)/$$car.psxm" "$(GAME)/assets/$${car}_lod.psxm"; \
 		cp "$(LOD_OUT)/$$car.psxw" "$(GAME)/assets/$${car}_lod.psxw"; \
 	done
+
+# The six cars from Pavel 3D's "Low Poly City Vehicles Pack" (CC BY 4.0,
+# https://pavel-3d.itch.io/low-poly-city-vehicles-pack, v1.2). The pack is not
+# in this repository (only the cooked blobs are, as for every other car): unzip
+# it anywhere and point PAVEL_DIR at the folder that holds "Individual Assets
+# FBX" and "Material". tools/pavel-cars.txt lists which model becomes which car.
+# tools/convert_pavel_car.py reads each FBX and the palette PNG in Blender
+# (headless, nothing in the file is executed) and writes a role-named source GLB;
+# the rest is the same prepare and cook as `assets`.
+PAVEL_DIR   ?= $(HOME)/Downloads/low-poly-city-vehicles-pack/v1.2
+PAVEL_LIST  := $(ROOT)/tools/pavel-cars.txt
+PAVEL_BUILD := $(ROOT)/build/pavel
+assets-pavel:
+	@rm -rf "$(PAVEL_BUILD)" && mkdir -p "$(PAVEL_BUILD)/src" "$(PAVEL_BUILD)/p150" "$(PAVEL_BUILD)/p60" "$(PAVEL_BUILD)/gameplay" "$(PAVEL_BUILD)/lod"
+	@while IFS='|' read -r car fbx; do \
+		[ -n "$$car" ] || continue; \
+		"$(BLENDER)" --background --factory-startup --python "$(ROOT)/tools/convert_pavel_car.py" -- \
+			"$(PAVEL_DIR)/Individual Assets FBX/$$fbx" "$(PAVEL_DIR)/Material/city_vehicles_pallete.png" \
+			"$(PAVEL_BUILD)/src/$$car.glb" >"$(PAVEL_BUILD)/$$car.log" 2>&1 || { tail -30 "$(PAVEL_BUILD)/$$car.log"; exit 1; }; \
+		"$(BLENDER)" --background --factory-startup --python "$(ROOT)/tools/prepare_car_models.py" -- \
+			"$(PAVEL_BUILD)/src/$$car.glb" "$(PAVEL_BUILD)/p150/$$car.glb" "$(CAR_FACE_TARGET)" >>"$(PAVEL_BUILD)/$$car.log" 2>&1 || { tail -30 "$(PAVEL_BUILD)/$$car.log"; exit 1; }; \
+		"$(BLENDER)" --background --factory-startup --python "$(ROOT)/tools/prepare_car_models.py" -- \
+			"$(PAVEL_BUILD)/src/$$car.glb" "$(PAVEL_BUILD)/p60/$$car.glb" "$(CAR_LOD_FACE_TARGET)" >>"$(PAVEL_BUILD)/$$car.log" 2>&1 || { tail -30 "$(PAVEL_BUILD)/$$car.log"; exit 1; }; \
+		grep '^PREPARED' "$(PAVEL_BUILD)/$$car.log" | sed 's|$(PAVEL_BUILD)/||g'; \
+	done < "$(PAVEL_LIST)"
+	cd $(COOK) && cargo run --release -- "$(PAVEL_BUILD)/p150" "$(PAVEL_BUILD)/gameplay" --components
+	cd $(COOK) && cargo run --release -- "$(PAVEL_BUILD)/p60" "$(PAVEL_BUILD)/lod" --components
+	@while IFS='|' read -r car fbx; do \
+		[ -n "$$car" ] || continue; \
+		cp "$(PAVEL_BUILD)/gameplay/$$car.psxm" "$(PAVEL_BUILD)/gameplay/$$car.psxw" "$(PAVEL_BUILD)/gameplay/$$car.psxc" "$(GAME)/assets/"; \
+		cp "$(PAVEL_BUILD)/lod/$$car.psxm" "$(GAME)/assets/$${car}_lod.psxm"; \
+		cp "$(PAVEL_BUILD)/lod/$$car.psxw" "$(GAME)/assets/$${car}_lod.psxw"; \
+	done < "$(PAVEL_LIST)"
 
 # The arena atlas is the first shared-format runtime asset: source imagery and
 # procedural patterns are cooked on the host, packed into WORLD.PAK, loaded at
