@@ -2968,15 +2968,27 @@ static CAR_BLOBS: [&[u8]; CAR_SLOTS] = [
     include_bytes!("../assets/sedan.psxm"),
     include_bytes!("../assets/hatchback.psxm"),
     include_bytes!("../assets/hatchback2.psxm"),
+    include_bytes!("../assets/razor.psxm"),
+    include_bytes!("../assets/fury.psxm"),
+    include_bytes!("../assets/bolt.psxm"),
+    include_bytes!("../assets/brute.psxm"),
+    include_bytes!("../assets/dash.psxm"),
+    include_bytes!("../assets/cinder.psxm"),
     // Distance LOD, cooked from the same sources at 60 faces
     // (`make assets CAR_FACE_TARGET=60`, see the Makefile), in the same
     // order so slot `which + CAR_COUNT` is the far copy of `which`.
     include_bytes!("../assets/sedan_lod.psxm"),
     include_bytes!("../assets/hatchback_lod.psxm"),
     include_bytes!("../assets/hatchback2_lod.psxm"),
+    include_bytes!("../assets/razor_lod.psxm"),
+    include_bytes!("../assets/fury_lod.psxm"),
+    include_bytes!("../assets/bolt_lod.psxm"),
+    include_bytes!("../assets/brute_lod.psxm"),
+    include_bytes!("../assets/dash_lod.psxm"),
+    include_bytes!("../assets/cinder_lod.psxm"),
 ];
 
-/// Every cooked car mesh: the three select-screen cars, then their LODs.
+/// Every cooked car mesh: the select-screen cars, then their LODs.
 const CAR_SLOTS: usize = CAR_COUNT * 2;
 
 /// A full-screen view swaps a car to its 60-face LOD once it is this many
@@ -3174,7 +3186,7 @@ pub fn set_appearance(seat: usize, car: usize, paint: usize) {
     }
     let which = car.min(CAR_COUNT - 1);
     let (_, body, dark, _) = PAINTS[paint.min(PAINT_COUNT - 1)];
-    let repaint = |src: &[Rgb; CAR_MAX_VERTS], dst: &mut [u32; CAR_MAX_VERTS]| {
+    let repaint = |src: &[Rgb; CAR_SLOT_VERTS], dst: &mut [u32; CAR_MAX_VERTS]| {
         for (out, &base) in dst.iter_mut().zip(src.iter()) {
             *out = rgbc(if base == BODY_KEY {
                 body
@@ -3201,9 +3213,21 @@ static CAR_WHEELS: [&[u8]; CAR_SLOTS] = [
     include_bytes!("../assets/sedan.psxw"),
     include_bytes!("../assets/hatchback.psxw"),
     include_bytes!("../assets/hatchback2.psxw"),
+    include_bytes!("../assets/razor.psxw"),
+    include_bytes!("../assets/fury.psxw"),
+    include_bytes!("../assets/bolt.psxw"),
+    include_bytes!("../assets/brute.psxw"),
+    include_bytes!("../assets/dash.psxw"),
+    include_bytes!("../assets/cinder.psxw"),
     include_bytes!("../assets/sedan_lod.psxw"),
     include_bytes!("../assets/hatchback_lod.psxw"),
     include_bytes!("../assets/hatchback2_lod.psxw"),
+    include_bytes!("../assets/razor_lod.psxw"),
+    include_bytes!("../assets/fury_lod.psxw"),
+    include_bytes!("../assets/bolt_lod.psxw"),
+    include_bytes!("../assets/brute_lod.psxw"),
+    include_bytes!("../assets/dash_lod.psxw"),
+    include_bytes!("../assets/cinder_lod.psxw"),
 ];
 const WHEEL_NONE: u8 = u8::MAX;
 
@@ -3212,10 +3236,12 @@ const WHEEL_NONE: u8 = u8::MAX;
 pub const SEATS: usize = 2;
 
 /// How many cars the select screen cycles through.
-pub const CAR_COUNT: usize = 3;
+pub const CAR_COUNT: usize = 9;
 
 /// Names, in the same order, for the select screen to label them with.
-pub const CAR_NAMES: [&str; CAR_COUNT] = ["COMET", "HATCH", "SPRINTER"];
+pub const CAR_NAMES: [&str; CAR_COUNT] = [
+    "COMET", "HATCH", "SPRINTER", "RAZOR", "FURY", "BOLT", "BRUTE", "DASH", "CINDER",
+];
 
 /// Stadium light rig, in **render** space, so its Y points down like the rest
 /// of the renderer.
@@ -3267,6 +3293,14 @@ const CAR_FACE_CAP: usize = CAR_TRI_CAP;
 /// Projected-vertex scratch. Undersize this and `project_car` quietly truncates
 /// the car, so the cook tests check every committed blob against it.
 const CAR_VERT_CAP: usize = 1344;
+
+/// Vertices and faces one cooked car may have, per slot. The tables below hold
+/// one entry set per car and per LOD (eighteen slots for nine cars), so they are
+/// sized to the biggest committed car, not to the pair budget above: the
+/// heaviest is 268 vertices and 255 faces, and `cook-models`' runtime_caps test
+/// fails a blob that outgrows these.
+const CAR_SLOT_VERTS: usize = 512;
+const CAR_SLOT_FACES: usize = 512;
 
 /// One projected, lit car vertex, kept in the words the GTE hands back and
 /// the GPU packet takes: `SXY` (x low, y high), the lit `RGB` (code byte
@@ -3337,16 +3371,16 @@ const CAR_MAX_VERTS: usize = 1344;
 /// built once here and `project_cars` feeds `submit_projected_mesh` instead.
 /// Walking faces in order and keeping the first colour to claim each vertex
 /// reproduces the engine's forward scan exactly, so the pixels are identical.
-static mut CAR_MATERIALS: [[(u8, u8, u8); CAR_MAX_VERTS]; CAR_SLOTS] =
-    [[(128, 128, 128); CAR_MAX_VERTS]; CAR_SLOTS];
+static mut CAR_MATERIALS: [[(u8, u8, u8); CAR_SLOT_VERTS]; CAR_SLOTS] =
+    [[(128, 128, 128); CAR_SLOT_VERTS]; CAR_SLOTS];
 
 /// Resolve one blob's per-vertex colours into `out`.
-fn car_materials_for(blob: &[u8], out: &mut [(u8, u8, u8); CAR_MAX_VERTS]) {
+fn car_materials_for(blob: &[u8], out: &mut [(u8, u8, u8); CAR_SLOT_VERTS]) {
     let Ok(mesh) = Mesh::from_bytes(blob) else {
         return;
     };
-    let verts = (mesh.vert_count() as usize).min(CAR_MAX_VERTS);
-    let mut claimed = [false; CAR_MAX_VERTS];
+    let verts = (mesh.vert_count() as usize).min(CAR_SLOT_VERTS);
+    let mut claimed = [false; CAR_SLOT_VERTS];
     for f in 0..mesh.face_count() {
         let Some(colour) = mesh.face_color(f) else {
             break;
@@ -3423,17 +3457,17 @@ fn build_car_wheel_centres() {
 /// word, and `z`, which a halfword load sign-extends for free. Same six bytes
 /// a vertex as `Vec3I16`, but one aligned word read instead of two halves and
 /// a shift-or per register.
-static mut CAR_VERT_XY: [[u32; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
-static mut CAR_VERT_Z: [[i16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
-static mut CAR_NORMAL_XY: [[u32; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
-static mut CAR_NORMAL_Z: [[i16; CAR_VERT_CAP]; CAR_SLOTS] = [[0; CAR_VERT_CAP]; CAR_SLOTS];
+static mut CAR_VERT_XY: [[u32; CAR_SLOT_VERTS]; CAR_SLOTS] = [[0; CAR_SLOT_VERTS]; CAR_SLOTS];
+static mut CAR_VERT_Z: [[i16; CAR_SLOT_VERTS]; CAR_SLOTS] = [[0; CAR_SLOT_VERTS]; CAR_SLOTS];
+static mut CAR_NORMAL_XY: [[u32; CAR_SLOT_VERTS]; CAR_SLOTS] = [[0; CAR_SLOT_VERTS]; CAR_SLOTS];
+static mut CAR_NORMAL_Z: [[i16; CAR_SLOT_VERTS]; CAR_SLOTS] = [[0; CAR_SLOT_VERTS]; CAR_SLOTS];
 /// How many of those entries each model actually filled.
 static mut CAR_VERT_COUNT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
 /// Triangle indices, decoded the same way and for the same reason: `Mesh::face`
 /// rebuilds three `u16` from six `lbu` behind a stride branch, once per face
 /// per car per view. Two words a face, `a | b << 16` and `c`: three halfword
 /// loads were three main-RAM stalls, this is two.
-static mut CAR_FACES: [[[u32; 2]; CAR_FACE_CAP]; CAR_SLOTS] = [[[0; 2]; CAR_FACE_CAP]; CAR_SLOTS];
+static mut CAR_FACES: [[[u32; 2]; CAR_SLOT_FACES]; CAR_SLOTS] = [[[0; 2]; CAR_SLOT_FACES]; CAR_SLOTS];
 /// Depth-sorted face keys for one car draw (`submit_car_faces`).
 static mut CAR_SORT_KEYS: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
 static mut CAR_SORT_SPARE: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
@@ -3444,7 +3478,7 @@ fn decode_car_geometry(blob: &[u8], which: usize) {
     let Ok(mesh) = Mesh::from_bytes(blob) else {
         return;
     };
-    let count = (mesh.vert_count() as usize).min(CAR_VERT_CAP);
+    let count = (mesh.vert_count() as usize).min(CAR_SLOT_VERTS);
     for i in 0..count {
         unsafe {
             let v = mesh.vertex(i as u16);
@@ -3460,7 +3494,7 @@ fn decode_car_geometry(blob: &[u8], which: usize) {
     // Faces are dropped here if any index reaches past the vertices we kept,
     // so the hot loop needs no bounds check of its own.
     let mut kept = 0usize;
-    for f in 0..(mesh.face_count() as usize).min(CAR_FACE_CAP) {
+    for f in 0..(mesh.face_count() as usize).min(CAR_SLOT_FACES) {
         let (ia, ib, ic) = mesh.face(f as u16);
         if ia as usize >= count || ib as usize >= count || ic as usize >= count {
             continue;
@@ -3512,7 +3546,7 @@ static mut POSED_WHEELS: [[u32; 4]; CAR_VERT_CAP] = [[0; 4]; CAR_VERT_CAP];
 /// Vertices `project_car_animated` projects for `which`.
 fn car_projected_count(which: usize) -> usize {
     (unsafe { CAR_VERT_COUNT[which] } as usize)
-        .min(CAR_VERT_CAP)
+        .min(CAR_SLOT_VERTS)
         .min(CAR_MAX_VERTS)
         .min(CAR_WHEELS[which].len())
 }
@@ -3911,7 +3945,7 @@ fn project_car_animated(which: usize, materials: &[u32; CAR_MAX_VERTS], slots: &
     let (vxy, vz) = unsafe { (&CAR_VERT_XY[which], &CAR_VERT_Z[which]) };
     let (nxy, nz) = unsafe { (&CAR_NORMAL_XY[which], &CAR_NORMAL_Z[which]) };
     let count = (unsafe { CAR_VERT_COUNT[which] } as usize)
-        .min(CAR_VERT_CAP)
+        .min(CAR_SLOT_VERTS)
         .min(CAR_MAX_VERTS)
         .min(slots.len());
     let proj = unsafe { &mut CAR_PROJ };

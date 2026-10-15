@@ -61,14 +61,26 @@ music: add `MUSIC_DIR=/path/to/music` with the six WAVs (`jungle1-a`,
 pack them into XA files with the SDK's `xa-pack` and press them on the disc.
 They are external to this repository; see [the audio notes](game/assets/audio/README.md).
 Keep the BIN and CUE together.
-Blender and the original car models are needed only for `make assets`; normal
-builds use the committed cooked models.
+Blender and the original car models are needed only for `make assets` and
+`make assets-pavel`; normal builds use the committed cooked models.
 
 ## Music
 
 Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
 Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/. The loops are chained into
 six tracks and play as a shuffled playlist, over the menus and the match alike.
+
+## Cars
+
+Nine cars: Comet, Hatch and Sprinter, and six from Pavel 3D's pack: Razor,
+Fury, Bolt, Brute, Dash and Cinder.
+
+Cars: Pavel 3D, Low Poly City Vehicles Pack, CC BY 4.0,
+https://pavel-3d.itch.io/low-poly-city-vehicles-pack. The six cars are that
+pack's Sports Car 02, 03 and 01, Muscle Car 01, Coupe 01 and Hot Rod, recoloured
+by the game and cooked down to the same face budget as the others. Only the
+cooked meshes are in this repository, not the pack: see `make assets-pavel`
+and [the car notes](#car-models).
 
 ## Controls
 
@@ -130,10 +142,12 @@ car is not textured; see below.
 
 ## Car models
 
-Five low-poly cars, cooked from glTF by `tools/cook-models`:
+Nine low-poly cars, cooked by `tools/cook-models`: three from glTF sources and
+six from the Pavel 3D pack (CC BY 4.0, see [Cars](#cars)):
 
 ```sh
 make assets      # re-cook from MODELS_DIR, only needed when the sources change
+make assets-pavel PAVEL_DIR=/path/to/unzipped/pack/v1.2   # the six Pavel 3D cars
 make textures    # re-cook game/assets/disc/chunk_1.psxt
 ```
 
@@ -185,8 +199,15 @@ The tool on top exists for two things the importer does not do:
   colour slots shared by windows and wheels and the whole model rendered as a
   single strange-looking blob.
 
-The select screen offers the three intact passenger-car bodies: Comet, Hatch, and
-Sprinter. The two heavy-truck source meshes remain in the asset library for
+The Pavel 3D cars come in as an FBX body plus four wheel objects, one flat swatch
+per face picked from a shared palette PNG. `tools/convert_pavel_car.py` (Blender,
+headless; the FBX is only parsed, never run) reads the swatch of every face and
+splits the body by role (`tools/pavel-cars.txt` says which model becomes which
+car), then the usual prepare and cook run. Wing mirrors and number plates are
+left out, since the pack models them as slivers that decimate into twigs.
+
+The select screen offers nine cars: the three intact passenger-car bodies Comet, Hatch, and
+Sprinter, and the six from the pack. The two heavy-truck source meshes remain in the asset library for
 future rework, but are not selectable: both are exposed commercial chassis
 rather than complete rocket-car silhouettes. Each selectable car is one asset.
 

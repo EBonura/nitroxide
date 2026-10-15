@@ -14,6 +14,15 @@ playlist.
 - Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
   Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/
 
+Six new cars: Razor, Fury, Bolt, Brute, Dash and Cinder, nine in all.
+
+- The six come from Pavel 3D's Low Poly City Vehicles Pack (Sports Car 02, 03
+  and 01, Muscle Car 01, Coupe 01 and Hot Rod), cooked to the same face budget
+  as Comet, Hatch and Sprinter, each with its 60-face split-screen copy.
+- Cars: Pavel 3D, Low Poly City Vehicles Pack, CC BY 4.0,
+  https://pavel-3d.itch.io/low-poly-city-vehicles-pack. The credit is also on
+  the boot splash, in the README and in the release notes.
+
 Car models:
 
 - Fewer see-through lines in the cars. The one-pixel gaps between a car's

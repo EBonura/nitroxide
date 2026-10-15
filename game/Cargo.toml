@@ -41,6 +41,9 @@ boot-corner = []
 # Dev-only model selectors for deterministic visual QA of every garage car.
 boot-hatch = []
 boot-sprinter = []
+# Dev: NITRO_CAR0 at build time picks seat 0's car (an index into draw::CAR_NAMES),
+# so a recorded tape can be replayed with any car without a second pad.
+boot-car = []
 # Dev: ball parked airborne in front of the car, the only view that shows a
 # whole shadow. Gravity is left on, so capture early.
 boot-airball = []

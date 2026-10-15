@@ -20,4 +20,8 @@ To run:
 Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
 Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/
 
+Cars: Pavel 3D, Low Poly City Vehicles Pack, CC BY 4.0,
+https://pavel-3d.itch.io/low-poly-city-vehicles-pack (Razor, Fury, Bolt, Brute,
+Dash and Cinder).
+
 Bonnie Studios  -  https://bonnie-studios.itch.io
