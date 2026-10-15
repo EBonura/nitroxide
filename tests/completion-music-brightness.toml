@@ -26,11 +26,13 @@ repeat = 2
 press = ["cross"]
 hold = 4
 wait = 8
+# Rows: Arena, Sound, Music, Track, FOV, Brightness, Screen X, Screen Y,
+# Save, Back. Brightness is the sixth.
 [[step]]
 press = ["down"]
 hold = 4
 wait = 8
-repeat = 2
+repeat = 3
 [[step]]
 press = ["left"]
 hold = 4
@@ -39,7 +41,7 @@ wait = 8
 press = ["up"]
 hold = 4
 wait = 8
-repeat = 4
+repeat = 5
 [[step]]
 checkpoint = "changed-settings-before-save"
 golden = false
@@ -48,7 +50,7 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "default-settings"
-region = { x = 75, y = 95, w = 170, h = 85 }
+region = { x = 75, y = 83, w = 170, h = 58 }
 min_changed = 0.01
 [[step]]
 press = ["up"]
@@ -92,10 +94,12 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 92, w = 164, h = 12 }
+# The Music row, then the Brightness row (the Track row between them is a
+# session setting that shuffles on every boot).
+region = { x = 76, y = 83, w = 164, h = 12 }
 max_changed = 0.0
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 124, w = 164, h = 12 }
+region = { x = 76, y = 131, w = 164, h = 12 }
 max_changed = 0.0

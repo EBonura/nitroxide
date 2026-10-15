@@ -17,6 +17,8 @@ wait = 12
 [[step]]
 checkpoint = "default-settings"
 golden = false
+# Rows: Arena, Sound, Music, Track, FOV, Brightness, Screen X, Screen Y,
+# Save, Back.
 [[step]]
 press = ["down"]
 hold = 4
@@ -30,7 +32,7 @@ wait = 8
 press = ["down"]
 hold = 4
 wait = 8
-repeat = 2
+repeat = 3
 [[step]]
 press = ["left"]
 hold = 4
@@ -55,7 +57,7 @@ wait = 8
 press = ["up"]
 hold = 4
 wait = 8
-repeat = 6
+repeat = 7
 [[step]]
 checkpoint = "changed-settings-before-save"
 golden = false
@@ -64,7 +66,7 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "default-settings"
-region = { x = 75, y = 95, w = 170, h = 85 }
+region = { x = 75, y = 83, w = 170, h = 100 }
 min_changed = 0.01
 [[step]]
 press = ["up"]
@@ -108,20 +110,22 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 92, w = 164, h = 12 }
+# Music, Brightness, Screen X and Screen Y rows; the Track row is a session
+# setting that shuffles on every boot, so it is not compared.
+region = { x = 76, y = 83, w = 164, h = 12 }
 max_changed = 0.0
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 124, w = 164, h = 12 }
+region = { x = 76, y = 131, w = 164, h = 12 }
 max_changed = 0.0
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 140, w = 164, h = 12 }
+region = { x = 76, y = 147, w = 164, h = 12 }
 max_changed = 0.0
 [[step.assert]]
 kind = "frame_diff"
 from = "changed-settings-before-save"
-region = { x = 76, y = 156, w = 164, h = 12 }
+region = { x = 76, y = 163, w = 164, h = 12 }
 max_changed = 0.0

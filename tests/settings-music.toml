@@ -1,5 +1,5 @@
 name = "nitroxide-settings-music"
-title = "NitroXide: nine settings rows fit the installed music variant"
+title = "NitroXide: ten settings rows fit the installed music variant"
 disc = ["build/gate-music/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
 memcard = "fresh"
@@ -15,7 +15,7 @@ press = ["cross"]
 hold = 4
 wait = 12
 [[step]]
-checkpoint = "music-settings-all-nine-rows"
+checkpoint = "music-settings-all-ten-rows"
 golden = false
 strict = [{ x = 72, y = 150, w = 192, h = 48 }]
 [[step.assert]]
@@ -23,7 +23,7 @@ kind = "ram"
 sym = "NITRO_SETTINGS_STATE"
 offset = 16
 op = "eq"
-value = 9
+value = 10
 [[step.assert]]
 kind = "card_unchanged"
 [[step]]
@@ -55,7 +55,7 @@ kind = "ram"
 sym = "NITRO_SETTINGS_STATE"
 offset = 12
 op = "eq"
-value = 8
+value = 9
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_SETTINGS_STATE"

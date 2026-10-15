@@ -1,0 +1,120 @@
+# Change FOV in the title settings, save it to the slot-one card, then boot
+# from that same card and verify the saved view is still on the FOV row.
+# Music disc rows: Arena, Sound, Music, Track, FOV, Brightness, Screen X,
+# Screen Y, Save, Back, so FOV is the fifth and Save the ninth.
+name = "nitroxide-settings-fov"
+title = "NitroXide: FOV change, real card save and cold reboot"
+disc = ["build/gate-music/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2400
+[[step]]
+wait = 440
+# SETTINGS is the fourth title row.
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 4
+[[step]]
+checkpoint = "fov-default"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "eq"
+value = 5
+# Three steps right: 60 to 75 degrees.
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+checkpoint = "fov-changed-before-save"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "frame_diff"
+from = "fov-default"
+region = { x = 76, y = 115, w = 164, h = 12 }
+min_changed = 0.02
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 20
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "card_unchanged"
+# Down to Save Settings (the ninth row), then Cross writes the card.
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 4
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 100
+[[step]]
+checkpoint = "fov-saved"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "card_writes"
+min_count = 1
+[[step]]
+card = { action = "snapshot" }
+[[step]]
+card = { action = "reboot" }
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 4
+[[step]]
+checkpoint = "fov-persisted-after-reboot"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+# The FOV row reads what it read before the save...
+[[step.assert]]
+kind = "frame_diff"
+from = "fov-changed-before-save"
+region = { x = 76, y = 115, w = 164, h = 12 }
+max_changed = 0.0
+# ...and not what a fresh profile reads.
+[[step.assert]]
+kind = "frame_diff"
+from = "fov-default"
+region = { x = 76, y = 115, w = 164, h = 12 }
+min_changed = 0.02
