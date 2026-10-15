@@ -90,6 +90,8 @@ pub struct Music {
     /// tick to poll on.
     poll_from: u32,
     next_poll: u32,
+    /// How long the current song runs, in milliseconds of the head's time.
+    song_ms: u32,
 }
 
 impl Music {
@@ -109,6 +111,7 @@ impl Music {
             announced_at: None,
             poll_from: 0,
             next_poll: 0,
+            song_ms: 0,
         }
     }
 
@@ -243,7 +246,16 @@ impl Music {
                 self.list.next();
                 self.begin_song(tick, false);
             }
-            Event::Playing | Event::Looped => {}
+            // The songs of a file are padded with silence to the longest, and
+            // the drive only reports the end of the file, so a shorter song
+            // is ended by the head's time reaching its own length.
+            Event::Playing | Event::Looped => {
+                if self.player.is_streaming() && self.player.elapsed_millis() >= self.song_ms {
+                    self.player.stop();
+                    self.list.next();
+                    self.begin_song(tick, false);
+                }
+            }
         }
     }
 
@@ -258,6 +270,7 @@ impl Music {
             self.start_at = None;
             self.playing = true;
             self.announced_at = Some(tick);
+            self.song_ms = ms;
             self.poll_from = tick
                 .wrapping_add(ms / 1000 * TICKS_PER_SECOND)
                 .wrapping_sub(POLL_LEAD_TICKS);
