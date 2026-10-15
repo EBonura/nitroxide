@@ -191,6 +191,9 @@ fn cook(glb: &Path, target_length: i32) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, St
         cluster_connected_components(&mut blob, COMPONENT_GRID, &face_components)?;
     stats.verts = verts;
     stats.faces = faces;
+    let (verts, faces, components) = weld_seams(&mut blob, &components)?;
+    stats.verts = verts;
+    stats.faces = faces;
     let (verts, components) = split_vertices_by_face_colour(&mut blob, &components)?;
     stats.verts = verts;
     stats.components = components.iter().copied().max().map_or(0, |id| id + 1);
@@ -819,6 +822,324 @@ fn cluster_connected_components(
     Ok((new_vert_count, new_face_count, clustered_components))
 }
 
+/// How close, in uu, two vertices of different source objects must sit for
+/// [`weld_seams`] to make them one vertex, and how close a boundary vertex must
+/// sit to another object's boundary edge to be moved onto it.
+///
+/// A car is cooked as a stack of separately decimated objects (body panels,
+/// chassis, glass, lamps) and the vertex table is whole uu. Two objects that
+/// meet along a sill therefore end with their seam vertices up to a few uu
+/// apart, and every pixel that falls in that gap shows the pitch: the dotted
+/// line along a car's flank in the garage. Two uu is a pixel and a bit at the
+/// garage's scale and under half a pixel in play, so closing it is invisible
+/// as geometry and removes the cracks.
+const SEAM_TOLERANCE: i32 = 3;
+
+/// Close the gaps between separately decimated parts of one car.
+///
+/// Two passes over the clustered mesh, both leaving wheel geometry alone (a
+/// wheel has to stay a rigid piece of its own for `wheel_slots`):
+///
+/// 1. Vertices of *different* source objects within [`SEAM_TOLERANCE`] of each
+///    other are welded to their rounded centroid, nearest pairs first. A weld
+///    never puts two vertices of one object into the same vertex, so no object
+///    can collapse onto itself through a chain of welds.
+/// 2. A vertex on an open edge that lies within [`SEAM_TOLERANCE`] of the
+///    interior of another object's open edge is moved onto that edge, which
+///    turns a gap into a T-junction the rasteriser leaves closed.
+///
+/// Normals are rebuilt from the moved faces, and a face that collapsed or
+/// duplicated another is dropped. Returns the new vertex and face counts and
+/// the per-vertex source object table for the vertices that remain.
+fn weld_seams(blob: &mut Vec<u8>, components: &[u8]) -> Result<(u16, u16, Vec<u8>), String> {
+    if blob.len() < VERT_TABLE_OFFSET || &blob[0..4] != b"PSXM" {
+        return Err("not a PSXM blob".into());
+    }
+    let flags = u16::from_le_bytes([blob[6], blob[7]]);
+    if u16::from_le_bytes([blob[4], blob[5]]) != 2 || flags & 3 != 3 {
+        return Err("seam weld needs PSXM v2 colours and normals".into());
+    }
+    let verts = u16::from_le_bytes([blob[12], blob[13]]) as usize;
+    let nfaces = u16::from_le_bytes([blob[14], blob[15]]) as usize;
+    if components.len() != verts {
+        return Err("seam weld component table length mismatch".into());
+    }
+    let vertex_end = VERT_TABLE_OFFSET + verts * VERT_STRIDE;
+    let index_end = vertex_end + nfaces * 6;
+    let colour_end = index_end + nfaces * 3;
+    if blob.len() < colour_end {
+        return Err("PSXM tables truncated before seam weld".into());
+    }
+    let mut pos: Vec<[i32; 3]> = (0..verts)
+        .map(|i| {
+            let o = VERT_TABLE_OFFSET + i * VERT_STRIDE;
+            [0, 2, 4].map(|k| i16::from_le_bytes([blob[o + k], blob[o + k + 1]]) as i32)
+        })
+        .collect();
+    let faces: Vec<[usize; 3]> = (0..nfaces)
+        .map(|f| {
+            let o = vertex_end + f * 6;
+            [0, 2, 4].map(|k| u16::from_le_bytes([blob[o + k], blob[o + k + 1]]) as usize)
+        })
+        .collect();
+    let colours: Vec<[u8; 3]> = (0..nfaces)
+        .map(|f| {
+            let o = index_end + f * 3;
+            [blob[o], blob[o + 1], blob[o + 2]]
+        })
+        .collect();
+    if faces.iter().flatten().any(|&v| v >= verts) {
+        return Err("PSXM face index outside vertex table".into());
+    }
+
+    // A source object is a wheel if any of its faces is tyre or rim.
+    let (tyre, rim) = (Role::Tyre.colour(), Role::Rim.colour());
+    let mut wheel_object = [false; 256];
+    for (face, colour) in faces.iter().zip(&colours) {
+        let c = (colour[0], colour[1], colour[2]);
+        if c == tyre || c == rim {
+            wheel_object[components[face[0]] as usize] = true;
+        }
+    }
+    let movable: Vec<bool> = components
+        .iter()
+        .map(|&c| !wheel_object[c as usize])
+        .collect();
+
+    // Pass 1: weld across parts, nearest pairs first. A part is a source object
+    // together with the set of materials on the faces that use the vertex, so a
+    // glass shell and the panel it sits in are two parts even when one object
+    // holds both.
+    let mut part_colours: Vec<Vec<[u8; 3]>> = vec![Vec::new(); verts];
+    for (face, colour) in faces.iter().zip(&colours) {
+        for &v in face {
+            if !part_colours[v].contains(colour) {
+                part_colours[v].push(*colour);
+            }
+        }
+    }
+    let mut part_ids: HashMap<(u8, Vec<[u8; 3]>), usize> = HashMap::new();
+    let part: Vec<usize> = (0..verts)
+        .map(|v| {
+            let mut cs = part_colours[v].clone();
+            cs.sort_unstable();
+            let next = part_ids.len();
+            *part_ids.entry((components[v], cs)).or_insert(next)
+        })
+        .collect();
+    let mut joined: HashSet<(usize, usize)> = HashSet::new();
+    for face in &faces {
+        for (a, b) in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
+            joined.insert((a.min(b), a.max(b)));
+        }
+    }
+    let d2 = |a: [i32; 3], b: [i32; 3]| (0..3).map(|k| (a[k] - b[k]).pow(2)).sum::<i32>();
+    let mut pairs: Vec<(i32, usize, usize)> = Vec::new();
+    for i in 0..verts {
+        for j in i + 1..verts {
+            if movable[i] && movable[j] && part[i] != part[j] && !joined.contains(&(i, j)) {
+                let d = d2(pos[i], pos[j]);
+                if d <= SEAM_TOLERANCE * SEAM_TOLERANCE {
+                    pairs.push((d, i, j));
+                }
+            }
+        }
+    }
+    pairs.sort_unstable();
+    let mut parent: Vec<usize> = (0..verts).collect();
+    let mut members: Vec<Vec<usize>> = (0..verts).map(|v| vec![v]).collect();
+    fn root(parent: &mut [usize], mut v: usize) -> usize {
+        while parent[v] != v {
+            parent[v] = parent[parent[v]];
+            v = parent[v];
+        }
+        v
+    }
+    for (_, i, j) in pairs {
+        let (ri, rj) = (root(&mut parent, i), root(&mut parent, j));
+        if ri == rj {
+            continue;
+        }
+        let clash = members[ri].iter().any(|&a| {
+            members[rj]
+                .iter()
+                .any(|&b| part[a] == part[b] || joined.contains(&(a.min(b), a.max(b))))
+        });
+        if clash {
+            continue;
+        }
+        parent[rj] = ri;
+        let moved = std::mem::take(&mut members[rj]);
+        members[ri].extend(moved);
+    }
+    let mut sum: Vec<([i64; 3], i64)> = vec![([0; 3], 0); verts];
+    for v in 0..verts {
+        let r = root(&mut parent, v);
+        for k in 0..3 {
+            sum[r].0[k] += pos[v][k] as i64;
+        }
+        sum[r].1 += 1;
+    }
+    for v in 0..verts {
+        let r = root(&mut parent, v);
+        let (s, n) = sum[r];
+        if n > 1 {
+            pos[v] = [0, 1, 2].map(|k| ((s[k] + n / 2).div_euclid(n)) as i32);
+        }
+    }
+
+    // Pass 2: pull open-edge vertices onto neighbouring objects' open edges.
+    let mut edge_count: HashMap<(usize, usize), u32> = HashMap::new();
+    let key = |a: usize, b: usize| (a.min(b), a.max(b));
+    let mapped = |v: usize, parent: &mut Vec<usize>| root(parent, v);
+    let welded: Vec<[usize; 3]> = faces
+        .iter()
+        .map(|f| {
+            [
+                mapped(f[0], &mut parent),
+                mapped(f[1], &mut parent),
+                mapped(f[2], &mut parent),
+            ]
+        })
+        .collect();
+    for f in &welded {
+        if f[0] == f[1] || f[1] == f[2] || f[0] == f[2] {
+            continue;
+        }
+        for (a, b) in [(f[0], f[1]), (f[1], f[2]), (f[2], f[0])] {
+            *edge_count.entry(key(a, b)).or_insert(0) += 1;
+        }
+    }
+    let open: Vec<(usize, usize)> = edge_count
+        .iter()
+        .filter(|(_, &n)| n == 1)
+        .map(|(&e, _)| e)
+        .collect();
+    let on_open_edge: HashSet<usize> = open.iter().flat_map(|&(a, b)| [a, b]).collect();
+    let mut moved = pos.clone();
+    let tol = SEAM_TOLERANCE as f64;
+    for &v in &on_open_edge {
+        if !movable[v] {
+            continue;
+        }
+        let p = pos[v].map(|c| c as f64);
+        let mut best: Option<(f64, [f64; 3])> = None;
+        for &(a, b) in &open {
+            if a == v || b == v || !movable[a] || !movable[b] {
+                continue;
+            }
+            if part[a] == part[v] && part[b] == part[v] {
+                continue;
+            }
+            let (pa, pb) = (pos[a].map(|c| c as f64), pos[b].map(|c| c as f64));
+            let ab = [0, 1, 2].map(|k| pb[k] - pa[k]);
+            let len2: f64 = ab.iter().map(|x| x * x).sum();
+            if len2 < 1.0 {
+                continue;
+            }
+            let t = ((0..3).map(|k| (p[k] - pa[k]) * ab[k]).sum::<f64>() / len2).clamp(0.0, 1.0);
+            if !(0.08..=0.92).contains(&t) {
+                continue;
+            }
+            let q = [0, 1, 2].map(|k| pa[k] + ab[k] * t);
+            let dist = ((0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f64>()).sqrt();
+            if dist > 0.0 && dist <= tol && best.is_none_or(|(d, _)| dist < d) {
+                best = Some((dist, q));
+            }
+        }
+        if let Some((_, q)) = best {
+            moved[v] = q.map(|c| c.round() as i32);
+        }
+    }
+    pos = moved;
+
+    // Rebuild: one vertex per weld class, faces remapped, normals recomputed.
+    let mut new_index: HashMap<usize, usize> = HashMap::new();
+    let mut vertices: Vec<[i16; 3]> = Vec::new();
+    let mut new_components: Vec<u8> = Vec::new();
+    let mut remap = vec![0usize; verts];
+    for v in 0..verts {
+        let r = root(&mut parent, v);
+        let idx = *new_index.entry(r).or_insert_with(|| {
+            vertices.push(pos[r].map(|c| c.clamp(i16::MIN as i32, i16::MAX as i32) as i16));
+            new_components.push(components[r]);
+            vertices.len() - 1
+        });
+        remap[v] = idx;
+    }
+    let mut out_faces: Vec<[usize; 3]> = Vec::new();
+    let mut out_colours: Vec<[u8; 3]> = Vec::new();
+    let mut seen = HashSet::new();
+    for (f, colour) in faces.iter().zip(&colours) {
+        let r = [remap[f[0]], remap[f[1]], remap[f[2]]];
+        if r[0] == r[1] || r[1] == r[2] || r[0] == r[2] {
+            continue;
+        }
+        let mut canonical = r;
+        canonical.sort_unstable();
+        if seen.insert((canonical, *colour)) {
+            out_faces.push(r);
+            out_colours.push(*colour);
+        }
+    }
+    let mut normal_sums = vec![[0i64; 3]; vertices.len()];
+    for f in &out_faces {
+        let [a, b, c] = f.map(|i| vertices[i].map(i64::from));
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        for &i in f {
+            for k in 0..3 {
+                normal_sums[i][k] += n[k];
+            }
+        }
+    }
+    let normals: Vec<[i16; 3]> = normal_sums
+        .into_iter()
+        .map(|n| {
+            let len = ((n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) as f64).sqrt();
+            if len == 0.0 {
+                [0, 0x1000, 0]
+            } else {
+                n.map(|a| ((a as f64 * 4096.0) / len).round() as i16)
+            }
+        })
+        .collect();
+    let nv = u16::try_from(vertices.len()).map_err(|_| "seam weld exceeded u16 vertices")?;
+    let nf = u16::try_from(out_faces.len()).map_err(|_| "seam weld exceeded u16 faces")?;
+    let mut rebuilt = Vec::new();
+    rebuilt.extend_from_slice(&blob[..VERT_TABLE_OFFSET]);
+    rebuilt[12..14].copy_from_slice(&nv.to_le_bytes());
+    rebuilt[14..16].copy_from_slice(&nf.to_le_bytes());
+    for v in &vertices {
+        for a in v {
+            rebuilt.extend_from_slice(&a.to_le_bytes());
+        }
+    }
+    for f in &out_faces {
+        for &i in f {
+            rebuilt.extend_from_slice(&(i as u16).to_le_bytes());
+        }
+    }
+    for c in &out_colours {
+        rebuilt.extend_from_slice(c);
+    }
+    for n in &normals {
+        for a in n {
+            rebuilt.extend_from_slice(&a.to_le_bytes());
+        }
+    }
+    let payload =
+        u32::try_from(rebuilt.len() - ASSET_HEADER_LEN).map_err(|_| "PSXM payload too large")?;
+    rebuilt[8..12].copy_from_slice(&payload.to_le_bytes());
+    *blob = rebuilt;
+    Ok((nv, nf, new_components))
+}
+
 /// Split a welded vertex wherever adjacent faces use different materials.
 ///
 /// PSXM stores colours per face, while the fast runtime path lights colours
@@ -1196,6 +1517,59 @@ mod tests {
             2,
             "overlapping islands lost their component identities"
         );
+    }
+
+    /// Two triangles from different source objects whose shared seam is two
+    /// uu apart, one object per triangle.
+    fn gapped_seam(gap: i16, left: [u8; 3], right: [u8; 3]) -> (Vec<u8>, Vec<u8>) {
+        let verts = [
+            [0, 0, 0],
+            [40, 0, 0],
+            [0, 40, 0],
+            [0, 0 + gap, 0],
+            [40, 0 + gap, 0],
+            [40, 40, 0],
+        ];
+        let blob = coloured_blob(&verts, &[[0, 1, 2], [3, 4, 5]], &[left, right]);
+        (blob, vec![0, 0, 0, 1, 1, 1])
+    }
+
+    #[test]
+    fn a_seam_between_two_objects_is_welded_shut() {
+        let (mut blob, components) =
+            gapped_seam(2, Role::Body.colour().into(), Role::Glass.colour().into());
+        let (verts, faces, _) = weld_seams(&mut blob, &components).expect("weld");
+        // Both triangles survive and the two seam vertices on each end merged.
+        assert_eq!(faces, 2);
+        assert_eq!(verts, 4);
+    }
+
+    #[test]
+    fn a_wheel_is_never_welded_to_the_body() {
+        let (mut blob, components) =
+            gapped_seam(2, Role::Body.colour().into(), Role::Tyre.colour().into());
+        let (verts, faces, _) = weld_seams(&mut blob, &components).expect("weld");
+        assert_eq!((verts, faces), (6, 2));
+    }
+
+    #[test]
+    fn a_gap_wider_than_the_tolerance_is_left_alone() {
+        let (mut blob, components) = gapped_seam(
+            SEAM_TOLERANCE as i16 + 2,
+            Role::Body.colour().into(),
+            Role::Glass.colour().into(),
+        );
+        let (verts, faces, _) = weld_seams(&mut blob, &components).expect("weld");
+        assert_eq!((verts, faces), (6, 2));
+    }
+
+    #[test]
+    fn welding_never_collapses_a_face_onto_itself() {
+        // One object, three vertices a uu apart: nothing may merge.
+        let verts = [[0, 0, 0], [1, 0, 0], [0, 1, 0]];
+        let mut blob = coloured_blob(&verts, &[[0, 1, 2]], &[Role::Body.colour().into()]);
+        let (v, f, _) = weld_seams(&mut blob, &[0, 0, 0]).expect("weld");
+        assert_eq!((v, f), (3, 1));
     }
 
     #[test]
