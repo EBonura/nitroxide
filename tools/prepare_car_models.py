@@ -475,7 +475,7 @@ def add_cabin_core():
         if hit[0] is None:
             tops.append(low.z + size.z * 0.5)
         else:
-            tops.append(min(hit[0].z - size.z * 0.015, low.z + size.z * 0.97))
+            tops.append(min(hit[0].z - size.z * 0.13, low.z + size.z * 0.90))
     mesh = bpy.data.meshes.new("cabin_core")
     ring = [Vector((x, y, floor)) for x, y in corners_xy] + [
         Vector((x, y, max(t, floor + size.z * 0.1))) for (x, y), t in zip(corners_xy, tops)
