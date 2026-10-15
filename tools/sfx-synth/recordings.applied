@@ -1,0 +1,6 @@
+# name; gain dB applied to the mono mix; decoded peak dBFS; decoded RMS dBFS
+crowd_loop; 2.68; -0.6; -15.9
+crowd_roar; -2.72; -5.1; -15.4
+crowd_gasp; 10.35; -0.8; -15.7
+crowd_cheer; -0.27; -3.0; -15.2
+skid_loop; 0.73; -0.5; -12.3

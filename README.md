@@ -67,9 +67,15 @@ builds use the committed cooked models.
 ## Sound effects
 
 Every menu action and most of a match has a sound, quiet under the music and
-silent when Sound is off. The four impacts are CC0 recordings; everything else
-is synthesised by `tools/sfx-synth` (`make sfx`), so there is nothing to
-credit. See [the audio notes](game/assets/audio/README.md).
+silent when Sound is off. The four impacts are CC0 recordings, the crowd and the tyre
+squeal are cut from recordings (credit below), and everything else is synthesised by
+`tools/sfx-synth` (`make sfx`). See [the audio notes](game/assets/audio/README.md).
+
+Crowd sounds: Gregor Quendel, Free Crowd Cheering Sounds, CC BY 4.0,
+https://opengameart.org/
+
+Tyre squeal loop: Tom Haigh, CC BY 3.0,
+https://opengameart.org/content/car-tire-squeal-skid-loop
 
 ## Music
 

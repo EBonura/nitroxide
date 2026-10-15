@@ -21,6 +21,9 @@ use std::f64::consts::PI;
 use std::fs;
 use std::path::PathBuf;
 
+mod import;
+mod variants;
+
 const BLOCK: usize = 28;
 
 struct Rng(u32);
@@ -525,22 +528,28 @@ fn empty(r: u32) -> Vec<f64> {
         .collect()
 }
 
+/// Sounds cut from recordings by `sfx-synth import` (see `import.rs`) rather than
+/// synthesised here.
+const IMPORTED: [&str; 4] = ["crowd_loop", "crowd_roar", "crowd_gasp", "skid_loop"];
+
 struct Def {
     name: &'static str,
     rate: u32,
     looped: bool,
     gen: fn(u32) -> Vec<f64>,
+    /// A voicing chosen in `variants::PICKS`, which replaces `gen`.
+    variant: Option<char>,
 }
 
 const fn d(name: &'static str, rate: u32, gen: fn(u32) -> Vec<f64>) -> Def {
-    Def { name, rate, looped: false, gen }
+    Def { name, rate, looped: false, gen, variant: None }
 }
 const fn dl(name: &'static str, rate: u32, gen: fn(u32) -> Vec<f64>) -> Def {
-    Def { name, rate, looped: true, gen }
+    Def { name, rate, looped: true, gen, variant: None }
 }
 
 fn defs() -> Vec<Def> {
-    vec![
+    let all = vec![
         d("ui_move", 22050, ui_move),
         d("ui_tick", 22050, ui_tick),
         d("ui_select", 22050, ui_select),
@@ -568,7 +577,14 @@ fn defs() -> Vec<Def> {
         d("sonic", 22050, sonic),
         d("pad_big", 22050, pad_big),
         d("empty", 22050, empty),
-    ]
+    ];
+    all.into_iter()
+        .filter(|def| !IMPORTED.contains(&def.name))
+        .map(|mut def| {
+            def.variant = variants::pick(def.name);
+            def
+        })
+        .collect()
 }
 
 fn db(x: f64) -> f64 {
@@ -584,6 +600,9 @@ struct Rendered {
 }
 
 fn render(def: &Def) -> Rendered {
+    if let Some(v) = def.variant {
+        return render_variant(def.name, v);
+    }
     let mut pcm = (def.gen)(def.rate);
     if def.looped {
         assert_eq!(pcm.len() % BLOCK, 0, "{} loop is not whole blocks", def.name);
@@ -623,6 +642,66 @@ fn render(def: &Def) -> Rendered {
     }
 }
 
+/// Cook variant `v` of `name`: scaled to the RMS of the sound it replaces, so
+/// the play volume in the game need not move, and backed off only as far as
+/// the rail demands.
+fn render_variant(name: &str, v: char) -> Rendered {
+    let (_, rate, looped) = *variants::SOUNDS.iter().find(|s| s.0 == name).expect("a sound with variants");
+    let mut pcm = variants::render(name, v, rate).expect("a known variant");
+    if looped {
+        assert_eq!(pcm.len() % BLOCK, 0, "{name}-{v} loop is not whole blocks");
+    }
+    let rms = (pcm.iter().map(|x| x * x).sum::<f64>() / pcm.len() as f64).sqrt().max(1e-9);
+    let mut gain = 10f64.powf(variants::target_rms_db(name) / 20.0) * 32768.0 / rms;
+    let mut opts = CookOptions::one_shot(rate);
+    opts.normalize_peak = None;
+    if looped {
+        opts.looping = Looping::Whole;
+    }
+    loop {
+        let src = Wav {
+            rate,
+            samples: pcm.iter().map(|x| x * gain).collect(),
+            loop_start: None,
+            loop_end: None,
+            bits: 16,
+        };
+        let c = cook(&src, &opts);
+        let decoded = adpcm::decode(&c.adpcm);
+        let peak = decoded.iter().map(|x| (*x as i32).abs()).max().unwrap_or(0);
+        if peak < 32_000 {
+            pcm.clear();
+            return Rendered {
+                psau: psau(rate, decoded.len(), &c.adpcm),
+                adpcm_len: c.adpcm.len(),
+                decoded,
+            };
+        }
+        gain *= 0.94;
+    }
+}
+
+/// `sfx-synth variants <dir>`: every voicing of the eight sounds as a decoded
+/// WAV, `<sound>-a.wav` and so on, with a table of what each costs.
+fn variants_cmd(dir: &std::path::Path) {
+    fs::create_dir_all(dir).unwrap();
+    println!("| sound | variant | rate | samples | ADPCM bytes | peak dBFS | RMS dBFS | target RMS |");
+    println!("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |");
+    for (name, rate, _) in variants::SOUNDS {
+        for v in ['a', 'b', 'c'] {
+            let r = render_variant(name, v);
+            let (peak, rms) = levels(&r.decoded);
+            println!(
+                "| {name} | {v} | {rate} | {} | {} | {peak:.1} | {rms:.1} | {:.1} |",
+                r.decoded.len(),
+                r.adpcm_len,
+                variants::target_rms_db(name)
+            );
+            fs::write(dir.join(format!("{name}-{v}.wav")), wav::write_mono16(rate, &r.decoded)).unwrap();
+        }
+    }
+}
+
 fn levels(dec: &[i16]) -> (f64, f64) {
     let peak = dec.iter().map(|v| (*v as f64).abs()).fold(0.0, f64::max) / 32768.0;
     let rms = (dec.iter().map(|v| (*v as f64 / 32768.0).powi(2)).sum::<f64>() / dec.len() as f64).sqrt();
@@ -630,6 +709,24 @@ fn levels(dec: &[i16]) -> (f64, f64) {
 }
 
 fn main() {
+    let argv: Vec<String> = std::env::args().collect();
+    match argv.get(1).map(String::as_str) {
+        Some("hash") => {
+            let b = fs::read(&argv[2]).unwrap();
+            println!("{}; {:016x}", b.len(), import::fnv64(&b));
+            return;
+        }
+        Some("import") => {
+            let p = std::path::Path::new;
+            import::run(p(&argv[2]), p(&argv[3]), p(&argv[4]), argv.get(5).map(|s| p(s)));
+            return;
+        }
+        _ => {}
+    }
+    if argv.get(1).map(String::as_str) == Some("variants") {
+        variants_cmd(std::path::Path::new(argv.get(2).expect("usage: sfx-synth variants <dir>")));
+        return;
+    }
     let mut args = std::env::args().skip(1);
     let out: PathBuf = args.next().expect("usage: sfx-synth <out dir> [preview dir]").into();
     let preview: Option<PathBuf> = args.next().map(Into::into);
@@ -710,6 +807,25 @@ mod tests {
                 );
             } else {
                 assert_eq!(flags_last & 3, 1, "{} one-shot must end without repeating", def.name);
+            }
+        }
+    }
+
+    /// A loop's wrap is no bigger a step than the loop makes anywhere else:
+    /// the last sample leads into the first as the waveform would.
+    #[test]
+    fn variant_loops_close_without_a_click() {
+        for (name, _, looped) in variants::SOUNDS {
+            if !looped {
+                continue;
+            }
+            for v in ['a', 'b', 'c'] {
+                let d = render_variant(name, v).decoded;
+                let step = |a: i16, b: i16| (a as f64 - b as f64).abs();
+                let seam = step(d[0], d[d.len() - 1]);
+                let max_step = d.windows(2).map(|w| step(w[1], w[0])).fold(0.0, f64::max);
+                println!("{name}-{v}: seam {seam}, largest step inside {max_step}");
+                assert!(seam <= 1.15 * max_step, "{name}-{v}: seam {seam} against largest step {max_step:.0}");
             }
         }
     }

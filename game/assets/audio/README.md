@@ -23,6 +23,34 @@ Arcade rather than recorded, which suits the machine: a 1994 console mixing
 four voices at 44.1 kHz through ADPCM flatters a bright synthetic impact and
 exposes a real recording's noise floor.
 
+## Recordings
+
+Five sounds are cut from recordings that are not in this repository:
+
+- Crowd: Gregor Quendel, "Free Crowd Cheering Sounds" (MP3 pack), **CC BY 4.0**,
+  via OpenGameArt. Credit: "Crowd sounds: Gregor Quendel, Free Crowd Cheering
+  Sounds, CC BY 4.0".
+- Tyre squeal: Tom Haigh, "Car tire squeal skid loop" (24 bit 96 kHz WAV, three
+  seconds, already a seamless loop), **CC BY 3.0**,
+  <https://opengameart.org/content/car-tire-squeal-skid-loop>. Credit: "Tyre
+  squeal loop: Tom Haigh, CC BY 3.0".
+
+`tools/sfx-synth/recordings.manifest` names each source file (relative to one
+folder) with its size and FNV-1a hash, the offsets, fades, loop crossfade, rate
+and target level of each cut. `make recordings SOURCES_DIR=/path/to/sfx-sources`
+decodes them (the `symphonia` MP3 decoder, or the WAV reader), cuts, normalises
+to the levels the game plays them at, resamples and encodes ADPCM, and refuses a
+file that is not the recorded one. The gain each cut was given is recorded in
+`tools/sfx-synth/recordings.applied`.
+
+| File | Source | Cut |
+| --- | --- | --- |
+| `crowd_loop.psau` | 10 - Ambience | 18 to 26 s, the next 1.5 s crossfaded onto the head, looped |
+| `crowd_roar.psau` | 04 - Strong cheering II, short | 4.8 to 8.8 s, a swell with a faded tail |
+| `crowd_gasp.psau` | 06 - Soft cheering II | 1.9 to 3.3 s, a rising murmur |
+| `crowd_cheer.psau` | 08 - Rhythmic cheering | 6.6 to 9.6 s, a chant: at a kickoff and a second into each goal |
+| `skid_loop.psau` | Haigh, tires_squal_loop.wav | the whole file, looped on its own seam |
+
 ## Synthesised effects
 
 Every other `.psau` here is rendered by `tools/sfx-synth` from sines, a
@@ -38,15 +66,14 @@ levelled from (music sits at -15 LUFS).
 | --- | --- |
 | Menus | `ui_move`, `ui_tick`, `ui_select`, `ui_back`, `ui_deny`, `ui_chime`, `ui_saved`, `ui_open`, `ui_close` |
 | Match calls | `beep`, `go`, `whistle`, `horn` |
-| Crowd | `crowd_roar`, `crowd_gasp`, `crowd_loop` |
-| Car | `engine_loop`, `skid_loop`, `jump`, `flip`, `land`, `bump`, `sonic`, `pad_big`, `empty` |
+| Car | `engine_loop`, `jump`, `flip`, `land`, `bump`, `sonic`, `pad_big`, `empty` |
 | Ball and net | `bounce`, `net` |
 
-`engine_loop`, `skid_loop` and `crowd_loop` are hardware loops: they hold a
+`engine_loop` (and the recorded `crowd_loop` and `skid_loop`) are hardware loops: they hold a
 whole number of cycles in a whole number of ADPCM blocks, so the loop point is
-the waveform continuing, not a seam.
+the waveform continuing, not a seam. The crowd loop is crossfaded and the tyre loop is not; both seams are tested.
 
-SPU RAM: the bank is 213,216 bytes of the 520,176 usable (41 percent), parking
+SPU RAM: the bank is 342,880 bytes of the 520,176 usable (66 percent), parking
 blocks included. The build fails if it outgrows the SPU (`BANK_BYTES` in
 `game/src/audio.rs`).
 

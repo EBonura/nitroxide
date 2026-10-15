@@ -14,9 +14,16 @@ New sound effects: every menu action and most of the match now has a sound.
   pads, the kickoff 3, 2, 1 and go, a tick for each of the last five seconds,
   the goal horn, the crowd's roar after a goal and its gasp at a near miss, a
   quiet crowd under the match, and the final whistle.
-- The new sounds are synthesised by `tools/sfx-synth` (`make sfx`) from
-  oscillators, noise and envelopes, so they carry no licence of their own.
-- They add 161 KB to SPU RAM, which now holds 213 KB of 520 KB.
+- The crowd (the murmur under a match, the roar after a goal, the gasp at a
+  near miss, and a rhythmic cheer at kickoff and a second into each goal
+  celebration) and the tyre squeal are cut from real recordings.
+  Crowd sounds: Gregor Quendel, Free Crowd Cheering Sounds, CC BY 4.0,
+  https://opengameart.org/
+  Tyre squeal loop: Tom Haigh, CC BY 3.0,
+  https://opengameart.org/content/car-tire-squeal-skid-loop
+- Everything else new is synthesised by `tools/sfx-synth` (`make sfx`) from
+  oscillators, noise and envelopes, so it carries no licence of its own.
+- They add 291 KB to SPU RAM, which now holds 343 KB of 520 KB.
 
 New music: six ambient jungle and drum and bass tracks, played as a shuffled
 playlist.

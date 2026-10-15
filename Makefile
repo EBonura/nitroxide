@@ -60,13 +60,14 @@ STEPS  ?= 120000000
 PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
-.PHONY: help test assets textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx \
+.PHONY: help test assets textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx recordings \
 	pgo-collect pgo-choose pgo-order demo-check
 
 help:
 	@echo "NitroXide targets:"
 	@echo "  make test      - run the physics + cook tests on the host"
 	@echo "  make sfx       - re-render the synthesised sound effects"
+	@echo "  make recordings SOURCES_DIR=x - cut the crowd and tyre sounds from the source recordings"
 	@echo "  make assets    - bake + cook the car models from $(MODELS_DIR)"
 	@echo "  make textures  - cook the arena atlas to shared .psxt"
 	@echo "  make build     - build the PSX-EXE (PGO_VARIANT=off for no PGO; alias: compile)"
@@ -253,6 +254,20 @@ SFX_SYNTH := $(ROOT)/tools/sfx-synth
 .PHONY: sfx
 sfx: | psoxide
 	cargo run -q --release --locked --manifest-path "$(SFX_SYNTH)/Cargo.toml" -- "$(GAME)/assets/audio"
+
+# The crowd and the tyre squeal are cut from recordings that are not in this
+# repository: Gregor Quendel's "Free Crowd Cheering Sounds" (MP3, CC BY 4.0) and
+# Tom Haigh's "Car tire squeal skid loop" (WAV, CC BY 3.0), both via
+# OpenGameArt. Point SOURCES_DIR at the folder that holds quendel-crowd/ and
+# haigh-tire-loop/; tools/sfx-synth/recordings.manifest says which file, which
+# seconds and what level, and refuses a file that is not the recorded one.
+# Output is committed, so this is a content step too.
+SOURCES_DIR ?=
+.PHONY: recordings
+recordings: | psoxide
+	@test -n "$(SOURCES_DIR)" || { echo "recordings: set SOURCES_DIR to the folder holding quendel-crowd/ and haigh-tire-loop/"; exit 1; }
+	cargo run -q --release --locked --manifest-path "$(SFX_SYNTH)/Cargo.toml" -- import \
+		"$(SFX_SYNTH)/recordings.manifest" "$(SOURCES_DIR)" "$(GAME)/assets/audio"
 
 .PHONY: music
 music:

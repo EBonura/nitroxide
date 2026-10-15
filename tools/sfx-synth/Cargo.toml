@@ -14,3 +14,7 @@ repository = "https://github.com/EBonura/nitroxide"
 
 [dependencies]
 psx-audio-cook = { path = "../../.psoxide/crates/psx-audio-cook" }
+
+# MP3 decoding for `sfx-synth import` (the crowd recordings; the tyre loop is a WAV). Decoder only: no
+# audio output, no other codecs.
+symphonia = { version = "0.5", default-features = false, features = ["mp3"] }
