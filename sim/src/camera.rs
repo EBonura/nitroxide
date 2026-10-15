@@ -256,36 +256,51 @@ pub const fn fov_degrees(step: usize) -> i32 {
     FOV_MIN_DEGREES + FOV_STEP_DEGREES * step as i32
 }
 
-/// Marks a settings byte as holding a field-of-view step.
-///
-/// THIS IS AN OVERLOAD, KEPT ON PURPOSE FOR NOW. NitroXide does not own its
-/// settings record: `game/src/main.rs` keeps a `psx_settings::Profile<9, 0>`,
-/// the SDK's shared record (`.psoxide/sdk/crates/psx-settings`, hydrated from
-/// the pinned PSoXide SDK and not edited from this repository), which has no
-/// field for a game-specific choice and a fixed version (2) every game reads.
-/// So the step rides in the profile's `difficulty` byte, which NitroXide never
-/// reads and the SDK only round-trips, as `FOV_SAVE_MARK + step`. Every record
-/// written before the setting existed holds `difficulty` at its default of 1,
-/// which is not a marked value and loads as the default step: no migration
-/// pass, and an old save never reads as a wild field of view.
-///
-/// The clean fix is a real field with a version bump and a decode that gives
-/// old records the default, and that is a change to the SDK record in the
-/// PSoXide repository, not here. When that lands, delete these two functions
-/// and read the field.
-pub const FOV_SAVE_MARK: u8 = 0x40;
+/// The slot of the settings record's game bytes (`Profile::game_bytes`) that
+/// holds the field-of-view choice.
+pub const FOV_GAME_BYTE: usize = 0;
 
-/// The step a settings byte holds, or `default` for a byte that holds none.
+/// The step a saved FOV byte holds, or `default` for a byte that holds none.
+///
+/// The byte is the step plus one, so 0 (a record that never saved a choice,
+/// including every one written before the setting existed) reads as `default`
+/// and stays right if the default step ever changes.
 pub fn fov_step_from_save(byte: u8, default: usize) -> usize {
-    match byte.checked_sub(FOV_SAVE_MARK) {
+    match byte.checked_sub(1) {
         Some(step) if (step as usize) < FOV_STEPS => step as usize,
         _ => default,
     }
 }
 
-/// The settings byte that holds a step.
+/// The saved FOV byte that holds a step.
 pub fn fov_step_to_save(step: usize) -> u8 {
-    FOV_SAVE_MARK + step.min(FOV_STEPS - 1) as u8
+    step.min(FOV_STEPS - 1) as u8 + 1
+}
+
+/// What the first release of the FOV setting added to the profile's
+/// `difficulty` byte to mark it as a step: the byte held `0x40 + step`. Kept
+/// only so [`migrate_legacy_fov`] can recognise those saves.
+const LEGACY_FOV_DIFFICULTY_MARK: u8 = 0x40;
+
+/// Move a FOV step an earlier build saved in `difficulty` into the FOV game
+/// byte and put `difficulty` back to its default, returning whether it did.
+///
+/// Only a record whose FOV slot is still empty is touched, so a save that
+/// already carries the new field is never overwritten, and a `difficulty` that
+/// is not a marked step (every record from before the setting held 1) is left
+/// alone. The change is in memory; the next save writes it out.
+pub fn migrate_legacy_fov<const ACTIONS: usize, const SCORES: usize>(
+    profile: &mut psx_settings::Profile<ACTIONS, SCORES>,
+) -> bool {
+    let Some(step) = profile.difficulty.checked_sub(LEGACY_FOV_DIFFICULTY_MARK) else {
+        return false;
+    };
+    if step as usize >= FOV_STEPS || profile.game_bytes[FOV_GAME_BYTE] != 0 {
+        return false;
+    }
+    profile.game_bytes[FOV_GAME_BYTE] = fov_step_to_save(step as usize);
+    profile.difficulty = psx_settings::Profile::<ACTIONS, SCORES>::new(profile.actions).difficulty;
+    true
 }
 
 // ---- tuning ---------------------------------------------------------------

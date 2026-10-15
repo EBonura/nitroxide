@@ -858,8 +858,8 @@ impl NitroXide {
             SettingsRow::Fov => {
                 let step = (draw::fov() as i32 + lr as i32).clamp(0, draw::FOV_STEPS as i32 - 1) as usize;
                 draw::set_fov(step);
-                // The SDK record has no FOV field: the step rides in the unused `difficulty` byte (see `FOV_SAVE_MARK`).
-                self.profile.difficulty = nitroxide_sim::camera::fov_step_to_save(step);
+                self.profile.game_bytes[nitroxide_sim::camera::FOV_GAME_BYTE] =
+                    nitroxide_sim::camera::fov_step_to_save(step);
                 self.settings_dirty = true;
             }
             SettingsRow::Brightness => {
@@ -1933,10 +1933,14 @@ impl Scene for NitroXide {
         if let Ok(profile) = psx_settings::load_slot_one(SETTINGS_FILE) {
             self.profile = profile;
         }
-        // The saved field of view, from the SDK record's unused `difficulty` byte
-        // (see `FOV_SAVE_MARK` for why it is there); a record
-        // from before the option holds no step and reads as the default.
-        draw::set_fov(nitroxide_sim::camera::fov_step_from_save(self.profile.difficulty, draw::FOV_DEFAULT));
+        // A step an earlier build kept in `difficulty` moves to its own game
+        // byte (in memory; the next save writes it out).
+        nitroxide_sim::camera::migrate_legacy_fov(&mut self.profile);
+        // The saved field of view; a record that holds none reads as the default.
+        draw::set_fov(nitroxide_sim::camera::fov_step_from_save(
+            self.profile.game_bytes[nitroxide_sim::camera::FOV_GAME_BYTE],
+            draw::FOV_DEFAULT,
+        ));
         // The saved picture position, programmed once; a centred picture
         // (the default, and every save from before the option) leaves the
         // display window as the engine set it.
