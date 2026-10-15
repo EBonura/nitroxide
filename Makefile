@@ -60,12 +60,13 @@ STEPS  ?= 120000000
 PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
-.PHONY: help test assets textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide \
+.PHONY: help test assets textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx \
 	pgo-collect pgo-choose pgo-order demo-check
 
 help:
 	@echo "NitroXide targets:"
 	@echo "  make test      - run the physics + cook tests on the host"
+	@echo "  make sfx       - re-render the synthesised sound effects"
 	@echo "  make assets    - bake + cook the car models from $(MODELS_DIR)"
 	@echo "  make textures  - cook the arena atlas to shared .psxt"
 	@echo "  make build     - build the PSX-EXE (PGO_VARIANT=off for no PGO; alias: compile)"
@@ -84,6 +85,7 @@ test:
 	cd $(SIM) && cargo test
 	cd $(COOK) && cargo test
 	cd $(ARENA_COOK) && cargo test
+	cd $(ROOT)/tools/sfx-synth && cargo test --release
 
 # Two LODs: the cooker writes both team variants of the small gameplay cars
 # plus component/wheel sidecars, then a detailed blue-only copy for the front
@@ -241,6 +243,16 @@ MUSIC_XA    := $(MUSIC_OUT)/MUSIC1.XA $(MUSIC_OUT)/MUSIC2.XA
 MUSIC_MAP   := $(GAME)/src/music_map.rs
 AUDIO_COOK  := $(ROOT)/tools/audio-cook
 XA_ARGS      = $(if $(MUSIC_DIR),$(foreach f,$(MUSIC_XA),--xa-file "$(f)"))
+
+# The synthesised sound effects (game/assets/audio, everything but the four
+# recorded impacts) come from tools/sfx-synth. Output is committed and
+# deterministic, so this is a content step rather than a build step; re-run it
+# when a sound changes and read the printed levels before touching the play
+# volumes in game/src/audio.rs.
+SFX_SYNTH := $(ROOT)/tools/sfx-synth
+.PHONY: sfx
+sfx: | psoxide
+	cargo run -q --release --locked --manifest-path "$(SFX_SYNTH)/Cargo.toml" -- "$(GAME)/assets/audio"
 
 .PHONY: music
 music:
