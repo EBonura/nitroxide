@@ -58,19 +58,20 @@ go               0x13950
 whistle          0x15010
 horn             0x19610
 crowd_roar       0x1d8a0
-crowd_gasp       0x23200
-crowd_loop       0x255d0
-engine_loop      0x28f10
-skid_loop        0x293a0
-jump             0x2c000
-flip             0x2c7f0
-land             0x2d6d0
-bounce           0x2e0c0
-net              0x2eca0
-bump             0x30160
-sonic            0x30b50
-pad_big          0x33050
-empty            0x34900
+crowd_gasp       0x26790
+crowd_loop       0x299a0
+engine_loop      0x3b760
+skid_loop        0x3bbf0
+jump             0x44fb0
+flip             0x45730
+land             0x46610
+bounce           0x47000
+net              0x47be0
+bump             0x490a0
+sonic            0x49a90
+pad_big          0x4bf90
+empty            0x4d840
+crowd_cheer      0x4e030
 ```
 
 ```sh

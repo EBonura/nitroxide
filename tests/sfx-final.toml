@@ -55,3 +55,10 @@ addr = 0x13060
 voice = 17
 voice_hi = 17
 max_count = 0
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4e030
+voice = 21
+voice_hi = 21
+min_count = 2
+max_count = 2

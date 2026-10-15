@@ -57,31 +57,31 @@ checkpoint = "car-sounds"
 golden = false
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x28f10
+addr = 0x3b760
 voice = 13
 voice_hi = 13
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x255d0
+addr = 0x299a0
 voice = 15
 voice_hi = 15
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x2c000
+addr = 0x44fb0
 voice = 8
 voice_hi = 8
 min_count = 2
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x2c7f0
+addr = 0x45730
 voice = 8
 voice_hi = 8
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x2d6d0
+addr = 0x46610
 voice = 9
 voice_hi = 9
 min_count = 1
@@ -98,19 +98,19 @@ voice_hi = 4
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x34900
+addr = 0x4d840
 voice = 20
 voice_hi = 20
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x293a0
+addr = 0x3bbf0
 voice = 14
 voice_hi = 14
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x2e0c0
+addr = 0x47000
 voice = 10
 voice_hi = 10
 min_count = 1

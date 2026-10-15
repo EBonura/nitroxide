@@ -54,7 +54,7 @@ voice_hi = 18
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x2eca0
+addr = 0x47be0
 voice = 19
 voice_hi = 19
 min_count = 1
@@ -92,3 +92,10 @@ voice = 17
 voice_hi = 17
 min_count = 2
 max_count = 2
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4e030
+voice = 21
+voice_hi = 21
+min_count = 3
+max_count = 3

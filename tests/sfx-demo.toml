@@ -48,19 +48,19 @@ voice_hi = 18
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x2eca0
+addr = 0x47be0
 voice = 19
 voice_hi = 19
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x30160
+addr = 0x490a0
 voice = 11
 voice_hi = 11
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x30b50
+addr = 0x49a90
 voice = 12
 voice_hi = 12
 min_count = 1
@@ -72,25 +72,31 @@ voice_hi = 5
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x33050
+addr = 0x4bf90
 voice = 2
 voice_hi = 2
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x293a0
+addr = 0x3bbf0
 voice = 14
 voice_hi = 14
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x23200
+addr = 0x26790
 voice = 18
 voice_hi = 18
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-addr = 0x2e0c0
+addr = 0x47000
 voice = 10
 voice_hi = 10
 min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4e030
+voice = 21
+voice_hi = 21
+min_count = 2
