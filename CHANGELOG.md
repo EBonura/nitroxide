@@ -14,6 +14,16 @@ playlist.
 - Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
   Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/
 
+Car models:
+
+- Fewer see-through lines in the cars. The one-pixel gaps between a car's
+  separately cut body, glass and trim parts are closed in the cook, and a dark
+  core inside the cabin fills the gaps at the pillars. Counted on the garage
+  tour, the pitch showing through a car fell by about two thirds.
+- The Sprinter no longer has a grey slab poking up through its bonnet, and its
+  front and rear bumpers, lamps and window panes are cut one by one instead of
+  as pairs.
+
 ## 0.4.1 | 2026-10-08
 
 A fix for how the ball rolls, a fresh set of attract demo matches and clearer

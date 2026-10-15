@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Bake transforms and decimate one source car without welding its parts."""
 
+import bmesh
 import bpy
 import math
 import sys
@@ -163,6 +164,21 @@ def replace_rim_disc(obj, sides=6):
     rebuild_topology(rim)
 
 
+def drop_underbody(obj):
+    """Remove the unmaterialled underbody block of a source car.
+
+    One source car carries a 20-polygon chamfered block under the bodywork
+    with no material at all, which the cooker paints as chassis. It overlaps
+    the body and its flanks, so the painter's algorithm, which orders faces by
+    their mean depth, cannot tell which is in front: against a z-buffered
+    reference 21% of the Sprinter's pixels were drawn from the wrong face
+    (1.2% with the block removed), the dark block showing through the paint
+    in patches. Collapse-decimated, its corners also drifted up through the
+    bonnet as a black wedge. The other two cars have no such part.
+    """
+    bpy.data.objects.remove(obj, do_unlink=True)
+
+
 # Blender's collapse modifier turns the source pack's very dense, combined
 # axle meshes into long radial spikes at PS1 budgets. That failure is not
 # limited to the close-up garage: at gameplay scale it is the "exploded car"
@@ -195,6 +211,55 @@ for obj in list(objects):
         else:
             replace_wheel(obj, sides=6 if target_faces >= 100 else 4)
 objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+for obj in list(objects):
+    if not material_stem(obj) and len(obj.data.polygons) <= 32:
+        drop_underbody(obj)
+objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+
+# The source packs model both bumpers, both headlights and both tail lights as
+# one object each. Decimating such an object as a whole collapses the gap
+# between its two halves: the front and rear bumper became one flat plate
+# reaching out of the nose, and a lamp pair became a cone between the lamps.
+# Split these into their loose parts first; each part later gets its share of
+# the object's face budget (see `part_share`).
+SPLIT_MATERIALS = {
+    "metal_gray",
+    "white",
+    "light",
+    "stop_light",
+    "turn_light",
+    "metal_dark_gray",
+    "windows",
+}
+
+
+def is_split_part(obj):
+    return material_stem(obj) in SPLIT_MATERIALS and not is_wheel_part(obj)
+
+
+part_group = {}
+for obj in list(objects):
+    if is_split_part(obj):
+        before = {o.name for o in bpy.context.scene.objects}
+        split_loose_parts(obj)
+        parts = [obj] + [
+            o for o in bpy.context.scene.objects if o.type == "MESH" and o.name not in before
+        ]
+        total = sum(len(o.data.polygons) for o in parts)
+        for o in parts:
+            part_group[o.name] = (obj.name, len(o.data.polygons), total)
+objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+
+
+def part_share(obj, group_cap):
+    """A loose part's share of its source object's cap: proportional to the
+    part's polygons, never below a quad's two triangles."""
+    group = part_group.get(obj.name)
+    if group is None:
+        return group_cap
+    _, polygons, total = group
+    return max(2, round(group_cap * polygons / max(1, total)))
+
 
 # At gameplay scale, budget by visual role rather than by the source object's
 # original polygon count. Preserving every <=32-face lamp/bumper verbatim used
@@ -239,7 +304,13 @@ if target_faces < 500:
     # same sources.
     scale = min(1.0, target_faces / 150.0)
     decimate = [
-        (obj, min(len(obj.data.polygons), max(2, round(gameplay_face_cap(obj) * scale))))
+        (
+            obj,
+            min(
+                len(obj.data.polygons),
+                max(2, round(part_share(obj, gameplay_face_cap(obj)) * scale)),
+            ),
+        )
         for obj in objects
     ]
 else:
@@ -266,6 +337,61 @@ for obj, face_cap in decimate:
     modifier.use_collapse_triangulate = True
     bpy.ops.object.modifier_apply(modifier=modifier.name)
     rebuild_topology(obj)
+
+def add_cabin_core():
+    """Put a dark core inside the greenhouse.
+
+    The pillars between a car's glass panes are thin body strips, and the
+    collapse decimation drops them. What is left is a gap between two panes
+    with nothing behind it (the far side of the cabin is back-face culled), so
+    the pitch shows through as a one pixel line down every pillar. A four-wall
+    box in the glass material fills it: it sits inside the glass so it is drawn
+    before every pane, and where it is not covered it is the colour of the
+    glass beside it.
+    """
+    glass = [
+        o
+        for o in bpy.context.scene.objects
+        if o.type == "MESH" and material_stem(o) == "windows"
+    ]
+    if not glass:
+        return
+    corners = [o.matrix_world @ Vector(c) for o in glass for c in o.bound_box]
+    low = Vector(tuple(min(v[axis] for v in corners) for axis in range(3)))
+    high = Vector(tuple(max(v[axis] for v in corners) for axis in range(3)))
+    size = high - low
+    # Inset well into the greenhouse (30% from each side, 35% from each end,
+    # top at half the glass band): the further behind the glass the box sits,
+    # the less often the painter's algorithm, which sorts by mean depth, draws
+    # one of its walls over a pane or a pillar. Measured against a z-buffered
+    # reference, the pixels where a core wall wrongly covered bodywork fell
+    # from 72 to 11 on the Sprinter against a 16% / 62% box.
+    a = Vector((low.x + size.x * 0.30, low.y + size.y * 0.35, low.z + size.z * 0.2))
+    b = Vector((high.x - size.x * 0.30, high.y - size.y * 0.35, low.z + size.z * 0.50))
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(a + b) * 0.5)
+    core = bpy.context.object
+    core.name = "cabin_core"
+    core.scale = b - a
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    core.data.materials.append(glass[0].material_slots[0].material)
+    # Open top and bottom: only the four walls remain. Nothing looks up into
+    # the cabin, and with no top face the core cannot be sorted over the roof
+    # by the painter's algorithm, which orders faces by their mean depth and
+    # gets a big roof panel against a small box wrong.
+    bpy.ops.object.mode_set(mode="EDIT")
+    bm = bmesh.from_edit_mesh(core.data)
+    bm.faces.ensure_lookup_table()
+    ends = [min(bm.faces, key=lambda f: f.calc_center_median().z), max(bm.faces, key=lambda f: f.calc_center_median().z)]
+    bmesh.ops.delete(bm, geom=ends, context="FACES_ONLY")
+    bmesh.update_edit_mesh(core.data)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    rebuild_topology(core)
+
+
+# The distance LOD is too small on screen for a pillar gap to show, and its
+# budget is the point of it.
+if target_faces >= 100:
+    add_cabin_core()
 
 bpy.ops.export_scene.gltf(
     filepath=output,
