@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+The curved ramp between the pitch and the wall keeps one texture at every
+distance: the wall panel is stretched over the whole curve, so a ramp seen
+up close and from afar shows the same panel, not a stripe per cut.
+
 New sound effects: every menu action and most of the match now has a sound.
 
 - Menus: cursor moves, value changes (higher or lower by direction), select,
