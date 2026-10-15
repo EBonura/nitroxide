@@ -1,0 +1,118 @@
+diff --git a/tools/psoxide-gate/src/exec.rs b/tools/psoxide-gate/src/exec.rs
+index 3904acf..04f1d0f 100644
+--- a/tools/psoxide-gate/src/exec.rs
++++ b/tools/psoxide-gate/src/exec.rs
+@@ -1213,6 +1213,26 @@ impl Run<'_> {
+                     format!("peak sample {peak}"),
+                 )
+             }
++            "spu_kon" => {
++                let lo = a.voice.unwrap_or(0);
++                let hi = a.voice_hi.unwrap_or(lo);
++                let window = a.window.unwrap_or(u64::MAX);
++                let from = self.m.ticks.saturating_sub(window);
++                let n = self
++                    .m
++                    .kon_events
++                    .iter()
++                    .filter(|(t, v, start, ..)| {
++                        (lo..=hi).contains(v) && *t >= from && a.addr.is_none_or(|ad| ad == *start)
++                    })
++                    .count() as u64;
++                let ok = a.min_count.is_none_or(|m| n >= m) && a.max_count.is_none_or(|m| n <= m);
++                (
++                    format!("spu voices {lo}..={hi} key-ons{}", a.addr.map(|ad| format!(" at {ad:#x}")).unwrap_or_default()),
++                    ok,
++                    format!("{n} key-on(s)"),
++                )
++            }
+             other => (other.to_string(), false, "unknown assert kind".into()),
+         };
+         checked_assert(name, Ok((ok, detail)), a)
+diff --git a/tools/psoxide-gate/src/journey.rs b/tools/psoxide-gate/src/journey.rs
+index da04e4c..487628a 100644
+--- a/tools/psoxide-gate/src/journey.rs
++++ b/tools/psoxide-gate/src/journey.rs
+@@ -340,6 +340,12 @@ pub struct Assert {
+     pub min_distinct: Option<u64>,
+     #[serde(default)]
+     pub min_peak: Option<u32>,
++    /// `spu_kon`: the SPU voice whose key-ons are counted.
++    #[serde(default)]
++    pub voice: Option<u8>,
++    /// `spu_kon`: top of the voice range (default: just `voice`).
++    #[serde(default)]
++    pub voice_hi: Option<u8>,
+ 
+     // ram
+     #[serde(default)]
+@@ -680,6 +686,7 @@ pub const ASSERT_KINDS: &[&str] = &[
+     "frame_diff",
+     "pc_not_stuck",
+     "audio",
++    "spu_kon",
+     "pixels",
+ ];
+ 
+diff --git a/tools/psoxide-gate/src/machine.rs b/tools/psoxide-gate/src/machine.rs
+index 2e89056..2898927 100644
+--- a/tools/psoxide-gate/src/machine.rs
++++ b/tools/psoxide-gate/src/machine.rs
+@@ -56,6 +56,9 @@ pub struct Machine {
+     pub bus: Bus,
+     pub ticks: u64,
+     pub history: Vec<TickRec>,
++    /// SPU key-ons as (tick, voice), in order: what the guest asked to start.
++    pub kon_events: Vec<(u64, u8, u32, i16, u16)>,
++    kon_seen: [u32; 24],
+     /// Sampled code lines (pc >> 4), per tick via `TickRec`.
+     pub pc_samples: Vec<u32>,
+     pub card_observer: Option<crate::card::Observer>,
+@@ -145,6 +148,8 @@ impl Machine {
+             bus,
+             ticks: 0,
+             history: Vec::new(),
++            kon_events: Vec::new(),
++            kon_seen: [0; 24],
+             pc_samples: Vec::new(),
+             card_observer: None,
+             cut: None,
+@@ -255,6 +260,16 @@ impl Machine {
+             steps += ran;
+             self.pc_samples.push(self.cpu.pc() >> 4);
+             self.bus.run_spu_to_current_cycle();
++            {
++                let (kon, _) = self.bus.spu.voice_debug_counts();
++                let cfg = self.bus.spu.voice_keyon_cfg();
++                for v in 0..24 {
++                    for _ in self.kon_seen[v]..kon[v] {
++                        self.kon_events.push((self.ticks, v as u8, cfg[v].0, cfg[v].4, cfg[v].3));
++                    }
++                    self.kon_seen[v] = kon[v];
++                }
++            }
+             if self.bus.spu.audio_queue_len() != 0 {
+                 for (l, r) in self.bus.spu.drain_audio() {
+                     let peak = u32::from(l.unsigned_abs()).max(u32::from(r.unsigned_abs()));
+@@ -373,3 +388,21 @@ pub fn button_mask(name: &str) -> u16 {
+         _ => 0,
+     }
+ }
++
++/// With `PSOXIDE_GATE_KON_LOG=<file>` set, every machine appends its SPU
++/// key-on events to that file when it is dropped, as `tick,voice,start,volume,pitch` rows under a
++/// `# machine` marker.
++impl Drop for Machine {
++    fn drop(&mut self) {
++        use std::io::Write;
++        let Some(path) = std::env::var_os("PSOXIDE_GATE_KON_LOG") else {
++            return;
++        };
++        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
++            let _ = writeln!(f, "# machine, {} ticks", self.ticks);
++            for (t, v, a, vol, pitch) in &self.kon_events {
++                let _ = writeln!(f, "{t},{v},{a:#x},{vol:#x},{pitch:#x}");
++            }
++        }
++    }
++}

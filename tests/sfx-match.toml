@@ -1,0 +1,128 @@
+name = "nitroxide-sfx-match"
+title = "NitroXide: engine, crowd, jump, flip, landing, boost, empty tank, skid, bounce and pad sounds fire on their events"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 3000
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+wait = 30
+# Throttle: the engine and the crowd loops come on, the pad on the way is taken.
+[[step]]
+press = ["r2"]
+hold = 90
+wait = 0
+# A jump, then the landing.
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 50
+[[step]]
+press = ["r2"]
+hold = 40
+wait = 0
+# Jump, then a second press with a direction held: a flip.
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
+press = ["cross","up"]
+hold = 4
+wait = 60
+# Boost until the tank is dry.
+[[step]]
+press = ["r2","circle"]
+hold = 240
+wait = 0
+# Powerslide: handbrake with steering at speed.
+[[step]]
+press = ["r2","left","l1"]
+hold = 100
+wait = 0
+[[step]]
+press = ["r2"]
+hold = 100
+wait = 0
+[[step]]
+checkpoint = "car-sounds"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x28f10
+voice = 13
+voice_hi = 13
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x255d0
+voice = 15
+voice_hi = 15
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x2c000
+voice = 8
+voice_hi = 8
+min_count = 2
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x2c7f0
+voice = 8
+voice_hi = 8
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x2d6d0
+voice = 9
+voice_hi = 9
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+voice = 1
+voice_hi = 1
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xa400
+voice = 4
+voice_hi = 4
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x34900
+voice = 20
+voice_hi = 20
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x293a0
+voice = 14
+voice_hi = 14
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x2e0c0
+voice = 10
+voice_hi = 10
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x1010
+voice = 0
+voice_hi = 0
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x2c60
+voice = 2
+voice_hi = 2
+min_count = 1

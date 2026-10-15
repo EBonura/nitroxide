@@ -32,3 +32,50 @@ Strict hardware capture reports that screen-offset displays defer to the CPU fra
 Timed and practice kickoff witnesses wait eight neutral ticks before capture and require a non-dark scene. The immediate selection-to-match transition can show only the HUD while the first match ordering table warms up. Historical immediate contacts remain transition evidence; the settled witnesses establish the rendered arena.
 
 NitroXide is an original PS1 game. Its authored rule/control design and fixed-point simulation cases define behavior acceptance. Comparisons to its inspiration remain a separate scope. These journeys establish the fields and contacts they actually check, and do not claim every feature, native CPU3 execution or a completed full-game certificate.
+
+## Sound effect journeys
+
+`sfx-menus`, `sfx-save-ok`, `sfx-save-no-card`, `sfx-garage-two-player`, `sfx-match`, `sfx-goal`, `sfx-final`, `sfx-timed-end` and `sfx-demo` prove that each sound effect is keyed on its event. They use the `spu_kon` assert, which counts SPU key-ons by voice (`voice`, optionally `voice_hi`) and by the sample's SPU address (`addr`), over the whole run or the last `window` ticks, against `min_count` and `max_count`. The runner at the time of writing has no such assert: `tests/psoxide-gate-spu-kon.patch` adds it to `tools/psoxide-gate` (apply it with `git apply` in a PSoXide-emulator checkout at aad98fb). With `PSOXIDE_GATE_KON_LOG=<file>` set the patched runner also writes every key-on as `tick,voice,start,volume,pitch`.
+
+The addresses are where the bank puts each sample: the bank is laid down from 0x1010 in the order of `BANK` in `game/src/audio.rs`, each sample followed by a 16 byte parking block. If a sample is added or resized, the addresses after it move, and the journeys have to follow. Today:
+
+```
+hit_punch        0x1010
+pickup_coin      0x2c60
+explosion_short  0x4870
+swoosh           0xa400
+ui_move          0xdba0
+ui_tick          0xdeb0
+ui_select        0xe100
+ui_back          0xe8f0
+ui_deny          0xef70
+ui_chime         0xfae0
+ui_saved         0x10fa0
+ui_open          0x12070
+ui_close         0x128e0
+beep             0x13060
+go               0x13950
+whistle          0x15010
+horn             0x19610
+crowd_roar       0x1d8a0
+crowd_gasp       0x23200
+crowd_loop       0x255d0
+engine_loop      0x28f10
+skid_loop        0x293a0
+jump             0x2c000
+flip             0x2c7f0
+land             0x2d6d0
+bounce           0x2e0c0
+net              0x2eca0
+bump             0x30160
+sonic            0x30b50
+pad_big          0x33050
+empty            0x34900
+```
+
+```sh
+psoxide-gate run tests/sfx-menus.toml --no-hw
+psoxide-gate run tests/sfx-match.toml --no-hw
+```
+
+They use ordinary pad input and read-only shipping observables, like the rest, and need the no-music gate disc from `make gate-disc`.

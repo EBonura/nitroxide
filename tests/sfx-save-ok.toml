@@ -1,0 +1,64 @@
+name = "nitroxide-sfx-save-ok"
+title = "NitroXide: a successful Save Settings sounds its chime"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+memcard = "fresh"
+max_ticks = 1200
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "settings-open"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x12070
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+press = ["up"]
+hold = 4
+wait = 10
+repeat = 2
+[[step]]
+checkpoint = "on-save-row"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "eq"
+value = 7
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 40
+[[step]]
+checkpoint = "save-ok-chime"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x10fa0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 60
+[[step]]
+checkpoint = "save-status-saved"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 1
