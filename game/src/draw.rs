@@ -2376,6 +2376,20 @@ fn thin_quad(from: &(Pv, Pv), to: &(Pv, Pv), scale: &ThinScale) -> ([(i16, i16);
     (quad, fade)
 }
 
+/// [`thin_quad`] and the fade on both colours, out of line so the loop that
+/// calls it for the few far markings stays the size it was.
+#[inline(never)]
+fn thin_quad_faded(
+    from: &(Pv, Pv),
+    to: &(Pv, Pv),
+    scale: &ThinScale,
+    c0: Rgb,
+    c1: Rgb,
+) -> ([(i16, i16); 4], Rgb, Rgb) {
+    let (quad, fade) = thin_quad(from, to, scale);
+    (quad, faded(c0, fade), faded(c1, fade))
+}
+
 /// The least a far marking is dimmed to, in sixteenths: a line under a pixel
 /// wide is still drawn a pixel wide, bright enough to read.
 const THIN_FADE_MIN: i32 = 11;
@@ -5008,7 +5022,9 @@ impl Builder<'_> {
             // A full view queues only the covered wall bands: see
             // `draw_wall_jobs`. The pitch and the solid walls keep dropping
             // the quads the GPU cannot take, as they always did.
-            self.draw_wall_jobs(cull);
+            if unsafe { WALL_JOB_COUNT } != 0 {
+                self.draw_wall_jobs(cull);
+            }
             return;
         }
         Self::sweep_wall_jobs();
@@ -5711,10 +5727,7 @@ impl Builder<'_> {
                 let (mut c0, mut c1) = (s.c, unsafe { sections.get_unchecked(j) }.c);
                 let mut sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
                 if either_thin {
-                    let fade;
-                    (sp, fade) = thin_quad(&from, &to, &scale);
-                    c0 = faded(c0, fade);
-                    c1 = faded(c1, fade);
+                    (sp, c0, c1) = thin_quad_faded(&from, &to, &scale, c0, c1);
                 }
                 // Flat where the light barely moves along the quad: a
                 // Gouraud quad costs the GPU four times the setup and twice
