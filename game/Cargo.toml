@@ -62,6 +62,10 @@ boot-roof-length = []
 # in the air beside the goal post: the end wall's floor curve close up, the
 # post, and the pitch's edge along the end wall, held still.
 boot-end-wall = []
+# Dev: one fixed side-wall ramp seen from three distances in turn (near, mid
+# and far, 150 ticks each, ball cam), to check the ramp's texture is the same
+# at every level of detail. The car is held after every tick.
+boot-ramp-lod = []
 # Dev: the split-screen stress route, bot matches shown the costly way
 # (ball cam in both halves, cars close under the chase cameras), straight
 # from boot. The gate route for split screen at 30.

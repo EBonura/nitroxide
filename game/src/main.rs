@@ -610,6 +610,24 @@ impl NitroXide {
         self.sim.ball.grounded = false;
     }
 
+    /// The `boot-ramp-lod` station: the car stands on the pitch facing the
+    /// right side wall at one of three distances in turn, the ball held just
+    /// above the wall's floor curve so the ball cam looks at the ramp.
+    #[cfg(feature = "boot-ramp-lod")]
+    fn hold_ramp_lod(&mut self, tick: u32) {
+        const DISTANCES: [i32; 3] = [500, 1800, 3400];
+        let d = DISTANCES[(tick / 150) as usize % 3];
+        self.sim.car.p.x = nitroxide_sim::uu(nitroxide_sim::HALF_X - d);
+        self.sim.car.p.z = nitroxide_sim::uu(-2400);
+        self.sim.car.v = nitroxide_sim::V3::ZERO;
+        self.sim.opponent.p.x = nitroxide_sim::uu(-3000);
+        self.sim.ball.p.x = nitroxide_sim::uu(nitroxide_sim::HALF_X - 100);
+        self.sim.ball.p.y = nitroxide_sim::uu(160);
+        self.sim.ball.p.z = nitroxide_sim::uu(500);
+        self.sim.ball.v = nitroxide_sim::V3::ZERO;
+        self.sim.ball.grounded = false;
+    }
+
     fn new() -> Self {
         NitroXide {
             analog_retry: 0,
@@ -2134,6 +2152,13 @@ impl Scene for NitroXide {
             self.sim.opponent.p.x = nitroxide_sim::uu(-3000);
             self.hold_end_wall_ball();
         }
+        #[cfg(feature = "boot-ramp-lod")]
+        {
+            self.phase = Phase::Play;
+            self.sim.opponent_ai = false;
+            self.ball_cam[0] = true;
+            self.hold_ramp_lod(0);
+        }
         #[cfg(feature = "boot-roof")]
         {
             self.phase = Phase::Play;
@@ -2537,6 +2562,8 @@ impl Scene for NitroXide {
                 self.hold_roof_length_ball();
                 #[cfg(feature = "boot-end-wall")]
                 self.hold_end_wall_ball();
+                #[cfg(feature = "boot-ramp-lod")]
+                self.hold_ramp_lod(ctx.sim_tick.as_u32());
                 #[cfg(feature = "boot-roof")]
                 {
                     // This is a camera station, not a physics scenario. Keep

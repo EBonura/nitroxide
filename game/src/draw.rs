@@ -951,6 +951,25 @@ const CURVE_SEGS: usize = 8;
 /// Points in the swept cross-section: both quarter turns, their joins, and
 /// the two rings that bracket the lit rail.
 const PROFILE_LEN: usize = 2 * CURVE_SEGS + 4;
+/// Rows of the wall panel tile (32 by 32 texels, from V 0) the floor curve
+/// is stretched over, end to end.
+const RAMP_PANEL_ROWS: usize = 32;
+/// V rows per ring of the floor curve. Exact, so a cut that skips rings (the
+/// distance LOD) still lands on whole rows and the rings it keeps get the V
+/// the full sweep gives them.
+const RAMP_V_STEP: usize = RAMP_PANEL_ROWS / CURVE_SEGS;
+const _: () = assert!(
+    RAMP_PANEL_ROWS % CURVE_SEGS == 0 && RAMP_PANEL_ROWS <= 255,
+    "the floor curve's rings must take whole rows of the panel tile"
+);
+/// V at ring `ring` of the floor curve: 0 where it leaves the pitch, the
+/// tile's half-open end (32) where it meets the wall. The GPU samples pixel
+/// centres, so the end value is never read and the last row is the tile's
+/// own, not a stretch of it.
+#[inline(always)]
+const fn ramp_v(ring: usize) -> u8 {
+    (ring * RAMP_V_STEP) as u8
+}
 /// The two rings the rail runs between, and how high off the pitch it sits.
 ///
 /// Between the top of the floor ramp and the roof curve the wall used to be
@@ -6267,6 +6286,11 @@ impl Builder<'_> {
                 let (u0, u1, v0, v1) = if covered {
                     let v = unsafe { &COVER_PROFILE_V };
                     (cover_us[k], cover_us[k + 1], v[ri], v[top])
+                } else if top <= CURVE_SEGS {
+                    // The floor curve is one panel whatever its cut count: V
+                    // follows the ring, so a cut that skips rings still
+                    // starts and ends on the texels the full sweep would.
+                    (panel_u[k], panel_u[k + 1], ramp_v(ri), ramp_v(top))
                 } else {
                     (panel_u[k], panel_u[k + 1], 0, 31)
                 };
