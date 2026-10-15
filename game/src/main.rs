@@ -45,6 +45,10 @@ mod draw;
 mod gate_state;
 mod music;
 
+/// Whether a match starts in ball cam. Off, as shipped: a dev option
+/// (`cam-ball-default`) for judging it, not a decision.
+const CAM_BALL_DEFAULT: bool = cfg!(feature = "cam-ball-default");
+
 /// Two faces, the way most games do it: a wide display one for headings and a
 /// compact one for anything you read at a glance mid-match. Kenney Rocket is
 /// 18 px wide, which is right for a title and far too wide for a clock.
@@ -607,7 +611,7 @@ impl NitroXide {
             cars: [0, 1],
             menu: 0,
             menu_at: 0,
-            ball_cam: [false; 2],
+            ball_cam: [CAM_BALL_DEFAULT; 2],
             two_player: false,
             paused: false,
             pause_row: 0,
@@ -996,7 +1000,7 @@ impl NitroXide {
     fn start_match(&mut self) {
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
         self.sim.opponent_ai = self.menu != ROW_PRACTICE && !self.two_player;
-        self.ball_cam = [false; 2];
+        self.ball_cam = [CAM_BALL_DEFAULT; 2];
         self.paused = false;
         self.pause_row = 0;
         // The last match's camera and tyre marks belong to the last match.

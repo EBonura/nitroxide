@@ -65,7 +65,16 @@ pub const SCREEN_H: i16 = 240;
 /// 1080p, where a ball 4600 uu away is still tens of pixels across; at 320x240
 /// the same shot is three pixels. Trading peripheral vision for reach is what
 /// keeps the ball legible at kickoff.
+#[cfg(not(any(feature = "cam-fov-77", feature = "cam-fov-90")))]
 const PROJ_H: u16 = 260;
+/// Dev options for Manny's field-of-view call (about 77 and 90 degrees
+/// horizontal). Not the shipping view: every PROJ_H user, the LOD pixel
+/// tables and the cull frustum follow it, but the frame budget was never
+/// re-measured at these.
+#[cfg(all(feature = "cam-fov-77", not(feature = "cam-fov-90")))]
+const PROJ_H: u16 = 200;
+#[cfg(feature = "cam-fov-90")]
+const PROJ_H: u16 = 160;
 
 /// One player's slice of the back buffer, stacked top and bottom, the way
 /// Rocket League splits a two-player game.
@@ -479,101 +488,16 @@ fn enter_view_cpu(vp: Viewport) {
     );
 }
 
-// The default chase camera follows the car. Ball cam keeps the ball as its
-// primary subject, but shifts far enough toward the car to keep both visible
-// in the PS1 renderer's deliberately narrow field of view.
+// The chase camera is `nitroxide_sim::camera` (a spring arm around the car with
+// a levelled up vector, a wall-aware azimuth and ball-cam framing), pure
+// integer maths that the sim crate's host tests drive against the real physics.
+// This file only turns its pose into a view matrix.
 #[cfg(not(feature = "boot-wheels"))]
-const CAM_DIST: i32 = 800;
+const CAM_RIG: sim::camera::Rig = sim::camera::Rig::DEFAULT;
 #[cfg(feature = "boot-wheels")]
-const CAM_DIST: i32 = 430;
-#[cfg(not(feature = "boot-wheels"))]
-const CAM_HEIGHT: i32 = 330;
-#[cfg(feature = "boot-wheels")]
-const CAM_HEIGHT: i32 = 190;
-#[cfg(not(feature = "boot-wheels"))]
-const CAM_MIN_FLAT_DIST: i32 = 650;
-#[cfg(feature = "boot-wheels")]
-const CAM_MIN_FLAT_DIST: i32 = 400;
-/// Horizontal camera clearance from a vertical driving surface. The normal
-/// component grows from `CAM_HEIGHT` on the pitch to this distance on a wall,
-/// keeping the eye inside the arena without a discrete left/right relocation.
-#[cfg(not(feature = "boot-wheels"))]
-const CAM_WALL_BOOM: i32 = 720;
-#[cfg(feature = "boot-wheels")]
-const CAM_WALL_BOOM: i32 = CAM_HEIGHT;
-/// How much of the chase distance transfers into the vertical axis when the
-/// car drives straight up a wall. Shorter than the pitch boom so the view is
-/// diagonal rather than directly under the rear bumper.
-#[cfg(not(feature = "boot-wheels"))]
-const CAM_WALL_TRAIL: i32 = 500;
-#[cfg(feature = "boot-wheels")]
-const CAM_WALL_TRAIL: i32 = 0;
-const CAM_MIN_SEP: i32 = 300;
-/// How long after a kickoff the camera stays directly behind the car even where
-/// the end wall leaves less than `CAM_MIN_FLAT_DIST` of boom (the back-middle
-/// spot has 330 uu), shortening the boom instead of sliding the eye sideways
-/// along the wall: the first thing a player sees should be the car from behind.
-/// A tick is a sixtieth of a second; the byte saturates at 255.
-const CAM_KICKOFF_BEHIND_TICKS: u8 = 240;
-const CAM_PITCH_MIN: i32 = -260; // Q12, negative = looking up at a ball overhead
-const CAM_WALL_PITCH_MIN: i32 = -620;
-const CAM_PITCH_MAX: i32 = 700;
-const CAM_FALLBACK_AIM: i32 = 900;
-/// Maximum horizontal angle between the view centre and the car in ball cam,
-/// in Q12 turns (~29.0 degrees). At the wall-clamped kickoff the camera has to
-/// sit to one side of the car; aiming dead-centre at the ball would otherwise
-/// put the car outside the 63-degree horizontal field of view.
-const CAM_BALL_CAR_YAW: i32 = 330;
-/// Vertical equivalent of `CAM_BALL_CAR_YAW` (~22.9 degrees). The car is much
-/// nearer than the ball at kickoff, so its downward sightline is considerably
-/// steeper even though both subjects are on the floor.
-const CAM_BALL_CAR_PITCH: i32 = 260;
-/// The same limit for a half-height split view. The split keeps [`PROJ_H`],
-/// so its vertical half-field is 60 lines, about 13 degrees against the full
-/// screen's 25, and the full-screen limit left the car below the view.
-/// `atan2_q12` is linear in the slope inside an octant, so this is not a
-/// clean angle: it was set from headless captures (boot-split-play and
-/// boot-split-wall, both seats) to keep the whole car inside the bottom of
-/// the view with the ball still below the scoreboard.
-const CAM_BALL_CAR_PITCH_SPLIT: i32 = 68;
-/// Ball cam's eye height in a split view. From the full `CAM_HEIGHT` the car
-/// sits about 22 degrees below a far ball, nearly the whole 26-degree split
-/// field, so holding the car pushed the ball up under the scoreboard and the
-/// view read as looking down from above. Only the ball cam that holds the
-/// car uses it; the chase camera and the goal celebration keep `CAM_HEIGHT`.
-const CAM_SPLIT_BALL_HEIGHT: i32 = 200;
-/// Car cam looks just beyond the nose. A far-ahead aim point works only while
-/// the full follow distance is available; at kickoff the end wall shortens
-/// that distance and the same pitch put the car below the 240-line frame.
-const CAM_CAR_AIM: i32 = 120;
-/// Maximum per-frame change of the camera boom relative to the car. Ordinary
-/// driving stays below this; a discontinuous surface-basis change is spread
-/// over a few frames without delaying the car's own world-space movement.
-const CAM_OFFSET_STEP: i32 = 96;
-const CAM_YAW_STEP: i32 = 96;
-const CAM_PITCH_STEP: i32 = 96;
+const CAM_RIG: sim::camera::Rig = sim::camera::Rig::WHEELS;
 
-#[derive(Copy, Clone)]
-struct CameraState {
-    valid: bool,
-    offset: (i32, i32, i32),
-    yaw: u16,
-    pitch: i32,
-    /// Sim tick this state was computed on.
-    tick: u32,
-}
-
-impl CameraState {
-    const EMPTY: Self = Self {
-        valid: false,
-        offset: (0, 0, 0),
-        yaw: 0,
-        pitch: 0,
-        tick: 0,
-    };
-}
-
-static mut CHASE_CAMERAS: [CameraState; 2] = [CameraState::EMPTY; 2];
+static mut CHASE_CAMERAS: [sim::camera::CameraState; 2] = [sim::camera::CameraState::EMPTY; 2];
 /// EXPERIMENT: the sim tick being rendered. The chase camera's step limits
 /// were tuned per 30 Hz frame (two ticks); scaling them by the ticks since
 /// the last update keeps the camera's catch-up speed the same at any rate.
@@ -597,7 +521,7 @@ pub fn drop_pending() {
 /// The attract demo calls it at the start of each match so every run of it
 /// draws the same frames.
 pub fn reset_cameras() {
-    unsafe { CHASE_CAMERAS = [CameraState::EMPTY; 2] };
+    unsafe { CHASE_CAMERAS = [sim::camera::CameraState::EMPTY; 2] };
 }
 const DEPTH_RANGE: DepthRange = DepthRange::new(120, 14000);
 const SKY_SLOT: usize = OT_DEPTH - 1;
@@ -2884,46 +2808,6 @@ pub fn setup() {
     build_burst();
 }
 
-/// Margin the camera keeps from the walls, so it never clips through one.
-// At the camera's ordinary 330-uu height the quarter pipe is already almost
-// vertical, so this clears it without crushing the follow distance as badly
-// as a full ramp-radius inset would.
-const CAM_WALL_MARGIN: i32 = 180;
-/// Height the camera keeps above the pitch and below the roof. Climbing a
-/// wall, the boom trails the car downward, and from the foot of the ramp
-/// that put the eye under the pitch, looking up through it at the arena
-/// (Manny's 2026-09-24 tape, polls 3290..3328). Within `CAM_WALL_MARGIN` of a
-/// wall the ramp is at most about 13 uu high, so this clears it too.
-const CAM_SURFACE_CLEAR: i32 = 100;
-
-/// Pull a point inside the arena footprint: side walls, end walls, and the four
-/// corner chamfers. Same shape the sim confines the ball with, minus the goals.
-fn keep_inside(mut x: i32, mut z: i32) -> (i32, i32) {
-    x = x.clamp(
-        -(sim::HALF_X - CAM_WALL_MARGIN),
-        sim::HALF_X - CAM_WALL_MARGIN,
-    );
-    z = z.clamp(
-        -(sim::HALF_Z - CAM_WALL_MARGIN),
-        sim::HALF_Z - CAM_WALL_MARGIN,
-    );
-    let limit = sim::CORNER - CAM_WALL_MARGIN * 3 / 2;
-    let over = x.abs() + z.abs() - limit;
-    if over > 0 {
-        x -= x.signum() * over / 2;
-        z -= z.signum() * over / 2;
-    }
-    // The rounded corner joints cut further in than the planes do.
-    for &(nx, nz, off) in &sim::CORNER_JOINT_PLANES {
-        let over = ((x.abs() * nx + z.abs() * nz) >> 12) - ((off >> 2) - CAM_WALL_MARGIN);
-        if over > 0 {
-            x -= x.signum() * (nx * over >> 12);
-            z -= z.signum() * (nz * over >> 12);
-        }
-    }
-    (x, z)
-}
-
 /// The chase camera for one player. `subject` is the car this view follows,
 /// which is what makes a split game two calls instead of one.
 /// `hold_car` is what the ordinary ball cam does: it gives up some of its aim
@@ -2939,215 +2823,38 @@ fn camera(
     split: bool,
     camera_slot: usize,
 ) -> View {
-    // Headings are rebuilt from vectors here, and the SDK's octant-linear
-    // `atan2_q12` is off by up to four degrees mid-octant: through a held turn
-    // that error rises and falls with the car's yaw and swings the view about
-    // the car. The pitch angles below keep the SDK's, which the pitch limits
-    // were tuned against and which depends on a slope that does not sweep.
-    use sim::angle::atan2_q12_fine as atan2_fine;
     let camera_slot = camera_slot.min(1);
-    let previous = unsafe { CHASE_CAMERAS[camera_slot] };
     let now = unsafe { CAMERA_TICK };
-    let ticks = (now.wrapping_sub(previous.tick).clamp(1, 8)) as i32;
-    let offset_step = CAM_OFFSET_STEP * ticks / 2;
-    let yaw_step = CAM_YAW_STEP * ticks / 2;
-    let pitch_step = CAM_PITCH_STEP * ticks / 2;
-    let (_, car_up, car_fwd) = subject.basis();
-    let dx = if ball_cam {
-        r(s.ball.p.x - subject.p.x)
-    } else {
-        car_fwd.x
+    let request = sim::camera::Request {
+        rig: &CAM_RIG,
+        screen: sim::camera::Screen {
+            proj_h: PROJ_H as i32,
+            w: SCREEN_W as i32,
+            h: if split { SCREEN_H as i32 / 2 } else { SCREEN_H as i32 },
+        },
+        ball_cam,
+        hold_car,
+        split,
     };
-    let dz = if ball_cam {
-        r(s.ball.p.z - subject.p.z)
-    } else {
-        car_fwd.z
-    };
-    // Close in on the ball and the car-ball line goes wild, so hold the car's
-    // own heading until they separate again.
-    let close = dx * dx + dz * dz <= CAM_MIN_SEP * CAM_MIN_SEP;
-    let follow_yaw = if !ball_cam || close {
-        atan2_fine(car_fwd.x, car_fwd.z)
-    } else {
-        atan2_fine(dx, dz)
-    };
-    #[cfg(feature = "boot-wheels")]
-    // Three-quarter inspection view: exposes the front steer angle and the
-    // different front/rear suspension travel in one still.
-    let follow_yaw = follow_yaw.wrapping_add(512);
-    let (follow_s, follow_c) = (sin_q12(follow_yaw), cos_q12(follow_yaw));
-    // A floor car has a full-length horizontal nose vector. On a wall that
-    // vector shrinks toward zero, and normalising it to `follow_yaw` must not
-    // turn numerical crumbs into a full 800-uu camera relocation. Ball cam is
-    // deliberately positioned from the horizontal car-to-ball line instead.
-    let follow_flat = if ball_cam {
-        4096
-    } else {
-        isqrt_i32(car_fwd.x * car_fwd.x + car_fwd.z * car_fwd.z).min(4096)
-    };
-    let flat_trail = (CAM_DIST * follow_flat) >> 12;
-
-    // Behind the car, then dragged back inside the arena. Without this the
-    // camera ends up through the back wall at kickoff (the spawn is 4608 out
-    // of 5120) and inside the net every time you score.
-    // Height follows the surface normal. As that normal rolls away from world
-    // up, grow its horizontal contribution to a full camera boom. This moves
-    // the eye smoothly into the arena on a wall and preserves its distance
-    // from the car without choosing between two lateral camera positions.
-    let wall_amount = 4096 - car_up.y.clamp(0, 4096);
-    let surface_boom = CAM_HEIGHT + (((CAM_WALL_BOOM - CAM_HEIGHT) * wall_amount) >> 12);
-    let desired_x =
-        r(subject.p.x) - ((follow_s * flat_trail) >> 12) + ((car_up.x * surface_boom) >> 12);
-    let desired_z =
-        r(subject.p.z) - ((follow_c * flat_trail) >> 12) + ((car_up.z * surface_boom) >> 12);
-    let (mut cx, mut cz) = keep_inside(desired_x, desired_z);
-    let (car_x, car_z) = (r(subject.p.x), r(subject.p.z));
-    let current_flat = isqrt_i32((car_x - cx) * (car_x - cx) + (car_z - cz) * (car_z - cz));
-    if current_flat < CAM_MIN_FLAT_DIST && s.kickoff_ticks() >= CAM_KICKOFF_BEHIND_TICKS {
-        // At the back-middle kickoff there is not enough room directly behind
-        // the car for an 800-uu boom. Slide the eye along the wall instead of
-        // collapsing almost onto the bumper; the final look-at yaw below
-        // keeps the car centred from that offset position. Wall driving gets
-        // its distance from the continuous surface-normal boom above, so this
-        // branch remains a floor/kickoff fallback instead of firing mid-climb.
-        let side = isqrt_i32(CAM_MIN_FLAT_DIST * CAM_MIN_FLAT_DIST - current_flat * current_flat);
-        let candidate = |sign: i32| {
-            keep_inside(
-                cx + sign * ((follow_c * side) >> 12),
-                cz - sign * ((follow_s * side) >> 12),
-            )
-        };
-        let a = candidate(1);
-        let b = candidate(-1);
-        let distance_sq =
-            |p: (i32, i32)| (car_x - p.0) * (car_x - p.0) + (car_z - p.1) * (car_z - p.1);
-        (cx, cz) = if distance_sq(a) >= distance_sq(b) {
-            a
-        } else {
-            b
-        };
-    }
-    // The part of the trail lost from X/Z becomes vertical while climbing.
-    // Render Y is inverted, so a positive world-space nose puts the eye lower
-    // on screen-space Y, behind the car rather than above it.
-    let vertical_trail = (((car_fwd.y * CAM_WALL_TRAIL) >> 12) * wall_amount) >> 12;
-    let car_y = ry(subject.p.y);
-    let height = if ball_cam && hold_car && split {
-        CAM_SPLIT_BALL_HEIGHT
-    } else {
-        CAM_HEIGHT
-    };
-    let desired_cyy = car_y + vertical_trail - ((car_up.y * height) >> 12);
-    let desired_offset = (cx - car_x, desired_cyy - car_y, cz - car_z);
-    let offset = if !previous.valid {
-        desired_offset
-    } else {
-        (
-            previous.offset.0
-                + (desired_offset.0 - previous.offset.0).clamp(-offset_step, offset_step),
-            previous.offset.1
-                + (desired_offset.1 - previous.offset.1).clamp(-offset_step, offset_step),
-            previous.offset.2
-                + (desired_offset.2 - previous.offset.2).clamp(-offset_step, offset_step),
-        )
-    };
-    (cx, cz) = keep_inside(car_x + offset.0, car_z + offset.2);
-    // Render Y is down: the pitch is at 0 and the roof at -CEIL.
-    let cyy = (car_y + offset.1).clamp(-(sim::CEIL - CAM_SURFACE_CLEAR), -CAM_SURFACE_CLEAR);
-    let current_flat = isqrt_i32((car_x - cx) * (car_x - cx) + (car_z - cz) * (car_z - cz));
-
-    // Ball cam primarily aims at the ball. Its vertical aim is softened so a
-    // high ball cannot push the car below the short 240-line frame.
-    let mut aim_x = if ball_cam {
-        r(s.ball.p.x)
-    } else {
-        r(subject.p.x) + ((car_fwd.x * CAM_CAR_AIM) >> 12)
-    };
-    let mut aim_z = if ball_cam {
-        r(s.ball.p.z)
-    } else {
-        r(subject.p.z) + ((car_fwd.z * CAM_CAR_AIM) >> 12)
-    };
-    let mut ay = if ball_cam {
-        // Half the ball's rise keeps the car safely inside a 240-line frame.
-        ry(subject.p.y) + (ry(s.ball.p.y) - ry(subject.p.y)) / 2
-    } else {
-        ry(subject.p.y)
-            - ((car_up.y * sim::CAR_HALF_H) >> 12)
-            - (((car_fwd.y * CAM_CAR_AIM) >> 12) * wall_amount >> 12)
-    };
-    let mut flat = isqrt_i32((aim_x - cx) * (aim_x - cx) + (aim_z - cz) * (aim_z - cz));
-    if ball_cam && flat < CAM_FALLBACK_AIM / 2 {
-        // Ball practically on the lens: aim down the car's nose instead.
-        aim_x = r(subject.p.x) + ((follow_s * CAM_FALLBACK_AIM) >> 12);
-        aim_z = r(subject.p.z) + ((follow_c * CAM_FALLBACK_AIM) >> 12);
-        ay = ry(subject.p.y);
-        flat = isqrt_i32((aim_x - cx) * (aim_x - cx) + (aim_z - cz) * (aim_z - cz));
-    }
-    let flat = flat.max(1);
-    // atan2 hands back an unsigned turn; fold the top half to a signed tilt so
-    // the camera can look up at a ball that is over its head.
-    let raw = atan2_q12(ay - cyy, flat) as i32;
-    let mut signed = if raw > 2048 { raw - 4096 } else { raw };
-    if ball_cam && hold_car {
-        let car_flat = current_flat.max(1);
-        let car_raw = atan2_q12(ry(subject.p.y) - cyy, car_flat) as i32;
-        let car_pitch = if car_raw > 2048 {
-            car_raw - 4096
-        } else {
-            car_raw
-        };
-        let delta = car_pitch - signed;
-        let limit = if split {
-            CAM_BALL_CAR_PITCH_SPLIT
-        } else {
-            CAM_BALL_CAR_PITCH
-        };
-        let shift = (delta.abs() - limit).max(0);
-        signed += delta.signum() * shift;
-    }
-    let pitch_min = CAM_PITCH_MIN + (((CAM_WALL_PITCH_MIN - CAM_PITCH_MIN) * wall_amount) >> 12);
-    let desired_pitch = signed.clamp(pitch_min, CAM_PITCH_MAX);
-    let mut view_yaw = atan2_fine(aim_x - cx, aim_z - cz);
-    if ball_cam && hold_car {
-        // The end-wall clamp slides the camera sideways at kickoff to retain a
-        // useful boom length. On a 63-degree FOV, the resulting car-to-ball
-        // subject angle is wider than either subject's safe screen margin.
-        // Bias the view away from the ball only as much as needed to retain
-        // the car; once the boom is no longer wall-limited this becomes zero.
-        let car_yaw = atan2_fine(car_x - cx, car_z - cz);
-        let delta = ((car_yaw as i32 - view_yaw as i32 + 2048).rem_euclid(4096)) - 2048;
-        let shift = (delta.abs() - CAM_BALL_CAR_YAW).max(0);
-        view_yaw = (view_yaw as i32 + delta.signum() * shift).rem_euclid(4096) as u16;
-    }
-    #[cfg(feature = "diag-log")]
-    let desired_yaw = view_yaw;
-    let (view_yaw, pitch) = if previous.valid {
-        let yaw_delta = ((view_yaw as i32 - previous.yaw as i32 + 2048).rem_euclid(4096)) - 2048;
-        (
-            (previous.yaw as i32 + yaw_delta.clamp(-yaw_step, yaw_step)).rem_euclid(4096)
-                as u16,
-            previous.pitch
-                + (desired_pitch - previous.pitch).clamp(-pitch_step, pitch_step),
-        )
-    } else {
-        (view_yaw, desired_pitch)
-    };
+    let pose = sim::camera::update(
+        unsafe { &mut CHASE_CAMERAS[camera_slot] },
+        s,
+        subject,
+        &request,
+        now,
+    );
     #[cfg(feature = "diag-log")]
     crate::diaglog::fill!(cam;
         now as i32,
         camera_slot as i32,
-        ball_cam as i32
-            | (hold_car as i32) << 1
-            | (split as i32) << 2
-            | (previous.valid as i32) << 3,
-        cx,
-        cyy,
-        cz,
-        view_yaw as i32,
-        pitch,
-        desired_yaw as i32,
-        desired_pitch,
+        ball_cam as i32 | (hold_car as i32) << 1 | (split as i32) << 2,
+        pose.eye.0,
+        -pose.eye.1,
+        pose.eye.2,
+        pose.yaw as i32,
+        pose.pitch,
+        pose.desired_yaw as i32,
+        pose.desired_pitch,
         subject.yaw as i32,
         subject.p.x,
         subject.p.z,
@@ -3157,22 +2864,18 @@ fn camera(
         subject.slide,
         subject.grounded as i32 | (subject.up.y << 1),
         s.kickoff_ticks() as i32,
-        follow_yaw as i32,
-        ticks,
+        pose.heading as i32,
+        pose.ticks,
         s.ball.p.x,
         s.ball.p.z,
-        offset.0,
+        0,
     );
-    unsafe {
-        CHASE_CAMERAS[camera_slot] = CameraState {
-            valid: true,
-            offset: (cx - car_x, cyy - car_y, cz - car_z),
-            yaw: view_yaw,
-            pitch,
-            tick: now,
-        };
-    }
-    look_from((cx, cyy, cz), view_yaw, pitch.rem_euclid(4096) as u16)
+    // The camera works in world space (Y up); the renderer's Y is down.
+    look_from(
+        (pose.eye.0, -pose.eye.1, pose.eye.2),
+        pose.yaw,
+        pose.pitch.rem_euclid(4096) as u16,
+    )
 }
 
 /// A camera at `pos` looking along `yaw` with `pitch` below the horizontal.
@@ -6694,8 +6397,8 @@ impl Builder<'_> {
             // There used to be a guard here that skipped this whole box when
             // the camera was inside the goal, on the grounds that an unclipped
             // quad straddling the eye becomes a screen-wide slab. It was
-            // unreachable: `keep_inside` holds the camera a wall margin inside
-            // the pitch, so its |z| never exceeds HALF_Z - CAM_WALL_MARGIN and
+            // unreachable: the chase camera's arm is cast against the arena, so
+            // its |z| never exceeds HALF_Z - the camera's hard wall margin and
             // the test needed |z| past HALF_Z. Removed rather than left to
             // send the next reader after the same red herring -- and the slab
             // it feared cannot happen now anyway, since `quad_biased` clips
