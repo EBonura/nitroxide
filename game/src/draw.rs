@@ -439,20 +439,31 @@ const NEAR_COVER: i32 = 1600;
 const NEAR_COVER_COLUMN: i32 = 1200;
 const NEAR_COVER_H: i32 = 800;
 
+/// Packets in the previous full-view frame by the time its walls were done.
+static mut LAST_PACKETS: u32 = 0;
+/// Cutting the net at the lens costs a few thousand cycles a quad, and the
+/// frames that miss a vblank are the ones that are already full: on the
+/// train, wall and heavy tapes and Manny's benchmark the late frames all
+/// have 360 to 420 packets there, and a frame with a car on the wall and the
+/// net across the lens has under 250. A frame that follows a full one keeps
+/// the old drop, so the cut never tips a full frame over.
+const NET_PACKET_LIMIT: u32 = 330;
+
 /// Is the band whose lower ring is `ri` one of the covered ones?
 #[inline(always)]
 const fn ri_covered(ri: usize) -> bool {
     ri >= RAIL_HI_RING
 }
 
-/// How near a corner of a goal-box quad may be and the quad still be drawn
-/// whole. The faces are up to 1,786 uu across, so a corner nearer than the
-/// projection plane times that over 1,024 (the widest polygon the GPU takes)
-/// puts its neighbour more than 1,024 pixels off, and the GPU drops the
-/// face: from the goal mouth the box's floor went for a frame or two as the
-/// camera slid by (`make demo-check`, tick 8,695, which only fails when a
-/// screenshot lands on it). A quarter more, for the faces' depth. Quads with
-/// a corner this near go through `clip_piece`, which cuts the guard band.
+/// How near the nearest of a goal box's faces may be before they are tested
+/// against the GPU's polygon limit. The faces are up to 1,786 uu across, so
+/// one with a corner nearer than the projection plane times that over 1,024
+/// puts its neighbour more than 1,024 pixels off, and the GPU drops it: from
+/// the goal mouth the box's floor went for a frame or two as the camera slid
+/// by (`make demo-check`, tick 8,695, which only fails when a screenshot
+/// lands on it). A quarter more, for the faces' depth. Quads of a box this
+/// near that do not fit are clipped (`clip_piece` cuts the guard band) rather
+/// than dropped; a farther box pays for no test.
 #[inline]
 fn goal_cut_depth() -> i32 {
     (proj_h() * 2 * sim::GOAL_HALF_W * 5) >> 12
@@ -2298,17 +2309,26 @@ fn project_cut(s: &LineSection) -> (Pv, Pv) {
     (a, b)
 }
 
-/// The least a far marking is dimmed to, in sixteenths: a line under a pixel
-/// wide is still drawn a pixel wide, bright enough to read.
-const THIN_FADE_MIN: i32 = 11;
-/// Grass over chalk, per channel in 256ths: what a marking dims toward.
-const GRASS_OVER_CHALK: (i32, i32, i32) = (77, 116, 34);
+/// What `thin_quad` needs per frame, from the eye's height: `k` is how many
+/// sixteenths of a pixel p h w / z^2 comes to for a marking's whole width at
+/// depth z squared of 1, and the depth squares at which a marking is dim
+/// enough to take the least fade, and wide enough to need two pixels.
+#[derive(Copy, Clone)]
+struct ThinScale {
+    k: i32,
+    dim_z2: i32,
+    wide_z2: i32,
+}
 
-/// `c` with `fade` sixteenths of itself over the grass it lies on.
-#[inline(always)]
-fn faded(c: Rgb, fade: i32) -> Rgb {
-    let k = |v: u8, g: i32| (v as i32 * (g + ((256 - g) * fade >> 4)) >> 8) as u8;
-    (k(c.0, GRASS_OVER_CHALK.0), k(c.1, GRASS_OVER_CHALK.1), k(c.2, GRASS_OVER_CHALK.2))
+impl ThinScale {
+    fn new(eye_height: i32) -> Self {
+        let k = proj_h() * eye_height.max(0) * (2 * LINE_HALF_W) * 16;
+        Self {
+            k,
+            dim_z2: k / THIN_FADE_MIN,
+            wide_z2: k / 24,
+        }
+    }
 }
 
 /// The quad for a thin marking between two cuts (each under three pixels
@@ -2324,23 +2344,26 @@ fn faded(c: Rgb, fade: i32) -> Rgb {
 /// `p` away, is p h w / z^2 pixels tall. Under a pixel it is drawn a pixel
 /// with the chalk dimmed by the share of the pixel it would cover.
 #[inline(always)]
-fn thin_quad(from: &(Pv, Pv), to: &(Pv, Pv), eye_scale: i32) -> ([(i16, i16); 4], i32) {
+fn thin_quad(from: &(Pv, Pv), to: &(Pv, Pv), scale: &ThinScale) -> ([(i16, i16); 4], i32) {
     // Each cut's middle, in half pixels.
     let mid = |c: &(Pv, Pv)| (c.0.sx as i32 + c.1.sx as i32, c.0.sy as i32 + c.1.sy as i32);
     let (m0, m1) = (mid(from), mid(to));
-    // Its far end: a quad spanning a long run is thinner there than at the
-    // near end, and is drawn as thin as its thinnest.
+    // The far end's depth: a quad spanning a long run is thinner there than
+    // at the near end, and is drawn as thin as its thinnest.
     let z = (from.0.sz as i32).max(to.0.sz as i32);
-    let width = (eye_scale * (2 * LINE_HALF_W) * 16) / (z * z).max(1);
+    let z2 = z * z;
     let across_x = (m1.0 - m0.0).abs() >= (m1.1 - m0.1).abs();
-    let px = if across_x {
-        ((width + 8) >> 4).max(1)
-    } else {
+    let (px, fade) = if !across_x {
         // Running up the screen, the width is the cut's own.
         let w = ((from.1.sx as i32 - from.0.sx as i32).abs() + (to.1.sx as i32 - to.0.sx as i32).abs() + 1) >> 1;
-        w.max(1)
+        (w.max(1), 16)
+    } else if z2 >= scale.dim_z2 {
+        (1, THIN_FADE_MIN)
+    } else {
+        let width = scale.k / z2.max(1);
+        let px = ((width + 8) >> 4).max(1);
+        (px, if px == 1 { width.clamp(THIN_FADE_MIN, 16) } else { 16 })
     };
-    let fade = if across_x && px == 1 { width.clamp(THIN_FADE_MIN, 16) } else { 16 };
     // The near side of a middle `px` thick: half a pixel is 1 in halves.
     let lo = |m: i32| ((m - px + 1) >> 1) as i16;
     let hi = |m: i32| ((m + 1) >> 1) as i16;
@@ -2351,6 +2374,19 @@ fn thin_quad(from: &(Pv, Pv), to: &(Pv, Pv), eye_scale: i32) -> ([(i16, i16); 4]
         [(lo(m0.0), hi(m0.1)), (lo(m0.0) + p, hi(m0.1)), (lo(m1.0), hi(m1.1)), (lo(m1.0) + p, hi(m1.1))]
     };
     (quad, fade)
+}
+
+/// The least a far marking is dimmed to, in sixteenths: a line under a pixel
+/// wide is still drawn a pixel wide, bright enough to read.
+const THIN_FADE_MIN: i32 = 11;
+/// Grass over chalk, per channel in 256ths: what a marking dims toward.
+const GRASS_OVER_CHALK: (i32, i32, i32) = (77, 116, 34);
+
+/// `c` with `fade` sixteenths of itself over the grass it lies on.
+#[inline(always)]
+fn faded(c: Rgb, fade: i32) -> Rgb {
+    let k = |v: u8, g: i32| (v as i32 * (g + ((256 - g) * fade >> 4)) >> 8) as u8;
+    (k(c.0, GRASS_OVER_CHALK.0), k(c.1, GRASS_OVER_CHALK.1), k(c.2, GRASS_OVER_CHALK.2))
 }
 
 /// Light every marking's sections from the current pitch light. Run after
@@ -5161,6 +5197,15 @@ impl Builder<'_> {
     #[inline(never)]
     #[cold]
     fn draw_wall_jobs(&mut self, cull: &Cull) {
+        // A frame that turned out full after all keeps the old drop: the
+        // last frame's count only guessed (see `NET_PACKET_LIMIT`).
+        if unsafe { WALL_JOB_COUNT } != 0
+            && self.textured.len() + self.arena.len() + self.flats.len() + self.glow.len()
+                >= NET_PACKET_LIMIT as usize
+        {
+            unsafe { WALL_JOB_COUNT = 0 };
+            return;
+        }
         for k in 0..unsafe { WALL_JOB_COUNT } {
             let job = unsafe { &WALL_JOBS[k] };
             self.clip_wall(Self::wall_job_world(job), job.uv, job.tints, cull);
@@ -5565,10 +5610,28 @@ impl Builder<'_> {
             (x0 as i32, x1 as i32, y0 as i32, y1 as i32)
         };
         let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
-        let cut = project_cut;
+        // The exact thin quad costs a few hundred cycles: not in a split
+        // view, nor in a frame that follows a full one (see `NET_PACKET_LIMIT`).
+        let exact_thin = !split_view() && unsafe { LAST_PACKETS } < NET_PACKET_LIMIT;
+        // A full frame keeps the old fix in the cut itself: the GTE's
+        // corners, two pixels apart where the ends round together.
+        let cut = |sec: &LineSection| {
+            let (a, mut b) = project_cut(sec);
+            if !exact_thin {
+                let dy = b.sy - a.sy;
+                if (b.sx - a.sx).abs() < 2 && dy.abs() < 2 {
+                    b.sy = a.sy + if dy < 0 { -2 } else { 2 };
+                }
+            }
+            (a, b)
+        };
         // Height of the eye times the projection plane, for how wide a
         // marking seen across the view is: see `thin_quad`.
-        let eye_scale = proj_h() * (-cull.pos.1).max(0);
+        let scale = if exact_thin {
+            ThinScale::new(-cull.pos.1)
+        } else {
+            ThinScale { k: 0, dim_z2: 0, wide_z2: 0 }
+        };
         // A cut that comes out under three pixels across is a marking far off
         // (or edge-on), and the integer corners the GTE gives are then too
         // coarse to draw it with: each end rounds on its own, so the width
@@ -5578,10 +5641,14 @@ impl Builder<'_> {
         // exact projection of its centre line and its width, at a whole
         // number of pixels, see [`thin_cut`].
         let thin = |c: &(Pv, Pv)| {
-            (c.1.sx as i32 - c.0.sx as i32).abs() <= 2 && (c.1.sy as i32 - c.0.sy as i32).abs() <= 2
+            ((c.1.sx as i32 - c.0.sx as i32 + 2) as u32) <= 4
+                && ((c.1.sy as i32 - c.0.sy as i32 + 2) as u32) <= 4
         };
         for k in 0..unsafe { LINE_STRIP_COUNT } {
-            let strip = unsafe { LINE_STRIPS[k] };
+            // Unchecked: `k` is under the strip count, which `build_lines`
+            // keeps within the table, and a bounds-check panic path would
+            // cost the scratchpad stack its frames.
+            let strip = unsafe { *LINE_STRIPS.get_unchecked(k) };
             let c = (strip.centre.0, 0, strip.centre.1);
             let h = (strip.half.0, 0, strip.half.1);
             if !cull.visible_box(c, cull.extents(h)) {
@@ -5590,6 +5657,7 @@ impl Builder<'_> {
             let (mut i, last) = (strip.first as usize, strip.last as usize);
             let far_step = if strip.curved { 2 } else { 4 };
             let mut prev = cut(unsafe { sections.get_unchecked(i) });
+            let mut prev_thin = exact_thin && thin(&prev);
             while i < last {
                 let s = unsafe { sections.get_unchecked(i) };
                 let d = cull.flat_distance(s.a.0 as i32, s.a.1 as i32);
@@ -5604,15 +5672,29 @@ impl Builder<'_> {
                 };
                 let mut j = (i + step).min(last);
                 let mut next = cut(unsafe { sections.get_unchecked(j) });
+                // A straight run that is thin at both ends is one straight
+                // line on the screen between them: one quad, not one a
+                // couple of thousand uu.
+                let mut next_thin = exact_thin && thin(&next);
+                if exact_thin && !strip.curved && j < last && prev_thin && next_thin {
+                    let end = cut(unsafe { sections.get_unchecked(last) });
+                    if thin(&end) && end.0.sz != 0 && end.1.sz != 0 {
+                        j = last;
+                        next = end;
+                    }
+                }
                 // A long step that reaches behind the camera would drop the
                 // whole quad, visible part and all: take one cut instead.
                 if j > i + 1 && (next.0.sz == 0 || next.1.sz == 0) {
                     j = i + 1;
                     next = cut(unsafe { sections.get_unchecked(j) });
+                    next_thin = exact_thin && thin(&next);
                 }
                 count_offered!();
                 let (from, to) = (prev, next);
+                let either_thin = prev_thin || next_thin;
                 prev = next;
+                prev_thin = next_thin;
                 i = j;
                 if from.0.sz == 0 || from.1.sz == 0 || to.0.sz == 0 || to.1.sz == 0 {
                     continue;
@@ -5628,9 +5710,9 @@ impl Builder<'_> {
                 count_kept!();
                 let (mut c0, mut c1) = (s.c, unsafe { sections.get_unchecked(j) }.c);
                 let mut sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
-                if thin(&from) || thin(&to) {
+                if either_thin {
                     let fade;
-                    (sp, fade) = thin_quad(&from, &to, eye_scale);
+                    (sp, fade) = thin_quad(&from, &to, &scale);
                     c0 = faded(c0, fade);
                     c1 = faded(c1, fade);
                 }
@@ -5954,7 +6036,12 @@ impl Builder<'_> {
         // The span's covered bands near the lens take their own instance of
         // this function, so every other span runs the code it always did.
         if !SPLIT && !NET && distance < NEAR_COVER {
-            return self.wall_span::<false, true>(si, cull);
+            let slots = unsafe { &SPAN_SLOT[si] };
+            if unsafe { LAST_PACKETS } < NET_PACKET_LIMIT
+                && slots.iter().any(|p| cull.flat_distance(p.0, p.1) < NEAR_COVER_COLUMN)
+            {
+                return self.wall_span::<false, true>(si, cull);
+            }
         }
         let near_cover = NET;
         // A half-width view caps a span at two columns: the third exists to
@@ -6615,17 +6702,14 @@ impl Builder<'_> {
     /// close lands off its true place. One wholly behind it shows nothing.
     #[inline]
     fn eye_reach(cull: &Cull, corners: &[(i32, i32, i32); 4]) -> EyeReach {
-        let (mut inside, mut shallow) = (0, 0);
-        let cut_depth = goal_cut_depth();
+        let mut inside = 0;
         for c in corners {
             let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-            let z = Cull::dot(cull.fwd, d);
-            inside += (z <= gte_true_sz() + 8) as u8;
-            shallow += (z <= cut_depth) as u8;
+            inside += (Cull::dot(cull.fwd, d) <= gte_true_sz() + 8) as u8;
         }
-        match (inside, shallow) {
-            (4, _) => EyeReach::Behind,
-            (_, 0) => EyeReach::Clear,
+        match inside {
+            0 => EyeReach::Clear,
+            4 => EyeReach::Behind,
             _ => EyeReach::Cuts,
         }
     }
@@ -6691,7 +6775,24 @@ impl Builder<'_> {
         colors: [Rgb; 4],
     ) {
         match Self::quad_reach(cull, reach, &corners) {
-            EyeReach::Clear => self.quad(corners, colors),
+            // Whole faces are up to 1,786 uu across, so a corner not far
+            // past the near plane puts its neighbour more than the 1,024
+            // pixels the GPU takes: such a face is clipped, not dropped
+            // (the box's floor went for a frame or two from the goal mouth;
+            // `make demo-check` caught it at tick 8,695 when a screenshot
+            // landed on it).
+            EyeReach::Clear if reach == GoalReach::Clear => self.quad(corners, colors),
+            EyeReach::Clear => match project_quad(&corners) {
+                Some((sp, z_sum)) if gpu_draws_whole(&sp) => {
+                    if quad_overlaps_view(&sp) {
+                        self.emit(sp, z_sum / 4, colors);
+                    }
+                }
+                Some(_) => {
+                    Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::Flat)
+                }
+                None => {}
+            },
             EyeReach::Cuts => {
                 Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::Flat)
             }
@@ -6720,13 +6821,24 @@ impl Builder<'_> {
         colors: [Rgb; 4],
     ) {
         match Self::quad_reach(cull, reach, &corners) {
-            EyeReach::Clear => {
+            EyeReach::Clear if reach == GoalReach::Clear => {
                 if let Some((sp, _)) = project_quad(&corners) {
                     if quad_overlaps_view(&sp) {
                         self.emit_goal_floor(sp, colors);
                     }
                 }
             }
+            EyeReach::Clear => match project_quad(&corners) {
+                Some((sp, _)) if gpu_draws_whole(&sp) => {
+                    if quad_overlaps_view(&sp) {
+                        self.emit_goal_floor(sp, colors);
+                    }
+                }
+                Some(_) => {
+                    Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::GoalFloor)
+                }
+                None => {}
+            },
             EyeReach::Cuts => {
                 Self::queue_goal_job(corners, [(0, 0); 4], colors.map(rgbc), Pieces::GoalFloor)
             }
@@ -6756,7 +6868,23 @@ impl Builder<'_> {
         blended: bool,
     ) {
         match Self::quad_reach(cull, reach, &corners) {
-            EyeReach::Clear => self.quad_tex(corners, uvs, tints, bias, packet, blended),
+            EyeReach::Clear if reach == GoalReach::Clear => {
+                self.quad_tex(corners, uvs, tints, bias, packet, blended)
+            }
+            EyeReach::Clear => match project_quad(&corners) {
+                Some((sp, z_sum)) if gpu_draws_whole(&sp) => {
+                    if quad_overlaps_view(&sp) {
+                        self.quad_tex_projected(sp, z_sum, uvs, tints, bias, packet, blended);
+                    }
+                }
+                Some(_) => Self::queue_goal_job(
+                    corners,
+                    uvs.map(|w| (w as u8, (w >> 8) as u8)),
+                    tints.map(rgbc),
+                    Pieces::Net { packet },
+                ),
+                None => {}
+            },
             EyeReach::Cuts => Self::queue_goal_job(
                 corners,
                 uvs.map(|w| (w as u8, (w >> 8) as u8)),
@@ -8304,6 +8432,12 @@ fn build_view(
                 b.lamps(&cull);
             });
             b.draw_pieces(&cull);
+            // How full this frame is once its walls are in, for the next
+            // one to judge by (see `NET_PACKET_LIMIT`).
+            unsafe {
+                LAST_PACKETS =
+                    (b.textured.len() + b.arena.len() + b.flats.len() + b.glow.len()) as u32;
+            }
         });
         staged!(S_TRIM, {
             on_scratchpad(|| {
