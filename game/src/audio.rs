@@ -219,12 +219,13 @@ const HIT_LOUD: i32 = 2600;
 // which are before the master, the music is -15.
 //
 // Menu sounds are 10 dB under that, so a click is heard but never competes.
-// The countdown and the go are a little under it: they carry information and
-// sit just below the music's peaks. The engine and the crowd are beds, 11 and
-// 14 dB under, there to be felt when the music thins out. The horn, the
-// whistle and the roar are over it, because they are the match telling you
-// something. Ball hits, pads and the goal explosion keep the levels the game
-// already shipped with.
+// The countdown and the go are a few dB under it: they carry information and
+// sit under the music's peaks. The engine, at top speed, and the crowd are
+// beds, 8 and 14 dB under, there to be felt when the music thins out. The
+// horn, the whistle and the roar are over it, because they are the match
+// telling you something; the horn and the roar run at the top of the range
+// because the explosion they share a goal with is already loud. Ball hits,
+// pads and the goal explosion keep the levels the game already shipped with.
 
 const L_UI_MOVE: i16 = 0x1275;
 const L_UI_TICK: i16 = 0x0C9F;
@@ -235,14 +236,14 @@ const L_UI_CHIME: i16 = 0x1781;
 const L_UI_SAVED: i16 = 0x15AF;
 const L_UI_OPEN: i16 = 0x138D;
 const L_UI_CLOSE: i16 = 0x131B;
-const L_BEEP: i16 = 0x1334;
+const L_BEEP: i16 = 0x1B1B;
 const L_GO: i16 = 0x1B4D;
 const L_WHISTLE: i16 = 0x39B4;
-const L_HORN: i16 = 0x2BC5;
-const L_ROAR: i16 = 0x371E;
+const L_HORN: i16 = 0x3800;
+const L_ROAR: i16 = 0x3C00;
 const L_GASP: i16 = 0x1FB5;
 const L_CROWD: i16 = 0x0A2B;
-const L_ENGINE: i16 = 0x0666;
+const L_ENGINE: i16 = 0x08F0;
 const L_SKID: i16 = 0x09AF;
 const L_JUMP: i16 = 0x180D;
 const L_FLIP: i16 = 0x19C6;
@@ -728,10 +729,12 @@ fn car_sounds(s: &Sim, seen: &mut Seen, live: bool) {
         seen.supersonic = car.supersonic;
     }
 
-    // Either car bumping the other starts that car's cooldown; a demolition
-    // has its own, bigger sound and the cooldown starts on it too.
+    // Either car bumping the other starts that car's cooldown. A demolition
+    // starts it too, and has its own, bigger sound: a wrecked car in play
+    // means the bang was that, not a bump.
     let bump = [car.bump_cool > 0, s.opponent.bump_cool > 0];
-    if ((bump[0] && !seen.bump[0]) || (bump[1] && !seen.bump[1])) && !s.demo {
+    let wreck = car.wrecked() || s.opponent.wrecked();
+    if ((bump[0] && !seen.bump[0]) || (bump[1] && !seen.bump[1])) && !wreck {
         play_ratio(V_BUMP, Snd::Bump, L_BUMP, 16);
     }
     seen.bump = bump;
