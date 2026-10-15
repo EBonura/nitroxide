@@ -783,3 +783,30 @@ fn print_demo_window() {
         }
     }
 }
+
+#[test]
+fn kickoff_keeps_the_eye_straight_behind_the_car_at_every_spot() {
+    // 2026-10-08 tape: "kickoff camera sideways". The approved view is behind
+    // the car for the whole kickoff window, wall or no wall, with the arm
+    // shortened where the end wall is close.
+    let rig = Rig::DEFAULT;
+    for spot in 0..5 {
+        for seat in 0..2 {
+            let mut s = Sim::new();
+            s.opponent_ai = false;
+            s.kickoff_spot = spot;
+            s.kickoff();
+            let mut st = CameraState::EMPTY;
+            let rq = Request { rig: &rig, screen: Screen::FULL, ball_cam: false, hold_car: true, split: false };
+            // The window is 240 ticks; the last frame belongs to the swing aside.
+            for t in 0..236u32 {
+                s.tick(&boost());
+                let subject = if seat == 0 { s.car } else { s.opponent };
+                let pose = update(&mut st, &s, &subject, &rq, t);
+                let behind = (pose.heading as i32 + 2048) & 4095;
+                let off = (((st.az as i32 - behind + 2048) & 4095) - 2048).abs();
+                assert!(off <= 24, "spot {spot} seat {seat} tick {t}: eye {off} Q12 off straight behind");
+            }
+        }
+    }
+}
