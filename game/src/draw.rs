@@ -415,6 +415,36 @@ fn near_sz<const SPLIT: bool>() -> i32 {
     }
 }
 
+/// The guard band a covered wall quad is cut to on the screen: half a
+/// screen and a bit past it each side, so the largest polygon is 960 by 480,
+/// inside the 1,024 by 512 the GPU takes whole.
+const GUARD_X: i32 = 480;
+const GUARD_Y: i32 = 240;
+
+/// Spans nearer than this (flat distance from the camera to the span's
+/// middle) get their covered bands cut at the near plane in a full view, as
+/// a split view cuts every wall: a span's columns are about 400 uu wide and
+/// the span itself about 1,300, so from further off no corner is near the
+/// lens and every quad is small on the screen.
+const NEAR_COVER: i32 = 1600;
+
+/// A covered quad that straddles the lens is worth cutting only if part of
+/// it can be seen, and a part in front of the lens that is seen lies within
+/// about 800 uu of the eye: a quad is at most about 560 uu long, so a point
+/// of it past the near plane is no deeper than about 700, the view reaches
+/// 0.58 of the depth to the side and 0.43 up and down. A column whose two
+/// slots are both further than `NEAR_COVER_COLUMN` (that, and half a column)
+/// from the camera, or a band more than `NEAR_COVER_H` above or below it,
+/// is dropped as it always was, which costs a full view nothing.
+const NEAR_COVER_COLUMN: i32 = 1200;
+const NEAR_COVER_H: i32 = 800;
+
+/// Is the band whose lower ring is `ri` one of the covered ones?
+#[inline(always)]
+const fn ri_covered(ri: usize) -> bool {
+    ri >= RAIL_HI_RING
+}
+
 /// What [`Builder::clip_piece`] draws a clipped quad as.
 #[derive(Copy, Clone)]
 enum Pieces {
@@ -485,6 +515,10 @@ static mut GOAL_JOBS: [PieceJob; MAX_GOAL_JOBS] = [PieceJob {
 static mut GOAL_JOB_COUNT: usize = 0;
 /// The two corner buffers [`Builder::clip_piece`] cuts back and forth between.
 static mut CLIP_BUFS: [[[i32; 11]; 9]; 2] = [[[0; 11]; 9]; 2];
+/// The corners of one covered wall quad's clip, original and cut: see
+/// [`Builder::clip_wall`]. Each is x, y, z, u, v, r, g, b.
+const CLIP_POOL_LEN: usize = 16;
+static mut CLIP_POOL: [[i32; 8]; CLIP_POOL_LEN] = [[0; 8]; CLIP_POOL_LEN];
 
 /// One wall quad queued by index (span, column level, column, lower and
 /// upper ring), with its UVs and tints. See [`Builder::queue_wall_quad`].
@@ -4797,29 +4831,36 @@ impl Builder<'_> {
         }
     }
 
-    /// The queued wall quads as world corners, swept exactly as `wall_span`
-    /// sweeps its rings, then into [`Self::queue_pieces`].
+    /// A queued wall quad's four world corners in the packets' corner order,
+    /// swept exactly as `wall_span` sweeps its rings.
+    #[inline(always)]
+    fn wall_job_world(job: &WallJob) -> [(i32, i32, i32); 4] {
+        let profile = unsafe { &WALL_PROFILE };
+        let [si, level, col, lo, hi] = job.at.map(|v| v as usize);
+        let cols = unsafe { &SPAN_COLS[si][level] };
+        let point = |c: usize, ring: usize| {
+            let p = profile[ring];
+            let pk = if ring <= CURVE_SEGS {
+                ramp_point(p, cols.ramp[c] as i32)
+            } else {
+                p
+            };
+            (
+                cols.x[c] + ((cols.nx[c] * pk.0) >> 12),
+                -pk.1,
+                cols.z[c] + ((cols.nz[c] * pk.0) >> 12),
+            )
+        };
+        [point(col, lo), point(col + 1, lo), point(col, hi), point(col + 1, hi)]
+    }
+
+    /// The queued wall quads as world corners, then into
+    /// [`Self::queue_pieces`].
     #[inline(never)]
     #[cold]
     fn sweep_wall_jobs() {
-        let profile = unsafe { &WALL_PROFILE };
         for k in 0..unsafe { WALL_JOB_COUNT } {
             let job = unsafe { WALL_JOBS[k] };
-            let [si, level, col, lo, hi] = job.at.map(|v| v as usize);
-            let cols = unsafe { &SPAN_COLS[si][level] };
-            let point = |c: usize, ring: usize| {
-                let p = profile[ring];
-                let pk = if ring <= CURVE_SEGS {
-                    ramp_point(p, cols.ramp[c] as i32)
-                } else {
-                    p
-                };
-                (
-                    cols.x[c] + ((cols.nx[c] * pk.0) >> 12),
-                    -pk.1,
-                    cols.z[c] + ((cols.nz[c] * pk.0) >> 12),
-                )
-            };
             let [u0, u1, v0, v1] = job.uv;
             let packet = if job.covered {
                 COVER_PACKET
@@ -4827,12 +4868,7 @@ impl Builder<'_> {
                 WALL_PACKET
             };
             Self::queue_pieces(
-                [
-                    point(col, lo),
-                    point(col + 1, lo),
-                    point(col, hi),
-                    point(col + 1, hi),
-                ],
+                Self::wall_job_world(&job),
                 [(u0, v0), (u1, v0), (u0, v1), (u1, v1)],
                 job.tints,
                 Pieces::Wall {
@@ -4852,13 +4888,15 @@ impl Builder<'_> {
     /// it always did: the quads it queues are the ones the GPU dropped.
     #[inline(never)]
     fn draw_pieces(&mut self, cull: &Cull) {
+        if !split_view() {
+            // A full view queues only the covered wall bands: see
+            // `draw_wall_jobs`. The pitch and the solid walls keep dropping
+            // the quads the GPU cannot take, as they always did.
+            self.draw_wall_jobs(cull);
+            return;
+        }
         Self::sweep_wall_jobs();
-        let count = if split_view() {
-            unsafe { PIECE_JOB_COUNT }
-        } else {
-            0
-        };
-        for k in 0..count {
+        for k in 0..unsafe { PIECE_JOB_COUNT } {
             let job = unsafe { PIECE_JOBS[k] };
             let w = job.world;
             let (mut lo, mut hi) = (w[0], w[0]);
@@ -5032,6 +5070,199 @@ impl Builder<'_> {
             };
             self.emit_piece(kind, sp, z_sum, uvs, tints);
         }
+    }
+
+    /// Draw the covered wall bands (the honeycomb above the rail) a full view
+    /// queued because a corner is behind the near plane or the GPU would drop
+    /// the quad. A driver beside the wall has the near columns of the net
+    /// across the lens, and dropping them took whole pieces of the net away
+    /// as the car passed (Manny, 2026-10-15). Out of line and cold, like the
+    /// split view's general clip; see [`Self::clip_wall`] for the cheap cut.
+    #[inline(never)]
+    #[cold]
+    fn draw_wall_jobs(&mut self, cull: &Cull) {
+        for k in 0..unsafe { WALL_JOB_COUNT } {
+            let job = unsafe { &WALL_JOBS[k] };
+            self.clip_wall(Self::wall_job_world(job), job.uv, job.tints, cull);
+        }
+        unsafe { WALL_JOB_COUNT = 0 };
+    }
+
+    /// Cut one covered wall quad at the near plane and to the screen's guard
+    /// band, and draw what is left. `uv` is the job's `[u0, u1, v0, v1]`.
+    ///
+    /// The near plane is cut in camera space, where it is a compare of one
+    /// number. The corners left are then projected with a divide each, in
+    /// whole numbers with no 11-bit limit, and the guard band is cut on the
+    /// screen. A cut there carries u, v and the colour along the screen-space
+    /// edge, which is how the GPU maps an uncut polygon (affinely, in screen
+    /// space), so a polygon too big for it draws as it would have if it could.
+    /// The general clip ([`Self::clip_piece`]) cuts five planes in camera
+    /// space and cost a full view about 12k cycles a quad.
+    #[inline(never)]
+    fn clip_wall(
+        &mut self,
+        world: [(i32, i32, i32); 4],
+        uv: [u8; 4],
+        tints: [u32; 4],
+        cull: &Cull,
+    ) {
+        // SAFETY: nothing else touches this scratch; clips do not nest.
+        let pool = unsafe { &mut *core::ptr::addr_of_mut!(CLIP_POOL) };
+        let (focal, near) = (proj_h(), gte_true_sz() + 8);
+        let [u0, u1, v0, v1] = uv.map(|b| b as i32);
+        // The outline, round the quad: the packets' corner order is a zigzag.
+        const RING: [usize; 4] = [0, 1, 3, 2];
+        let (mut all, mut any_near) = (0xfu32, false);
+        let mut cur = [0u8; 12];
+        for i in 0..4 {
+            let k = RING[i];
+            let p = world[k];
+            let d = (p.0 - cull.pos.0, p.1 - cull.pos.1, p.2 - cull.pos.2);
+            let (cx, cy, cz) = (
+                Cull::dot(cull.right, d),
+                Cull::dot(cull.vertical, d),
+                Cull::dot(cull.fwd, d),
+            );
+            let (xf, yf) = (cx * focal, cy * focal);
+            // Past the right, left, bottom, top of the guard band, which is
+            // what the screen cut below would clip it to.
+            let (gx, gy) = (GUARD_X * cz, GUARD_Y * cz);
+            all &= (xf > gx) as u32
+                | ((-xf > gx) as u32) << 1
+                | ((yf > gy) as u32) << 2
+                | ((-yf > gy) as u32) << 3;
+            let c = rgb_of(tints[k]);
+            pool[i] = [
+                cx,
+                cy,
+                cz,
+                if k & 1 == 0 { u0 } else { u1 },
+                if k & 2 == 0 { v0 } else { v1 },
+                c.0 as i32,
+                c.1 as i32,
+                c.2 as i32,
+            ];
+            any_near |= cz <= near;
+        }
+        // Wholly past one side, or wholly behind the near plane: nothing
+        // shows. (Behind the near plane is every z at or under it.)
+        if all != 0 || (pool[0][2] <= near && pool[1][2] <= near && pool[2][2] <= near && pool[3][2] <= near) {
+            return;
+        }
+        let mut used = 4;
+        let mut n;
+        if any_near {
+            n = Self::clip_edge(pool, &mut cur, &[0, 1, 2, 3], 4, &mut used, 2, -1, -near);
+            if n < 3 {
+                return;
+            }
+        } else {
+            cur[..4].copy_from_slice(&[0, 1, 2, 3]);
+            n = 4;
+        }
+        // To the screen, unbounded by the GTE's eleven bits.
+        let (vx0, vx1, vy0, vy1) = view_bounds();
+        let (ox, oy) = ((vx0 as i32 + vx1 as i32) >> 1, (vy0 as i32 + vy1 as i32) >> 1);
+        let mut far = 0;
+        for i in 0..n {
+            let c = &mut pool[cur[i] as usize];
+            let inv = (focal << 16) / c[2];
+            c[0] = ox + ((c[0] * inv) >> 16);
+            c[1] = oy + ((c[1] * inv) >> 16);
+            far = far.max(c[2]);
+        }
+        // The guard band: within what the GPU takes whole (960 by 480).
+        for (f, sgn, lim) in [
+            (0, 1, ox + GUARD_X),
+            (0, -1, -(ox - GUARD_X)),
+            (1, 1, oy + GUARD_Y),
+            (1, -1, -(oy - GUARD_Y)),
+        ] {
+            let mut cut = false;
+            for i in 0..n {
+                cut |= sgn * pool[cur[i] as usize][f] > lim;
+            }
+            if cut {
+                let src = cur;
+                n = Self::clip_edge(pool, &mut cur, &src, n, &mut used, f, sgn, lim);
+                if n < 3 {
+                    return;
+                }
+            }
+        }
+        // Fanned from the first outline point: a quad of the first four
+        // points (a triangle if there are three), then a quad of the first
+        // point and the next three, and so on. A packet's corners run in a
+        // zigzag, the last two swapped; a triangle repeats its last point.
+        let mut first = 1;
+        while n - first >= 2 {
+            let k = (n - first).min(3);
+            let ix = [0, first, first + k - 1, first + 1];
+            let mut sp = [(0i16, 0i16); 4];
+            let mut w = [0u16; 4];
+            let mut t = [0u32; 4];
+            for o in 0..4 {
+                let c = &pool[cur[ix[o]] as usize];
+                sp[o] = (c[0] as i16, c[1] as i16);
+                // u, v and the channels stay within 0..=255: they are
+                // blends of bytes.
+                w[o] = uvw(c[3] as u8, c[4] as u8);
+                t[o] = rgbc((c[5] as u8, c[6] as u8, c[7] as u8));
+            }
+            self.quad_tex_words(sp, 4 * far, w, t, 0, COVER_PACKET, true);
+            first += 2;
+        }
+    }
+
+    /// Cut the polygon `from[..n]` (indices into the clip pool) to the side of
+    /// the plane `sgn * field <= lim`, adding the corners where it crosses an
+    /// edge to the pool at `used..`; the new polygon goes to `cur`, and its
+    /// corner count is returned. The field is 0 and 1 for screen x and y, 2
+    /// for depth.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn clip_edge(
+        pool: &mut [[i32; 8]; CLIP_POOL_LEN],
+        cur: &mut [u8; 12],
+        from: &[u8],
+        n: usize,
+        used: &mut usize,
+        field: usize,
+        sgn: i32,
+        lim: i32,
+    ) -> usize {
+        let mut d = [0i32; 12];
+        for i in 0..n {
+            d[i] = sgn * pool[from[i] as usize][field] - lim;
+        }
+        let mut m = 0;
+        for i in 0..n {
+            let j = if i + 1 == n { 0 } else { i + 1 };
+            let (da, db) = (d[i], d[j]);
+            if da <= 0 && m < 12 {
+                cur[m] = from[i];
+                m += 1;
+            }
+            if (da <= 0) != (db <= 0) && m < 12 && *used < CLIP_POOL_LEN {
+                // Where the edge crosses the plane, in Q12 of the edge.
+                let (mut num, mut den) = (da.abs(), (da - db).abs());
+                while den > 1 << 18 {
+                    num >>= 1;
+                    den >>= 1;
+                }
+                let t = (num << 12) / den.max(1);
+                let (a, b) = (pool[from[i] as usize], pool[from[j] as usize]);
+                let out = &mut pool[*used];
+                for f in 0..8 {
+                    out[f] = a[f] + (((b[f] - a[f]) * t) >> 12);
+                }
+                cur[m] = *used as u8;
+                *used += 1;
+                m += 1;
+            }
+        }
+        m
     }
 
     /// One triangle from [`Self::clip_piece`], as the
@@ -5601,7 +5832,7 @@ impl Builder<'_> {
 
     /// Sweep the profile along one perimeter span, taking its vertex colours
     /// from the light baked for it at boot.
-    fn wall_span<const SPLIT: bool>(&mut self, si: usize, cull: &Cull) {
+    fn wall_span<const SPLIT: bool, const NET: bool>(&mut self, si: usize, cull: &Cull) {
         let Span { a, b, .. } = unsafe { SPANS[si] };
         let end_wall = a.1 == b.1 && a.1.abs() == sim::HALF_Z;
         if end_wall
@@ -5631,6 +5862,14 @@ impl Builder<'_> {
         // the most glancing angle of anything in here, because you drive along
         // it, so it warps for exactly the same reason and takes the same fix.
         let distance = cull.flat_distance(mid.0, mid.1);
+        // A full view cuts a near span's covered bands at the near plane
+        // too (see `NEAR_COVER`); a split view cuts every wall.
+        // The span's covered bands near the lens take their own instance of
+        // this function, so every other span runs the code it always did.
+        if !SPLIT && !NET && distance < NEAR_COVER {
+            return self.wall_span::<false, true>(si, cull);
+        }
+        let near_cover = NET;
         // A half-width view caps a span at two columns: the third exists to
         // keep panel texture slices from stretching at full width, and at 160
         // pixels the slices it saves are two pixels wide. Kickoff shows every
@@ -5712,6 +5951,15 @@ impl Builder<'_> {
         // the end joints their floor curve shrinks to the end walls'.
         let uniform = (1..columns)
             .all(|k| cnx[k] == cnx[0] && cnz[k] == cnz[0] && ramp[k] == ramp[0]);
+        // Which columns lie near enough for a quad of theirs to straddle the
+        // lens visibly, and how high the camera is: see `NEAR_COVER_COLUMN`.
+        let mut near_cols = [false; SLOTS];
+        if near_cover {
+            for k in 0..columns {
+                near_cols[k] = cull.flat_distance(sx[k], sz[k]) < NEAR_COVER_COLUMN;
+            }
+        }
+        let cam_h = -cull.pos.1;
         for row in 0..ring_count {
             let top = rings[row];
             let (lower, upper) = {
@@ -5752,7 +6000,16 @@ impl Builder<'_> {
             // Unchecked for the same reason the floor is: the ring index
             // walks a window over a table sized from `PROFILE_LEN`.
             let (llo, lhi) = unsafe { (light.get_unchecked(ri), light.get_unchecked(top)) };
+            // The covered bands (the honeycomb above the rail) are clipped
+            // at the near plane in a full view too, not dropped: a driver
+            // beside the wall has the band's near columns across the lens.
+            let band = (profile[ri].1, profile[top].1);
+            let row_near = near_cover
+                && ri_covered(ri)
+                && band.0.max(band.1) + NEAR_COVER_H >= cam_h
+                && band.0.min(band.1) - NEAR_COVER_H <= cam_h;
             for k in 0..columns - 1 {
+                let strict = split || (row_near && (near_cols[k] || near_cols[k + 1]));
                 count_offered!();
                 let whole = match (lower[k], lower[k + 1], upper[k], upper[k + 1]) {
                     (Some(a), Some(b), Some(c), Some(d)) => {
@@ -5769,11 +6026,13 @@ impl Builder<'_> {
                         // a backdrop, and a quad whose middle is nearer than a
                         // car on it drew over the car's far half (the car on a
                         // side ramp flickered in and out of existence).
-                        (!split || gpu_draws_whole(&sp))
-                            .then_some((sp, 4 * a.2.max(b.2).max(c.2).max(d.2)))
+                        (!strict
+                            || (gpu_draws_whole(&sp)
+                                && a.2.min(b.2).min(c.2).min(d.2) > gte_true_sz()))
+                        .then_some((sp, 4 * a.2.max(b.2).max(c.2).max(d.2)))
                     }
                     (None, None, None, None) => continue,
-                    _ if split => None,
+                    _ if strict => None,
                     _ => continue,
                 };
                 count_kept!();
@@ -6059,9 +6318,9 @@ impl Builder<'_> {
     fn walls(&mut self, cull: &Cull) {
         for si in 0..SPAN_COUNT {
             if split_view() {
-                self.wall_span::<true>(si, cull);
+                self.wall_span::<true, false>(si, cull);
             } else {
-                self.wall_span::<false>(si, cull);
+                self.wall_span::<false, false>(si, cull);
             }
         }
         // Continue the translucent enclosure over each goal mouth. The old
