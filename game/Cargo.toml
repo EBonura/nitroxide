@@ -86,11 +86,10 @@ arena-sunset = []
 # capture frames a demolition explosion at a known tick.
 boot-demo-fx = []
 # Dev options for the camera. Field of view is a player setting now (a slider
-# in SETTINGS, 60 to 110 degrees, 90 by default); these two only change the
-# step a profile without a saved choice starts at, so the extremes can be
-# measured headlessly. `cam-ball-default` starts every match in ball cam.
-boot-fov-60 = []
-boot-fov-110 = []
+# in SETTINGS, 60 to 110 degrees, 60 by default for now). `NITRO_FOV=90` in the
+# environment of a build changes the step a profile with no saved choice starts
+# at, so a view can be measured headlessly. `cam-ball-default` starts every
+# match in ball cam.
 cam-ball-default = []
 # Dev: keep per-frame camera, tyre-track and draw state in RAM rings
 # (diaglog.rs) for a headless replay to read back with --dump-ram.

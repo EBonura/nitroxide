@@ -822,7 +822,9 @@ fn the_fov_table_is_the_horizontal_field_of_view_it_says() {
     }
     assert_eq!(fov_degrees(0), 60);
     assert_eq!(fov_degrees(FOV_STEPS - 1), 110);
-    assert_eq!(FOV_PLANE[crate::camera::FOV_DEFAULT_STEP], 160, "the default is 90 degrees, a plane of half the width");
+    assert_eq!(FOV_PLANE[crate::camera::FOV_RL_STEP], 160, "Rocket League's 90 is a plane of half the width");
+    assert_eq!(fov_degrees(crate::camera::FOV_RL_STEP), 90);
+    assert_eq!(fov_degrees(crate::camera::FOV_DEFAULT_STEP), 60);
     assert!(FOV_PLANE.windows(2).all(|w| w[0] > w[1]), "wider is a shorter plane");
 }
 

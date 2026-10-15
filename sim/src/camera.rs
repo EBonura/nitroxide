@@ -238,8 +238,14 @@ impl CameraState {
 pub const FOV_STEPS: usize = 11;
 pub const FOV_MIN_DEGREES: i32 = 60;
 pub const FOV_STEP_DEGREES: i32 = 5;
-/// The shipping step: 90 degrees, Rocket League's default.
-pub const FOV_DEFAULT_STEP: usize = 6;
+/// The step 90 degrees is, Rocket League's default.
+pub const FOV_RL_STEP: usize = 6;
+/// The step a profile with no saved choice starts at: 60 degrees, a shade
+/// narrower than the 63 the game has always had. Rocket League's 90 costs the
+/// game its 60 fps on the heaviest ball-cam stretch of the benchmark tapes
+/// with the same draw distance and detail (see FIX.md), so it is on offer on
+/// the slider and not yet the default; making it the default is this one line.
+pub const FOV_DEFAULT_STEP: usize = 0;
 /// Projection plane distance for each step, `160 / tan(fov / 2)` (160 being
 /// half the view width) rounded to the nearest pixel. A table because the
 /// console has no trigonometry to spare.

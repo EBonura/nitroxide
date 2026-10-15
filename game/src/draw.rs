@@ -68,15 +68,30 @@ const MENU_PROJ_H: i32 = 260;
 /// The player's field-of-view setting lives in `sim::camera` (the table, the
 /// step names and the settings byte, which the host tests cover): horizontal
 /// degrees at the 320-pixel view width, 60 to 110 in steps of 5.
-pub use sim::camera::{FOV_STEPS, FOV_DEFAULT_STEP, fov_degrees};
-/// The step a profile with no saved choice starts at. Dev builds can start
-/// elsewhere to measure the extremes (`boot-fov-60`, `boot-fov-110`).
-#[cfg(not(any(feature = "boot-fov-60", feature = "boot-fov-110")))]
-pub const FOV_DEFAULT: usize = FOV_DEFAULT_STEP;
-#[cfg(feature = "boot-fov-60")]
-pub const FOV_DEFAULT: usize = 0;
-#[cfg(all(feature = "boot-fov-110", not(feature = "boot-fov-60")))]
-pub const FOV_DEFAULT: usize = FOV_STEPS - 1;
+pub use sim::camera::{fov_degrees, FOV_DEFAULT_STEP, FOV_STEPS};
+/// The step a profile with no saved choice starts at. A dev build can start
+/// elsewhere to measure a view: `NITRO_FOV=90 make ...` (degrees, a multiple
+/// of 5 from 60 to 110) is read at compile time.
+pub const FOV_DEFAULT: usize = match option_env!("NITRO_FOV") {
+    None => FOV_DEFAULT_STEP,
+    Some(text) => {
+        let b = text.as_bytes();
+        let mut degrees = 0;
+        let mut i = 0;
+        while i < b.len() {
+            assert!(b[i].is_ascii_digit(), "NITRO_FOV must be a number of degrees");
+            degrees = degrees * 10 + (b[i] - b'0') as i32;
+            i += 1;
+        }
+        assert!(
+            degrees >= sim::camera::FOV_MIN_DEGREES
+                && degrees <= fov_degrees(FOV_STEPS - 1)
+                && (degrees - sim::camera::FOV_MIN_DEGREES) % sim::camera::FOV_STEP_DEGREES == 0,
+            "NITRO_FOV must be 60, 65, ... 110"
+        );
+        ((degrees - sim::camera::FOV_MIN_DEGREES) / sim::camera::FOV_STEP_DEGREES) as usize
+    }
+};
 
 /// The chosen step, and the plane the frame being built projects to. A match
 /// frame uses the chosen step's; the front end's stage uses [`MENU_PROJ_H`].
