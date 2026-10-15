@@ -27,9 +27,13 @@
 //! * **Framing.** Ball cam places the view pitch and yaw so the car sits in the
 //!   lower third of the screen and the ball stays inside the top margin, with
 //!   the car winning when both cannot fit.
+//! * **The one promise.** Whatever the rate limits are doing, the car is inside
+//!   the frame: that clamp runs last, on the slewed view.
 //!
 //! Lengths are uu, angles Q12 turns, and the world is Y up. Everything is
-//! `i32`: the console has no FPU.
+//! `i32`: the console has no FPU. It also has no data cache and a slow
+//! divider, so the arena is held as seven half-spaces (the car's own quadrant)
+//! rather than twenty-four, and the screen's pixel angles are cached.
 
 use crate::angle::atan2_q12_fine as atan2_fine;
 use crate::{Car, Sim, V3, CAR_HALF_H, CEIL, CORNER, CORNER_JOINT_PLANES, FP, HALF_X, HALF_Z};
@@ -97,6 +101,51 @@ impl Screen {
     pub const SPLIT: Screen = Screen { proj_h: 260, w: 320, h: 120 };
 }
 
+/// The screen's framing limits as angles, worked out once per screen shape
+/// (each is an `atan2` and a divide, which is a lot to repeat every frame).
+#[derive(Copy, Clone)]
+struct Limits {
+    key: (i32, i32, i32),
+    /// Car on the lower third.
+    car_low: i32,
+    /// Lowest the car may sit before the pitch gives way to it.
+    car_max: i32,
+    /// How far under the top edge the ball may be.
+    top: i32,
+    /// How far from the middle the car may be before the yaw gives way to it.
+    car_w: i32,
+    /// The car's never-leave margins, horizontal and vertical.
+    safe_x: i32,
+    safe_y: i32,
+}
+
+impl Limits {
+    const EMPTY: Limits = Limits {
+        key: (0, 0, 0),
+        car_low: 0,
+        car_max: 0,
+        top: 0,
+        car_w: 0,
+        safe_x: 0,
+        safe_y: 0,
+    };
+
+    #[inline(never)]
+    fn new(sc: Screen) -> Limits {
+        let (hw, hh, p) = (sc.w / 2, sc.h / 2, sc.proj_h);
+        let a = |px: i32| atan2_fine(px, p) as i32;
+        Limits {
+            key: (sc.proj_h, sc.w, sc.h),
+            car_low: a(hh / 3),
+            car_max: a(hh * 7 / 10),
+            top: a(hh * 4 / 5),
+            car_w: a(hw * 7 / 10),
+            safe_x: a(hw * 4 / 5),
+            safe_y: a(hh * 17 / 20),
+        }
+    }
+}
+
 /// One call's choices.
 #[derive(Copy, Clone)]
 pub struct Request<'a> {
@@ -158,6 +207,7 @@ pub struct CameraState {
     pub pitch: i32,
     /// The eye last returned, world space.
     pub eye: (i32, i32, i32),
+    lim: Limits,
 }
 
 impl CameraState {
@@ -177,6 +227,7 @@ impl CameraState {
         yaw: 0,
         pitch: 0,
         eye: (0, 0, 0),
+        lim: Limits::EMPTY,
     };
 }
 
@@ -214,6 +265,7 @@ const TELEPORT: i32 = 400;
 /// The least horizontal distance the eye keeps from the car while it swings
 /// round a wall, and how far into the hard margin it may go to keep it.
 const FLAT_FLOOR: i32 = 300;
+const WALL_SLACK: i32 = 40;
 /// Ball cam, ball above the car: the arm grows by `rise / BALL_BACKOFF_DIV`
 /// (at most `BALL_BACKOFF_MAX`) and the eye drops by `rise / BALL_DROP_DIV`
 /// (not below `BALL_EYE_MIN` above the car).
@@ -221,7 +273,6 @@ const BALL_BACKOFF_DIV: i32 = 3;
 const BALL_BACKOFF_MAX: i32 = 500;
 const BALL_DROP_DIV: i32 = 4;
 const BALL_EYE_MIN: i32 = 120;
-const WALL_SLACK: i32 = 40;
 /// Horizontal speed (sub-units per tick) above which an airborne car's travel
 /// direction is the heading: 6 uu a tick, 360 uu/s.
 const AIR_HEADING_SPEED: i32 = 6 << FP;
@@ -257,6 +308,8 @@ const CAM_PITCH_MAX: i32 = 700;
 
 // ---- the arena as half-spaces ---------------------------------------------
 
+/// One side of the arena, `n . p <= offset` in the +x, +z quadrant (both
+/// normal components non-negative); the other quadrants are this mirrored.
 #[derive(Copy, Clone)]
 struct Plane {
     nx: i32,
@@ -265,76 +318,62 @@ struct Plane {
     hard: i32,
 }
 
-const N_PLANES: usize = 24;
+const N_PLANES: usize = 7;
 
-/// The arena footprint `keep_inside` used to clamp a point to, as the 24
-/// half-spaces `n . p <= offset` it is the intersection of: the four walls,
-/// the four corner chamfers and the sixteen chords of the rounded joints.
+/// The footprint the old `keep_inside` clamped a point to, as the half-spaces
+/// it is the intersection of in one quadrant: the side wall, the end wall, the
+/// corner chamfer and the four chords of the rounded joints.
+///
+/// Only the car's own quadrant is ever tested. The planes of the others are at
+/// least 2000 uu from any point of this one, and no arm is longer than about
+/// 1300, so none of them can be reached.
 const PLANES: [Plane; N_PLANES] = build_planes();
 
 const fn build_planes() -> [Plane; N_PLANES] {
     let mut out = [Plane { nx: 0, nz: 0, soft: 0, hard: 0 }; N_PLANES];
-    let mut n = 0;
-    // Walls.
-    let mut s = 0;
-    while s < 2 {
-        let sg = if s == 0 { 1 } else { -1 };
-        out[n] = Plane {
-            nx: 4096 * sg,
-            nz: 0,
-            soft: HALF_X - MARGIN_SOFT,
-            hard: HALF_X - MARGIN_HARD,
-        };
-        n += 1;
-        out[n] = Plane {
-            nx: 0,
-            nz: 4096 * sg,
-            soft: HALF_Z - MARGIN_SOFT,
-            hard: HALF_Z - MARGIN_HARD,
-        };
-        n += 1;
-        s += 1;
-    }
-    // Chamfers and joint chords, one set per quadrant.
-    let mut q = 0;
-    while q < 4 {
-        let sx = if q & 1 == 0 { 1 } else { -1 };
-        let sz = if q & 2 == 0 { 1 } else { -1 };
-        out[n] = Plane {
-            nx: 2896 * sx,
-            nz: 2896 * sz,
-            soft: ((CORNER - MARGIN_SOFT * 3 / 2) * 2896) >> 12,
-            hard: ((CORNER - MARGIN_HARD * 3 / 2) * 2896) >> 12,
-        };
-        n += 1;
-        let mut j = 0;
-        while j < 4 {
-            let (nx, nz, off) = CORNER_JOINT_PLANES[j];
-            out[n] = Plane {
-                nx: nx * sx,
-                nz: nz * sz,
-                soft: (off >> 2) - MARGIN_SOFT,
-                hard: (off >> 2) - MARGIN_HARD,
-            };
-            n += 1;
-            j += 1;
-        }
-        q += 1;
+    out[0] = Plane { nx: 4096, nz: 0, soft: HALF_X - MARGIN_SOFT, hard: HALF_X - MARGIN_HARD };
+    out[1] = Plane { nx: 0, nz: 4096, soft: HALF_Z - MARGIN_SOFT, hard: HALF_Z - MARGIN_HARD };
+    out[2] = Plane {
+        nx: 2896,
+        nz: 2896,
+        soft: ((CORNER - MARGIN_SOFT * 3 / 2) * 2896) >> 12,
+        hard: ((CORNER - MARGIN_HARD * 3 / 2) * 2896) >> 12,
+    };
+    let mut j = 0;
+    while j < 4 {
+        let (nx, nz, off) = CORNER_JOINT_PLANES[j];
+        out[3 + j] = Plane { nx, nz, soft: (off >> 2) - MARGIN_SOFT, hard: (off >> 2) - MARGIN_HARD };
+        j += 1;
     }
     out
 }
 
-/// How far a point is inside each plane, soft and hard margins.
+/// The signs that fold a point into the +x, +z quadrant.
+#[derive(Copy, Clone)]
+struct Fold {
+    sx: i32,
+    sz: i32,
+}
+
+impl Fold {
+    #[inline]
+    fn of(x: i32, z: i32) -> Fold {
+        Fold { sx: if x < 0 { -1 } else { 1 }, sz: if z < 0 { -1 } else { 1 } }
+    }
+}
+
+/// How far a folded point is inside each plane, soft and hard margins.
 struct Slack {
     soft: [i32; N_PLANES],
     hard: [i32; N_PLANES],
 }
 
-fn slack_at(x: i32, z: i32) -> Slack {
+#[inline(never)]
+fn slack_at(ax: i32, az: i32) -> Slack {
     let mut out = Slack { soft: [0; N_PLANES], hard: [0; N_PLANES] };
     let mut i = 0;
     while i < N_PLANES {
-        let d = (PLANES[i].nx * x + PLANES[i].nz * z) >> 12;
+        let d = (PLANES[i].nx * ax + PLANES[i].nz * az) >> 12;
         out.soft[i] = PLANES[i].soft - d;
         out.hard[i] = PLANES[i].hard - d;
         i += 1;
@@ -342,26 +381,32 @@ fn slack_at(x: i32, z: i32) -> Slack {
     out
 }
 
-/// Distance along the direction `(s, c)` (Q12 sine and cosine of the yaw) to
-/// the first plane, capped at 4096 uu. A point already outside a plane that
-/// the ray leaves through reports zero.
-fn ray(slack: &[i32; N_PLANES], bias: i32, s: i32, c: i32) -> i32 {
-    let mut t = 4096;
+/// Distance along the folded direction `(s, c)` (Q12 sine and cosine of the
+/// yaw, signs already applied) to the first plane, capped at 4096 uu, for two
+/// sets of slacks in one pass. A point already outside a plane that the ray
+/// leaves through reports zero.
+#[inline(never)]
+fn rays(a: &[i32; N_PLANES], a_bias: i32, b: &[i32; N_PLANES], b_bias: i32, s: i32, c: i32) -> (i32, i32) {
+    let (mut ta, mut tb) = (4096, 4096);
     let mut i = 0;
     while i < N_PLANES {
         let den = (PLANES[i].nx * s + PLANES[i].nz * c) >> 12;
         // A ray nearly parallel to a plane meets it far beyond any arm.
         if den > 16 {
-            let sl = (slack[i] + bias).max(0);
             // t * den: 4096 * 4096 fits an i32; the division only runs when
             // this plane is nearer than the best so far.
-            if (sl << 12) < t * den {
-                t = (sl << 12) / den;
+            let sa = (a[i] + a_bias).max(0) << 12;
+            if sa < ta * den {
+                ta = sa / den;
+            }
+            let sb = (b[i] + b_bias).max(0) << 12;
+            if sb < tb * den {
+                tb = sb / den;
             }
         }
         i += 1;
     }
-    t
+    (ta, tb)
 }
 
 // ---- small helpers --------------------------------------------------------
@@ -378,8 +423,9 @@ fn slew_angle(cur: u16, target: u16, step: i32) -> u16 {
     ((cur as i32 + d.clamp(-step, step)) & 4095) as u16
 }
 
+/// An unsigned turn as a signed tilt, so the camera can look up.
 #[inline]
-fn fold(raw: u16) -> i32 {
+fn signed(raw: u16) -> i32 {
     let raw = raw as i32;
     if raw > 2048 {
         raw - 4096
@@ -388,18 +434,12 @@ fn fold(raw: u16) -> i32 {
     }
 }
 
-/// Q12 angle whose tangent is `px / proj_h`: a pixel offset in a view.
-#[inline]
-fn pixel_angle(px: i32, proj_h: i32) -> i32 {
-    atan2_fine(px, proj_h) as i32
-}
-
 // ---- wall escape ----------------------------------------------------------
 
 /// The arc of azimuths blocked by one plane for an arm of length `need`: the
-/// directions whose ray meets the plane sooner than that. Centre and half
-/// width, Q12 turns; `None` when the plane is far enough away.
-fn blocked_arc(p: &Plane, slack: i32, need: i32) -> Option<(i32, i32)> {
+/// directions whose ray meets the plane sooner than that. Centre (relative to
+/// `az`) and half width, Q12 turns; `None` when the plane is far enough away.
+fn blocked_arc(p: &Plane, fold: Fold, slack: i32, need: i32, az: u16) -> Option<(i32, i32)> {
     if slack >= need {
         return None;
     }
@@ -410,26 +450,30 @@ fn blocked_arc(p: &Plane, slack: i32, need: i32) -> Option<(i32, i32)> {
         let opp = isqrt_i32(need * need - slack * slack);
         atan2_fine(opp, slack) as i32
     };
-    Some((atan2_fine(p.nx, p.nz) as i32, half))
+    let centre = atan2_fine(p.nx * fold.sx, p.nz * fold.sz) as i32;
+    Some((wrap(centre - az as i32), half))
 }
 
 /// The azimuth nearest `az` that an arm of length `need` can take. `az`
 /// itself when it is free; otherwise the nearer edge of the merged blocked arc
 /// around it, except that the side the eye last used is kept unless the other
 /// edge is much nearer, so the camera never flips sides on a whim.
-fn escape(slack: &[i32; N_PLANES], az: u16, need: i32, side: &mut i8) -> u16 {
+#[inline(never)]
+fn escape(slack: &[i32; N_PLANES], fold: Fold, az: u16, need: i32, side: &mut i8) -> u16 {
     // Arcs relative to `az`, as [lo, hi] on the unrolled line. An arc can wrap
     // the circle, so each is tried at -1, 0 and +1 turns.
-    let mut arcs = [(0i32, 0i32); 12];
+    let mut arcs = [(0i32, 0i32); N_PLANES];
     let mut n = 0;
     let mut i = 0;
-    while i < N_PLANES && n < arcs.len() {
-        if let Some((centre, half)) = blocked_arc(&PLANES[i], slack[i], need) {
-            let rel = wrap(centre - az as i32);
+    while i < N_PLANES {
+        if let Some((rel, half)) = blocked_arc(&PLANES[i], fold, slack[i], need, az) {
             arcs[n] = (rel - half, rel + half);
             n += 1;
         }
         i += 1;
+    }
+    if n == 0 {
+        return az;
     }
     let (mut lo, mut hi) = (0, 0);
     let mut inside = false;
@@ -479,16 +523,33 @@ fn escape(slack: &[i32; N_PLANES], az: u16, need: i32, side: &mut i8) -> u16 {
     ((az as i32 + turn) & 4095) as u16
 }
 
+/// The point the arm pivots on, folded, and its slack: the car's own position
+/// when it is inside the arena with the hard margin, otherwise the nearest
+/// point that is (the car is in the net, past the end wall).
+#[inline(never)]
+fn pivot(ax: i32, az: i32) -> (i32, i32, Slack) {
+    let mut slack = slack_at(ax, az);
+    if slack.hard.iter().all(|&s| s >= 0) {
+        return (ax, az, slack);
+    }
+    let (mut qx, mut qz) = (ax, az);
+    for _ in 0..3 {
+        for i in 0..N_PLANES {
+            let sl = slack.hard[i];
+            if sl < 0 {
+                qx += (PLANES[i].nx * sl) >> 12;
+                qz += (PLANES[i].nz * sl) >> 12;
+                slack = slack_at(qx, qz);
+            }
+        }
+    }
+    (qx, qz, slack)
+}
+
 // ---- the update -----------------------------------------------------------
 
 /// Advance one seat's camera to `now` (a sim tick) and return its pose.
-pub fn update(
-    st: &mut CameraState,
-    s: &Sim,
-    subject: &Car,
-    rq: &Request,
-    now: u32,
-) -> Pose {
+pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u32) -> Pose {
     let rig = rq.rig;
     let car_at = (subject.p.x >> FP, subject.p.y >> FP, subject.p.z >> FP);
     // A car that has moved further than it can drive in the longest gap
@@ -502,6 +563,11 @@ pub fn update(
         st.side = 0;
         st.air_ticks = 0;
     }
+    let sc = rq.screen;
+    if st.lim.key != (sc.proj_h, sc.w, sc.h) {
+        st.lim = Limits::new(sc);
+    }
+    let lim = st.lim;
     let ticks = now.wrapping_sub(st.tick).clamp(1, 8) as i32;
     let ang_step = ANGLE_STEP * ticks / 2;
     let len_step = LENGTH_STEP * ticks / 2;
@@ -522,12 +588,15 @@ pub fn update(
     let on_surface = subject.grounded || (st.air_ticks as i32) < AIR_DELAY;
 
     // Camera up: the surface while on one, world up in the air.
-    let (target_tilt, target_az) = if on_surface {
+    let (target_tilt, target_az) = if !on_surface {
+        (0, None)
+    } else if car_up.x == 0 && car_up.z == 0 {
+        // The floor (or the roof): no wall to face, no angle to work out.
+        (if car_up.y >= 0 { 0 } else { 2048 }, None)
+    } else {
         let h = isqrt_i32(car_up.x * car_up.x + car_up.z * car_up.z);
         let az = if h >= 64 { Some(atan2_fine(car_up.x, car_up.z)) } else { None };
         (atan2_fine(h, car_up.y) as i32, az)
-    } else {
-        (0, None)
     };
     if valid {
         let step = if on_surface { TILT_STEP_SURFACE } else { TILT_STEP_AIR } * ticks;
@@ -540,12 +609,12 @@ pub fn update(
         st.tilt = target_tilt;
         st.tilt_az = target_az.unwrap_or(0);
     }
-    let (ts, tc) = (sin_q12(st.tilt as u16), cos_q12(st.tilt as u16));
-    let up = V3::new(
-        (ts * sin_q12(st.tilt_az)) >> 12,
-        tc,
-        (ts * cos_q12(st.tilt_az)) >> 12,
-    );
+    let up = if st.tilt == 0 {
+        V3::new(0, 4096, 0)
+    } else {
+        let (ts, tc) = (sin_q12(st.tilt as u16), cos_q12(st.tilt as u16));
+        V3::new((ts * sin_q12(st.tilt_az)) >> 12, tc, (ts * cos_q12(st.tilt_az)) >> 12)
+    };
     st.up = up;
     let lean = 4096 - up.y.clamp(0, 4096);
 
@@ -572,11 +641,7 @@ pub fn update(
     let (dx, dz) = (bx - px, bz - pz);
     let line_to_ball = rq.ball_cam && dx * dx + dz * dz > MIN_SEPARATION * MIN_SEPARATION;
     st.heading = own_heading;
-    let heading = if line_to_ball {
-        atan2_fine(dx, dz)
-    } else {
-        own_heading
-    };
+    let heading = if line_to_ball { atan2_fine(dx, dz) } else { own_heading };
     let heading = ((heading as i32 + rig.yaw_bias) & 4095) as u16;
     let (hs, hc) = (sin_q12(heading), cos_q12(heading));
 
@@ -606,8 +671,9 @@ pub fn update(
     };
     let trail = ((rig.dist * flat_factor) >> 12) + back_off;
     let boom = rig.height + (((rig.wall_boom - rig.height) * lean) >> 12);
-    let ax = -((hs * trail) >> 12) + ((up.x * boom) >> 12);
-    let az_vec = -((hc * trail) >> 12) + ((up.z * boom) >> 12);
+    let (push_x, push_z) = ((up.x * boom) >> 12, (up.z * boom) >> 12);
+    let ax = -((hs * trail) >> 12) + push_x;
+    let az_vec = -((hc * trail) >> 12) + push_z;
     let mut want_len = isqrt_i32(ax * ax + az_vec * az_vec);
     let mut want_az = if want_len >= 48 {
         atan2_fine(ax, az_vec)
@@ -618,8 +684,7 @@ pub fn update(
     };
     if want_len < FLAT_MIN {
         // Prefer pushing out from the surface, then the way it was going.
-        let push = isqrt_i32((up.x * boom >> 12).pow(2) + (up.z * boom >> 12).pow(2));
-        if push >= 100 {
+        if push_x * push_x + push_z * push_z >= 100 * 100 {
             want_az = atan2_fine(up.x, up.z);
         }
         want_len = FLAT_MIN;
@@ -629,12 +694,11 @@ pub fn update(
     let want_rise = ((up.y * (eye_height - drop)) >> 12) - wall_trail;
     let want_rise = want_rise.clamp(SURFACE_CLEAR - py, CEIL - SURFACE_CLEAR - py);
 
-    // Walls: move the azimuth off a blocked arc, never inside the kickoff
-    // window, where the approved view shortens the arm behind the car.
-    // The arm pivots on the car, except where the car is outside the arena
-    // proper (in the net): there it pivots on the nearest point inside, so
-    // the eye stays on the pitch side of the goal line and looks in.
-    let (qx, qz, slack) = pivot(px, pz);
+    // Walls. The arm pivots on the car, except where the car is outside the
+    // arena proper (in the net): there it pivots on the nearest point inside,
+    // so the eye stays on the pitch side of the goal line and looks in.
+    let fold = Fold::of(px, pz);
+    let (qx, qz, slack) = pivot(px.abs(), pz.abs());
     // Inside the kickoff window the approved view keeps the eye behind the
     // car with a short arm, so it only moves aside for less than the minimum.
     let need = if s.kickoff_ticks() >= KICKOFF_BEHIND_TICKS {
@@ -642,21 +706,24 @@ pub fn update(
     } else {
         ARM_MIN
     };
-    let target_az = escape(&slack.soft, want_az, need, &mut st.side);
+    let target_az = escape(&slack.soft, fold, want_az, need, &mut st.side);
 
-    // Arm state, each part limited on its own.
-    // Moving aside for a wall takes the faster of two rates: the eye must be
-    // off the blocked arc before the car reaches the wall, not after.
+    // Arm state, each part limited on its own. Moving aside for a wall takes
+    // the faster of two rates: the eye must be off the blocked arc before the
+    // car reaches the wall, not after.
     let swing = if target_az != want_az { ang_step * FAST_NUM / FAST_DEN } else { ang_step };
-    if valid {
-        st.az = slew_angle(st.az, target_az, swing);
-    } else {
-        st.az = target_az;
-    }
+    st.az = if valid { slew_angle(st.az, target_az, swing) } else { target_az };
     let (es, ec) = (sin_q12(st.az), cos_q12(st.az));
+    let (fs, fc) = (es * fold.sx, ec * fold.sz);
     // The arm is sized for the direction it is turning to, so it does not
-    // wither while it swings round.
-    let room = ray(&slack.soft, 0, sin_q12(target_az), cos_q12(target_az));
+    // wither while it swings round. In the common case that is the direction
+    // it already has, and one pass gives both the soft room and the hard.
+    let (room, hard) = if st.az == target_az {
+        rays(&slack.soft, 0, &slack.hard, 0, fs, fc)
+    } else {
+        let (ts, tc) = (sin_q12(target_az) * fold.sx, cos_q12(target_az) * fold.sz);
+        (rays(&slack.soft, 0, &slack.soft, 0, ts, tc).0, rays(&slack.hard, 0, &slack.hard, 0, fs, fc).0)
+    };
     let goal_len = want_len.min(room);
     if valid {
         let d = goal_len - st.len;
@@ -674,50 +741,49 @@ pub fn update(
     // minimum arm.
     let eye_y = (py + st.rise).clamp(SURFACE_CLEAR, CEIL - SURFACE_CLEAR);
     let dy = eye_y - py;
-    let floor_len = isqrt_i32((ARM_MIN * ARM_MIN - dy * dy).max(0));
-    // While the eye is still swinging it may sit in the wall margin, but never
-    // closer to the car than the floor.
-    let len = st
-        .len
-        .min(ray(&slack.hard, 0, es, ec))
-        .max(floor_len.max(FLAT_FLOOR).min(ray(&slack.hard, WALL_SLACK, es, ec)));
-    let eye = (qx + ((es * len) >> 12), eye_y, qz + ((ec * len) >> 12));
+    let mut len = st.len.min(hard);
+    let floor_len = isqrt_i32((ARM_MIN * ARM_MIN - dy * dy).max(0)).max(FLAT_FLOOR);
+    if len < floor_len {
+        // While the eye is still swinging it may sit in the wall margin, but
+        // never closer to the car than the floor.
+        let wall = rays(&slack.hard, WALL_SLACK, &slack.hard, WALL_SLACK, fs, fc).0;
+        len = len.max(floor_len.min(wall));
+    }
+    let eye = (
+        qx * fold.sx + ((es * len) >> 12),
+        eye_y,
+        qz * fold.sz + ((ec * len) >> 12),
+    );
 
     // ---- look ----
+    let (to_car_x, to_car_z) = (px - eye.0, pz - eye.2);
+    let car_flat = isqrt_i32(to_car_x * to_car_x + to_car_z * to_car_z).max(1);
+    let to_car_yaw = atan2_fine(to_car_x, to_car_z) as i32;
+    let to_car_pitch = signed(atan2_fine(eye.1 - py, car_flat));
     let mut yaw_want;
     let pitch_want;
     let flat_to_ball = isqrt_i32((bx - eye.0) * (bx - eye.0) + (bz - eye.2) * (bz - eye.2));
     if rq.ball_cam && flat_to_ball >= FALLBACK_AIM / 2 {
-        let car_flat = isqrt_i32((px - eye.0) * (px - eye.0) + (pz - eye.2) * (pz - eye.2)).max(1);
         let ball_flat = flat_to_ball.max(1);
         yaw_want = atan2_fine(bx - eye.0, bz - eye.2) as i32;
         if rq.hold_car {
-            let sc = rq.screen;
-            let half_h = sc.h / 2;
-            let half_w = sc.w / 2;
-            // Pitches to each, positive down.
-            let p_ball = fold(atan2_fine(eye.1 - by, ball_flat));
-            let p_car = fold(atan2_fine(eye.1 - py, car_flat));
-            let car_low = pixel_angle(half_h / 3, sc.proj_h);
-            let car_max = pixel_angle(half_h * 7 / 10, sc.proj_h);
-            let top = pixel_angle(half_h * 4 / 5, sc.proj_h);
+            // Pitches to the ball, positive down.
+            let p_ball = signed(atan2_fine(eye.1 - by, ball_flat));
             // Car on the lower third; look higher if that loses the ball off
             // the top; the car's own limit has the last word.
-            let mut p = p_car - car_low;
-            p = p.min(p_ball + top);
-            p = p.max(p_car - car_max);
+            let mut p = to_car_pitch - lim.car_low;
+            p = p.min(p_ball + lim.top);
+            p = p.max(to_car_pitch - lim.car_max);
             pitch_want = p;
             // Same on the horizontal: the ball centred unless that pushes
             // the car toward the edge.
-            let y_car = atan2_fine(px - eye.0, pz - eye.2) as i32;
-            let car_w = pixel_angle(half_w * 7 / 10, sc.proj_h);
-            let d = wrap(y_car - yaw_want);
-            let over = (d.abs() - car_w).max(0);
+            let d = wrap(to_car_yaw - yaw_want);
+            let over = (d.abs() - lim.car_w).max(0);
             yaw_want = (yaw_want + d.signum() * over) & 4095;
         } else {
             // Half the ball's rise, as the celebration always framed it.
             let ay = py + (by - py) / 2;
-            pitch_want = fold(atan2_q12(eye.1 - ay, ball_flat));
+            pitch_want = signed(atan2_q12(eye.1 - ay, ball_flat));
         }
     } else {
         let (ox, oz) = if rq.ball_cam {
@@ -739,7 +805,7 @@ pub fn update(
         // The SDK's octant-linear atan2, not the fine one: the chase camera's
         // approved framing (the car a little over half way down at kickoff)
         // was tuned with it, and the exact angle would nudge every shot up.
-        pitch_want = fold(atan2_q12(eye.1 - aim_y, flat));
+        pitch_want = signed(atan2_q12(eye.1 - aim_y, flat));
     }
     let pitch_min = CAM_PITCH_MIN + (((CAM_WALL_PITCH_MIN - CAM_PITCH_MIN) * lean) >> 12);
     let desired_pitch = pitch_want.clamp(pitch_min, CAM_PITCH_MAX);
@@ -757,19 +823,13 @@ pub fn update(
     // car is inside the frame, with a margin. The aim above is a wish; this is
     // applied after it has been slewed, so a fast eye cannot outrun the lens.
     if rq.hold_car {
-        let sc = rq.screen;
-        let car_flat = isqrt_i32((px - eye.0) * (px - eye.0) + (pz - eye.2) * (pz - eye.2)).max(1);
-        let to_car_yaw = atan2_fine(px - eye.0, pz - eye.2) as i32;
-        let limit_x = pixel_angle(sc.w / 2 * 4 / 5, sc.proj_h);
         let d = wrap(to_car_yaw - yaw as i32);
-        if d.abs() > limit_x {
-            yaw = ((yaw as i32 + d - d.signum() * limit_x) & 4095) as u16;
+        if d.abs() > lim.safe_x {
+            yaw = ((yaw as i32 + d - d.signum() * lim.safe_x) & 4095) as u16;
         }
-        let to_car_pitch = fold(atan2_fine(eye.1 - py, car_flat));
-        let limit_y = pixel_angle(sc.h / 2 * 17 / 20, sc.proj_h);
         let rel = to_car_pitch - pitch;
-        if rel.abs() > limit_y {
-            pitch = to_car_pitch - rel.signum() * limit_y;
+        if rel.abs() > lim.safe_y {
+            pitch = to_car_pitch - rel.signum() * lim.safe_y;
         }
     }
 
@@ -782,31 +842,10 @@ pub fn update(
     Pose { eye, yaw, pitch, desired_yaw, desired_pitch, heading, ticks }
 }
 
-/// The point the arm pivots on and its slack: the car's own position when it is
-/// inside the arena with the hard margin, otherwise the nearest point that is.
-fn pivot(x: i32, z: i32) -> (i32, i32, Slack) {
-    let mut slack = slack_at(x, z);
-    if slack.hard.iter().all(|&s| s >= 0) {
-        return (x, z, slack);
-    }
-    let (mut qx, mut qz) = (x, z);
-    for _ in 0..3 {
-        for i in 0..N_PLANES {
-            let sl = slack.hard[i];
-            if sl < 0 {
-                qx += (PLANES[i].nx * sl) >> 12;
-                qz += (PLANES[i].nz * sl) >> 12;
-                slack = slack_at(qx, qz);
-            }
-        }
-    }
-    (qx, qz, slack)
-}
-
 /// Whether a world point (uu) is inside the arena with the least margin the
 /// camera ever accepts: the hard margin less the little it may borrow while it
 /// swings round a wall. For tests and callers that must not place something
 /// outside.
 pub fn inside_arena(x: i32, z: i32) -> bool {
-    slack_at(x, z).hard.iter().all(|&s| s + WALL_SLACK >= 0)
+    slack_at(x.abs(), z.abs()).hard.iter().all(|&s| s + WALL_SLACK >= 0)
 }

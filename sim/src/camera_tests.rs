@@ -74,6 +74,8 @@ struct Scenario {
     /// Whose camera: 0 the player, 1 the opponent.
     seat: usize,
     proj_h: i32,
+    /// Flip ball cam every this many ticks (0: never).
+    toggle_every: u32,
     setup: fn(&mut Sim),
     input: fn(u32, &Sim) -> Input,
 }
@@ -89,6 +91,7 @@ impl Scenario {
             settled: true,
             seat: 0,
             proj_h: 260,
+            toggle_every: 0,
             setup,
             input,
         }
@@ -109,6 +112,10 @@ impl Scenario {
         self.settled = false;
         self
     }
+    fn toggling(mut self, n: u32) -> Self {
+        self.toggle_every = n;
+        self
+    }
     fn proj(mut self, h: i32) -> Self {
         self.proj_h = h;
         self
@@ -126,7 +133,7 @@ fn run(sc: &Scenario) -> Stats {
     let mut screen = if sc.split { Screen::SPLIT } else { Screen::FULL };
     screen.proj_h = sc.proj_h;
     let rig = Rig::DEFAULT;
-    let rq = Request { rig: &rig, screen, ball_cam: sc.ball_cam, hold_car: true, split: sc.split };
+    let mut rq = Request { rig: &rig, screen, ball_cam: sc.ball_cam, hold_car: true, split: sc.split };
     let print: u32 = std::env::var("PRINT").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     if print > 0 {
         println!(
@@ -147,6 +154,9 @@ fn run(sc: &Scenario) -> Stats {
         s.tick(&inp);
         if t % sc.every != 0 {
             continue;
+        }
+        if sc.toggle_every > 0 && t > 0 && t % sc.toggle_every < sc.every {
+            rq.ball_cam = !rq.ball_cam;
         }
         let subject = if sc.seat == 0 { s.car } else { s.opponent };
         let pose = update(&mut st, &s, &subject, &rq, t);
@@ -454,6 +464,10 @@ fn all() -> Vec<Scenario> {
             }
         }
     }
+    // Ball cam switched on and off under the player's thumb, every second and a half.
+    v.push(Scenario::new("ball cam toggled while turning", 420, turn_setup, turn_input).toggling(90).fresh());
+    v.push(Scenario::new("ball cam toggled over the walls", 420, side_wall_setup, always_boost).toggling(75));
+    v.push(Scenario::new("ball cam toggled in a split half", 300, air_setup, air_input).toggling(60).split().every(2));
     v.push(Scenario::new("ball behind a driving car", 240, behind_setup, always_boost).ball());
     v.push(Scenario::new("ball cam, ball high over the car", 120, high_ball_setup, always_throttle).ball());
     v
