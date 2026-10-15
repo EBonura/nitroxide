@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+New sound effects: every menu action and most of the match now has a sound.
+
+- Menus: cursor moves, value changes (higher or lower by direction), select,
+  back, panel open and close, a garage lock-in, Save Settings success and
+  refusal, the card format question, and the go at the start of a match. All
+  of them are quiet, well under the music, and silent when Sound is off.
+- Match: jump, double jump, flip, landing, ball bounce (floor, wall, ceiling,
+  goal frame), car bump, supersonic, engine note that follows speed, tyre
+  squeal in a powerslide, empty boost tank, a bigger sound for the big boost
+  pads, the kickoff 3, 2, 1 and go, a tick for each of the last five seconds,
+  the goal horn, the crowd's roar after a goal and its gasp at a near miss, a
+  quiet crowd under the match, and the final whistle.
+- The new sounds are synthesised by `tools/sfx-synth` (`make sfx`) from
+  oscillators, noise and envelopes, so they carry no licence of their own.
+- They add 161 KB to SPU RAM, which now holds 213 KB of 520 KB.
+
 New music: six ambient jungle and drum and bass tracks, played as a shuffled
 playlist.
 

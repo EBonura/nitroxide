@@ -64,6 +64,13 @@ Keep the BIN and CUE together.
 Blender and the original car models are needed only for `make assets`; normal
 builds use the committed cooked models.
 
+## Sound effects
+
+Every menu action and most of a match has a sound, quiet under the music and
+silent when Sound is off. The four impacts are CC0 recordings; everything else
+is synthesised by `tools/sfx-synth` (`make sfx`), so there is nothing to
+credit. See [the audio notes](game/assets/audio/README.md).
+
 ## Music
 
 Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B

@@ -698,7 +698,7 @@ impl NitroXide {
     /// sim starts from its seed now; the look (arena, garage, screen layout)
     /// goes on mid-cut, see [`Self::apply_demo_look`].
     fn demo_show(&mut self, show: usize) {
-        audio::stop_all();
+        audio::new_match();
         self.sim = Sim::demo(&ROUTE_MATCHES[show]);
         self.demo.show = show;
         self.demo.t = 0;
@@ -736,7 +736,7 @@ impl NitroXide {
 
     /// Back to the main menu, with the player's own arena and garage back.
     fn end_demo(&mut self, ctx: &mut Ctx) {
-        audio::stop_all();
+        audio::new_match();
         self.arena_time = self.demo.saved_arena;
         self.cars = self.demo.saved_cars;
         self.paints = self.demo.saved_paints;
@@ -815,9 +815,16 @@ impl NitroXide {
         } else if down {
             row = (row + 1) % rows.len();
         }
+        if up || down {
+            audio::ui(audio::Ui::Move);
+        }
         self.settings = Some(row);
         let step = match settings_menu::action(rows[row], left, right, cross, back) {
-            SettingsAction::Close => { self.settings = None; return; }
+            SettingsAction::Close => {
+                self.settings = None;
+                audio::ui(audio::Ui::Close);
+                return;
+            }
             SettingsAction::Save => { self.save_settings(); return; }
             SettingsAction::Adjust(step) => step as i32,
             SettingsAction::None => return,
@@ -878,6 +885,9 @@ impl NitroXide {
             }
             SettingsRow::Save | SettingsRow::Back => {}
         }
+        // After the change, so turning sound off is silent and turning it back
+        // on is heard; up and down in the direction the value went.
+        audio::ui(audio::Ui::Adjust(step.signum() as i8));
     }
 
     /// One pad's state, this tick and last, into one tick of intent. D-pad and
@@ -955,14 +965,22 @@ impl NitroXide {
                 {
                     self.settings_dirty = false;
                     self.settings_save_status = "SAVED";
+                    audio::ui(audio::Ui::Saved);
                 } else {
                     self.settings_save_status = "FAILED";
+                    audio::ui(audio::Ui::Deny);
                 }
             }
             // A card that answers but holds no header: ask, do not format.
-            Ok(false) => self.card_ask = CardAsk::Asking,
+            Ok(false) => {
+                self.card_ask = CardAsk::Asking;
+                audio::ui(audio::Ui::Open);
+            }
             // No card in the slot, or it would not talk: nothing to ask.
-            Err(_) => self.settings_save_status = "NO CARD",
+            Err(_) => {
+                self.settings_save_status = "NO CARD";
+                audio::ui(audio::Ui::Deny);
+            }
         }
     }
 
@@ -985,6 +1003,7 @@ impl NitroXide {
                 self.settings_dirty = false;
             }
             self.settings_save_status = if saved { "SAVED" } else { "FAILED" };
+            audio::ui(if saved { audio::Ui::Saved } else { audio::Ui::Deny });
             // A failed request ends the modal and permits an explicit retry.
             self.card_ask = if saved {
                 CardAsk::Idle
@@ -997,8 +1016,10 @@ impl NitroXide {
                 settings_menu::FormatAction::Cancel => {
                     self.card_ask = CardAsk::Declined;
                     self.settings_save_status = "CANCELED";
+                    audio::ui(audio::Ui::Back);
                 }
                 settings_menu::FormatAction::Confirm => {
+                    audio::ui(audio::Ui::Select);
                     self.card_ask = CardAsk::Formatting;
                     self.card_wait = 0;
                 }
@@ -1011,6 +1032,9 @@ impl NitroXide {
     /// versus game; one pad makes it a match against the AI, or free play with
     /// the opponent parked if PRACTICE was the row.
     fn start_match(&mut self) {
+        // The previous match is over: forget it, and say go.
+        audio::new_match();
+        audio::ui(audio::Ui::Go);
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
         self.sim.opponent_ai = self.menu != ROW_PRACTICE && !self.two_player;
         self.ball_cam = [CAM_BALL_DEFAULT; 2];
@@ -2178,6 +2202,8 @@ impl Scene for NitroXide {
         // Outside the phase machine: the disc's music plays over the front
         // end and the match alike, and a pause holds the game, not the song.
         self.music.update(ctx.sim_tick.as_u32());
+        // Every phase: a menu click is keyed off by this clock too.
+        audio::tick();
         if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
             self.card_answer(ctx);
             return;
@@ -2230,20 +2256,27 @@ impl Scene for NitroXide {
                 if ctx.just_pressed(button::UP) {
                     self.menu = (self.menu + draw::MENU_ROWS - 1) % draw::MENU_ROWS;
                     self.menu_at = ctx.sim_tick.as_u32();
+                    audio::ui(audio::Ui::Move);
                 } else if ctx.just_pressed(button::DOWN) {
                     self.menu = (self.menu + 1) % draw::MENU_ROWS;
                     self.menu_at = ctx.sim_tick.as_u32();
+                    audio::ui(audio::Ui::Move);
                 } else if ctx.just_pressed(button::LEFT) {
                     self.cars[0] = (self.cars[0] + draw::CAR_COUNT - 1) % draw::CAR_COUNT;
+                    audio::ui(audio::Ui::Adjust(-1));
                 } else if ctx.just_pressed(button::RIGHT) {
                     self.cars[0] = (self.cars[0] + 1) % draw::CAR_COUNT;
+                    audio::ui(audio::Ui::Adjust(1));
                 }
                 if ctx.just_pressed(button::CROSS) || ctx.just_pressed(button::START) {
                     if self.menu == ROW_SETTINGS {
                         self.settings = Some(0);
+                        audio::ui(audio::Ui::Open);
                     } else if self.menu == ROW_DEMO {
+                        audio::ui(audio::Ui::Select);
                         self.start_demo();
                     } else {
+                        audio::ui(audio::Ui::Select);
                         self.open_select(ctx.sim_tick.as_u32());
                     }
                 }
@@ -2270,6 +2303,7 @@ impl Scene for NitroXide {
                 // Pad one always owns seat 0 in a two-pad game; alone it owns
                 // whichever panel it last hopped to.
                 let seat1 = if self.two_player { 0 } else { self.focus };
+                let mut readied = false;
                 for (seat, up, down, left, right, cross, circle) in [
                     (
                         seat1,
@@ -2296,6 +2330,7 @@ impl Scene for NitroXide {
                     if self.ready[seat] {
                         if circle {
                             self.ready[seat] = false;
+                            audio::ui(audio::Ui::Back);
                         }
                         continue;
                     }
@@ -2303,6 +2338,9 @@ impl Scene for NitroXide {
                         self.sel_row[seat] = (self.sel_row[seat] + SELECT_ROWS - 1) % SELECT_ROWS;
                     } else if down {
                         self.sel_row[seat] = (self.sel_row[seat] + 1) % SELECT_ROWS;
+                    }
+                    if up || down {
+                        audio::ui(audio::Ui::Move);
                     }
                     // Left and right act on whichever row is lit. Wrapping both
                     // ways, so the end of a list is never a dead end.
@@ -2314,6 +2352,7 @@ impl Scene for NitroXide {
                         0
                     };
                     if step != 0 {
+                        audio::ui(audio::Ui::Adjust(step as i8));
                         match self.sel_row[seat] {
                             ROW_CAR => {
                                 let n = draw::CAR_COUNT as i32;
@@ -2342,7 +2381,9 @@ impl Scene for NitroXide {
                         // when it is dressing the CPU panel, which is what
                         // makes X mean "start" in a one-pad game.
                         self.ready[if self.two_player { seat } else { 0 }] = true;
+                        readied = true;
                     } else if circle {
+                        audio::ui(audio::Ui::Back);
                         self.to_title(ctx.sim_tick.as_u32());
                         return;
                     }
@@ -2355,9 +2396,14 @@ impl Scene for NitroXide {
                     && (ctx.just_pressed(button::L1) || ctx.just_pressed(button::R1))
                 {
                     self.focus = 1 - self.focus;
+                    audio::ui(audio::Ui::Move);
                 }
+                // Starting the match says go; a lock-in that is not the last one
+                // says it is locked.
                 if self.all_ready() {
                     self.start_match();
+                } else if readied {
+                    audio::ui(audio::Ui::Ready);
                 }
             }
             Phase::Play if self.paused => {
@@ -2390,18 +2436,36 @@ impl Scene for NitroXide {
                 } else if ctx.just_pressed(button::DOWN) || p2(button::DOWN) {
                     self.pause_row = (self.pause_row + 1) % rows.len();
                 }
+                if ctx.just_pressed(button::UP)
+                    || p2(button::UP)
+                    || ctx.just_pressed(button::DOWN)
+                    || p2(button::DOWN)
+                {
+                    audio::ui(audio::Ui::Move);
+                }
                 if ctx.just_pressed(button::START) || p2(button::START) {
                     self.paused = false;
+                    audio::ui(audio::Ui::Close);
                 } else if ctx.just_pressed(button::CROSS) || p2(button::CROSS) {
                     match rows[self.pause_row] {
-                        PauseRow::Resume => self.paused = false,
+                        PauseRow::Resume => {
+                            self.paused = false;
+                            audio::ui(audio::Ui::Close);
+                        }
                         // Stays on the menu: the world is still drawn behind
                         // it, so the swap is visible the moment it happens and
                         // can be put straight back if it went the wrong way.
-                        PauseRow::Swap => self.swap_seats = !self.swap_seats,
-                        PauseRow::Settings => self.settings = Some(0),
+                        PauseRow::Swap => {
+                            self.swap_seats = !self.swap_seats;
+                            audio::ui(audio::Ui::Select);
+                        }
+                        PauseRow::Settings => {
+                            self.settings = Some(0);
+                            audio::ui(audio::Ui::Open);
+                        }
                         PauseRow::Quit => {
                             audio::stop_all();
+                            audio::ui(audio::Ui::Back);
                             self.paused = false;
                             self.to_title(ctx.sim_tick.as_u32());
                         }
@@ -2412,6 +2476,7 @@ impl Scene for NitroXide {
                 if ctx.just_pressed(button::START) {
                     audio::stop_all();
                     self.paused = true;
+                    audio::ui(audio::Ui::Open);
                     self.pause_row = 0;
                     return;
                 }
@@ -2516,11 +2581,13 @@ impl Scene for NitroXide {
                 }
                 if self.sim.finished() {
                     audio::stop_all();
+                    audio::match_end();
                     self.phase = Phase::Results;
                 }
             }
             Phase::Results => {
                 if ctx.just_pressed(button::START) || ctx.just_pressed(button::CROSS) {
+                    audio::ui(audio::Ui::Back);
                     self.to_title(ctx.sim_tick.as_u32());
                 }
             }
@@ -2528,6 +2595,7 @@ impl Scene for NitroXide {
                 // Any press on either pad hands the game back at once.
                 ctx.refresh_second_pad();
                 if Self::any_input(ctx) {
+                    audio::ui(audio::Ui::Back);
                     self.end_demo(ctx);
                     return;
                 }
