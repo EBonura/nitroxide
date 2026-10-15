@@ -1,0 +1,24 @@
+# The crowd and the tyre squeal are cut from recordings that are not in this
+# repository. `sfx-synth import` takes the folder that holds them (the paths
+# below are relative to it) and checks each file against the size and FNV-1a 64
+# hash below, so a different file is refused.
+#
+# Crowd: Gregor Quendel, Free Crowd Cheering Sounds (MP3 pack), CC BY 4.0,
+# via OpenGameArt: https://opengameart.org/
+# Tyre squeal: Tom Haigh, "Car tire squeal skid loop" (24 bit, 96 kHz WAV,
+# an exactly three second loop), CC BY 3.0,
+# https://opengameart.org/content/car-tire-squeal-skid-loop
+#
+# name; file; bytes; fnv64; start s; end s; rate; loop|shot; fade in s; fade out s; loop crossfade s; target RMS dBFS
+#
+# The crowd loop is the steadiest eight seconds of the ambience bed (18 to 26 s),
+# the following 1.5 s crossfaded onto its head. The roar is the swell of the
+# short strong cheer, rising and peaking and falling away. The gasp is a rising
+# murmur from soft cheering II. The cheer is the rhythmic chant at its height.
+# The squeal is the whole file: it is already a seamless loop, so it is looped on
+# its own seam with no crossfade.
+crowd_loop; quendel-crowd/Gregor Quendel - Free Crowd Cheering Sounds - MP3/Gregor Quendel - Crowd Cheering Sounds - 10 - Ambience.mp3; 1362240; e235f146f7a19685; 18.0; 26.0; 16000; loop; 0; 0; 1.5; -13.0
+crowd_roar; quendel-crowd/Gregor Quendel - Free Crowd Cheering Sounds - MP3/Gregor Quendel - Crowd Cheering Sounds - 04 - Strong cheering - II - Short.mp3; 562560; fdc244abdf71c51f; 4.8; 8.8; 16000; shot; 0.12; 1.3; 0; -15.7
+crowd_gasp; quendel-crowd/Gregor Quendel - Free Crowd Cheering Sounds - MP3/Gregor Quendel - Crowd Cheering Sounds - 06 - Soft cheering - II.mp3; 601920; dd63ab5861e87a65; 1.9; 3.3; 16000; shot; 0.1; 0.5; 0; -14.9
+crowd_cheer; quendel-crowd/Gregor Quendel - Free Crowd Cheering Sounds - MP3/Gregor Quendel - Crowd Cheering Sounds - 08 - Rhythmic cheering.mp3; 721920; aef39443b2540bcf; 6.6; 9.6; 16000; shot; 0.25; 0.9; 0; -15.5
+skid_loop; haigh-tire-loop/tires_squal_loop.wav; 864044; 9d234e0cb873c92c; 0.0; 3.0; 22050; loop; 0; 0; 0; -12.6

@@ -1,0 +1,68 @@
+name = "nitroxide-sfx-garage-two-player"
+title = "NitroXide: a seat locking in chimes, unlocking sounds back, the last lock-in says go"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 1500
+pad2 = "analog"
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "first-seat-locks"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xfae0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 20
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 12
+[[step]]
+checkpoint = "first-seat-unlocks"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xe8f0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 20
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+port = 2
+hold = 4
+wait = 30
+[[step]]
+checkpoint = "second-seat-locks-and-go"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x13950
+voice = 17
+voice_hi = 17
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xfae0
+voice = 6
+voice_hi = 7
+min_count = 2
+max_count = 2
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 3 }
+timeout = 200

@@ -1,0 +1,64 @@
+name = "nitroxide-sfx-final"
+title = "NitroXide: the winning goal sounds the horn, the results screen the final whistle"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2000
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+wait = 30
+[[step]]
+press = ["r2","circle"]
+hold = 160
+wait = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 700
+[[step]]
+wait = 6
+[[step]]
+checkpoint = "winning-goal-and-whistle"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x19610
+voice = 16
+voice_hi = 16
+min_count = 1
+max_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x15010
+voice = 17
+voice_hi = 17
+min_count = 1
+max_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x13060
+voice = 17
+voice_hi = 17
+max_count = 0
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4e030
+voice = 21
+voice_hi = 21
+min_count = 2
+max_count = 2

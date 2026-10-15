@@ -1,0 +1,102 @@
+name = "nitroxide-sfx-demo"
+title = "NitroXide: the attract demo plays supersonic, bump, net, post, demolition and goal sounds"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 13200
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 1 }
+timeout = 13000
+[[step]]
+wait = 6
+[[step]]
+checkpoint = "demo-sounds"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x1010
+voice = 0
+voice_hi = 0
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4870
+voice = 3
+voice_hi = 3
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x19610
+voice = 16
+voice_hi = 16
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x1d8a0
+voice = 18
+voice_hi = 18
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x47be0
+voice = 19
+voice_hi = 19
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x490a0
+voice = 11
+voice_hi = 11
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x49a90
+voice = 12
+voice_hi = 12
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4870
+voice = 5
+voice_hi = 5
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4bf90
+voice = 2
+voice_hi = 2
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x3bbf0
+voice = 14
+voice_hi = 14
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x26790
+voice = 18
+voice_hi = 18
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x47000
+voice = 10
+voice_hi = 10
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4e030
+voice = 21
+voice_hi = 21
+min_count = 2

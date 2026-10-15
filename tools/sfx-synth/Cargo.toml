@@ -1,0 +1,20 @@
+[package]
+name = "sfx-synth"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/EBonura/nitroxide"
+
+# Offline synthesiser for NitroXide's own sound effects: oscillators, noise and
+# envelopes rendered to PCM, then cooked to SPU ADPCM by the SDK's shared
+# encoder. Nothing here reads a recording, so the output carries no third-party
+# licence. Built from here, like tools/audio-cook, because the hydrated
+# psx-audio-cook is not a member of the .psoxide root workspace.
+[workspace]
+
+[dependencies]
+psx-audio-cook = { path = "../../.psoxide/crates/psx-audio-cook" }
+
+# MP3 decoding for `sfx-synth import` (the crowd recordings; the tyre loop is a WAV). Decoder only: no
+# audio output, no other codecs.
+symphonia = { version = "0.5", default-features = false, features = ["mp3"] }

@@ -20,4 +20,10 @@ To run:
 Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
 Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/
 
+Crowd sounds: Gregor Quendel, Free Crowd Cheering Sounds, CC BY 4.0,
+https://opengameart.org/
+
+Tyre squeal loop: Tom Haigh, CC BY 3.0,
+https://opengameart.org/content/car-tire-squeal-skid-loop
+
 Bonnie Studios  -  https://bonnie-studios.itch.io

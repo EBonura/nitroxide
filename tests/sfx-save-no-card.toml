@@ -1,0 +1,64 @@
+name = "nitroxide-sfx-save-no-card"
+title = "NitroXide: Save Settings with no card sounds the refusal"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+memcard = "none"
+max_ticks = 1200
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "settings-open"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x12070
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+press = ["up"]
+hold = 4
+wait = 10
+repeat = 2
+[[step]]
+checkpoint = "on-save-row"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "eq"
+value = 7
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 40
+[[step]]
+checkpoint = "save-refused"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xef70
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 60
+[[step]]
+checkpoint = "save-status-no-card"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 3

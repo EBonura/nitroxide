@@ -1,0 +1,493 @@
+name = "nitroxide-sfx-menus"
+title = "NitroXide: every menu action sounds, and sound off is silent"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+memcard = "fresh"
+max_ticks = 4200
+[card_fixture]
+path = "tests/fixtures/unformatted.mcd"
+sha256 = "fa43239bcee7b97ca62f007cc68487560a39e19f74f3dde7486db3f98df8e471"
+[[step]]
+wait = 440
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "title-cursor-down"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdba0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+[[step]]
+press = ["up"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "title-cursor-up"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdba0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+[[step]]
+press = ["right"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "title-car-next"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdeb0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+[[step]]
+press = ["left"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "title-car-prev"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdeb0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+repeat = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "settings-open"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x12070
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+checkpoint = "settings-panel-open"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "eq"
+value = 1
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "settings-row-move"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdba0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+# Sound switched OFF: the toggle and the next cursor move are silent.
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "sound-now-off"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 32
+op = "eq"
+value = 0
+[[step]]
+press = ["up"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "silent-while-off"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+voice = 6
+voice_hi = 7
+max_count = 0
+window = 18
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "sound-on-heard"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdeb0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+checkpoint = "sound-now-on"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 32
+op = "eq"
+value = 100
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+press = ["right"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "settings-value-up"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdeb0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+repeat = 4
+[[step]]
+checkpoint = "on-save-row"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "eq"
+value = 7
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "card-question"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x12070
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+checkpoint = "card-asking"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "eq"
+value = 1
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "card-declined"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xe8f0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+checkpoint = "card-canceled"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 4
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "card-asked-again"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x12070
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_SETTINGS_STATE", offset = 28, op = "eq", value = 1 }
+timeout = 1500
+[[step]]
+checkpoint = "card-formatted-saved"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x10fa0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 90
+[[step]]
+checkpoint = "save-status-saved"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 1
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "settings-close"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x128e0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+checkpoint = "panel-closed"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 12
+op = "eq"
+value = 0
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 40
+[[step]]
+checkpoint = "enter-garage"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xe100
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 48
+[[step]]
+checkpoint = "on-garage-screen"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "garage-row-move"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdba0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+[[step]]
+press = ["right"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "garage-value-up"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdeb0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 30
+[[step]]
+checkpoint = "garage-back-to-title"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xe8f0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 38
+[[step]]
+checkpoint = "on-title-again"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 40
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "match-start-go"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x13950
+voice = 17
+voice_hi = 17
+min_count = 1
+window = 28
+[[step]]
+checkpoint = "in-match"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step]]
+wait = 30
+[[step]]
+press = ["start"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "pause-open"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x12070
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+[[step]]
+checkpoint = "pause-move"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdba0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 18
+[[step]]
+press = ["up"]
+hold = 4
+wait = 10
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "pause-resume"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x128e0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+press = ["start"]
+hold = 4
+wait = 20
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "pause-quit"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xe8f0
+voice = 6
+voice_hi = 7
+min_count = 1
+window = 28
+[[step]]
+checkpoint = "back-on-title"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1

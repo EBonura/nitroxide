@@ -1,0 +1,101 @@
+name = "nitroxide-sfx-goal"
+title = "NitroXide: goal explosion, horn and crowd, then the three-two-one and the go"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2400
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+wait = 30
+[[step]]
+press = ["r2","circle"]
+hold = 160
+wait = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 1 }
+timeout = 400
+[[step]]
+checkpoint = "goal-sounds"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4870
+voice = 3
+voice_hi = 3
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x19610
+voice = 16
+voice_hi = 16
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x1d8a0
+voice = 18
+voice_hi = 18
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x47be0
+voice = 19
+voice_hi = 19
+min_count = 1
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x13060
+voice = 17
+voice_hi = 17
+max_count = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 32, op = "eq", value = 0 }
+timeout = 300
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 120
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "eq", value = 0 }
+timeout = 400
+[[step]]
+wait = 4
+[[step]]
+checkpoint = "kickoff-countdown"
+golden = false
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x13060
+voice = 17
+voice_hi = 17
+min_count = 3
+max_count = 3
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x13950
+voice = 17
+voice_hi = 17
+min_count = 2
+max_count = 2
+[[step.assert]]
+kind = "spu_kon"
+addr = 0x4e030
+voice = 21
+voice_hi = 21
+min_count = 3
+max_count = 3
