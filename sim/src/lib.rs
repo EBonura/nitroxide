@@ -32,6 +32,7 @@
 
 pub mod angle;
 pub mod camera;
+pub mod playlist;
 #[cfg(test)]
 mod camera_tests;
 
