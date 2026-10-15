@@ -37,6 +37,7 @@ name = "nitroxide-sim"
 version = "0.1.0"
 dependencies = [
  "psx-math",
+ "psx-settings",
 ]
 
 [[package]]

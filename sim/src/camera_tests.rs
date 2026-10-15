@@ -829,17 +829,102 @@ fn the_fov_table_is_the_horizontal_field_of_view_it_says() {
 }
 
 #[test]
-fn the_fov_setting_rides_the_spare_settings_byte_and_old_saves_load_the_default() {
+fn the_fov_game_byte_round_trips_and_an_empty_one_is_the_default() {
     use crate::camera::{fov_step_from_save, fov_step_to_save, FOV_DEFAULT_STEP, FOV_STEPS};
     for step in 0..FOV_STEPS {
         assert_eq!(fov_step_from_save(fov_step_to_save(step), FOV_DEFAULT_STEP), step);
+        // A saved choice is never the empty byte, even step 0.
+        assert_ne!(fov_step_to_save(step), 0);
     }
-    // Every byte an old record could hold (the profile default is 1) is the default.
-    for old in 0..0x40u8 {
-        assert_eq!(fov_step_from_save(old, FOV_DEFAULT_STEP), FOV_DEFAULT_STEP, "byte {old:#x}");
+    // An empty byte is the default whatever the default is, and so is
+    // anything past the table.
+    for default in [0, 6, FOV_STEPS - 1] {
+        assert_eq!(fov_step_from_save(0, default), default);
+        for junk in (FOV_STEPS as u8 + 1)..=0xff {
+            assert_eq!(fov_step_from_save(junk, default), default, "byte {junk:#x}");
+        }
     }
-    // And garbage above the table is too.
-    for junk in (0x40 + FOV_STEPS as u8)..=0xff {
-        assert_eq!(fov_step_from_save(junk, FOV_DEFAULT_STEP), FOV_DEFAULT_STEP);
+    // A step past the table saves as the last one.
+    assert_eq!(fov_step_from_save(fov_step_to_save(99), 0), FOV_STEPS - 1);
+}
+
+/// The record a build from before the FOV game byte wrote: SDK settings
+/// version 2, `Profile<2, 0>`, 18 header bytes then two bindings, with the
+/// shared checksum (rotate-left-1 xor over every byte but the screen offset).
+fn version_two_record(difficulty: u8) -> Vec<u8> {
+    let mut out = vec![0u8; 18 + 2 * 4];
+    out[..4].copy_from_slice(b"PSST");
+    out[4] = 2;
+    out[5] = 2;
+    out[6] = 0;
+    out[7] = 0x01;
+    out[8] = 0;
+    out[9] = 80;
+    out[10] = 60;
+    out[11] = 20;
+    out[12] = 14;
+    out[13] = 120;
+    out[14] = difficulty;
+    out[18..20].copy_from_slice(&0x0040u16.to_le_bytes());
+    out[22..24].copy_from_slice(&0x0800u16.to_le_bytes());
+    let mut sum = 0xA7u8;
+    for byte in out[..15].iter().chain(&out[18..]) {
+        sum = sum.rotate_left(1) ^ byte;
     }
+    out[15] = sum;
+    out
+}
+
+fn drive_map() -> psx_pad::ActionMap<2> {
+    psx_pad::ActionMap::new([psx_pad::ActionBinding::UNBOUND; 2])
+}
+
+#[test]
+fn a_fov_saved_in_the_difficulty_byte_moves_to_the_game_byte_and_difficulty_resets() {
+    use crate::camera::{fov_step_from_save, migrate_legacy_fov, FOV_DEFAULT_STEP, FOV_GAME_BYTE, FOV_STEPS};
+    use psx_settings::Profile;
+    let default_difficulty = Profile::<2, 0>::new(drive_map()).difficulty;
+    for step in 0..FOV_STEPS {
+        // A real version 2 card record, as the previous build saved it.
+        let record = version_two_record(0x40 + step as u8);
+        let mut profile = Profile::<2, 0>::decode(&record).unwrap();
+        assert_eq!(profile.difficulty, 0x40 + step as u8, "the old record decodes untouched");
+        assert!(migrate_legacy_fov(&mut profile));
+        assert_eq!(fov_step_from_save(profile.game_bytes[FOV_GAME_BYTE], FOV_DEFAULT_STEP), step);
+        assert_eq!(profile.difficulty, default_difficulty);
+        // Everything else the record held is still there, and the next save
+        // keeps the result.
+        assert_eq!(profile.sfx_volume, 80);
+        assert_eq!(profile.music_volume, 60);
+        assert!(profile.invert_y());
+        let mut bytes = [0u8; psx_settings::MAX_RECORD_LEN];
+        let len = profile.encode(&mut bytes).unwrap();
+        let reloaded = Profile::<2, 0>::decode(&bytes[..len]).unwrap();
+        assert_eq!(reloaded, profile);
+        // A second load of the saved record has nothing left to migrate.
+        let mut again = reloaded;
+        assert!(!migrate_legacy_fov(&mut again));
+        assert_eq!(again, reloaded);
+    }
+}
+
+#[test]
+fn migration_leaves_a_record_without_a_legacy_fov_alone() {
+    use crate::camera::{fov_step_to_save, migrate_legacy_fov, FOV_GAME_BYTE, FOV_STEPS};
+    use psx_settings::Profile;
+    // Every difficulty an unmarked record can hold, and junk past the marked table.
+    for difficulty in (0..0x40u8).chain((0x40 + FOV_STEPS as u8)..=0xff) {
+        let mut profile = Profile::<2, 0>::decode(&version_two_record(difficulty)).unwrap();
+        let before = profile;
+        assert!(!migrate_legacy_fov(&mut profile), "difficulty {difficulty:#x}");
+        assert_eq!(profile, before);
+        assert_eq!(profile.game_bytes, [0; psx_settings::GAME_BYTES_LEN]);
+    }
+    // A record that already has the new field is never overwritten.
+    let mut profile = Profile::<2, 0>::new(drive_map());
+    profile.difficulty = 0x40 + 3;
+    profile.game_bytes[FOV_GAME_BYTE] = fov_step_to_save(8);
+    let before = profile;
+    assert!(!migrate_legacy_fov(&mut profile));
+    assert_eq!(profile, before);
 }
