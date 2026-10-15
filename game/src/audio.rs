@@ -27,7 +27,7 @@
 //! * [`tick`] is the clock the one-shot cutoffs run on. It runs every update
 //!   in every phase, because a menu click has to be keyed off in a menu.
 //!
-//! Voices are not shared between kinds of sound. Twenty-one of the SPU's
+//! Voices are not shared between kinds of sound. Twenty-two of the SPU's
 //! twenty-four are spoken for, one job each, so a hit never cuts the goal
 //! horn and a menu click never cuts anything: the only voice that is ever
 //! retriggered mid-sound is one repeating its own sound.
@@ -76,8 +76,9 @@ enum Snd {
     Sonic,
     PadBig,
     Empty,
+    Cheer,
 }
-const SND_COUNT: usize = Snd::Empty as usize + 1;
+const SND_COUNT: usize = Snd::Cheer as usize + 1;
 
 /// Each sound's cooked bytes and the rate it was cooked at. Playback rates are
 /// this times a pitch ratio, so a call states the rate it actually plays at
@@ -114,6 +115,7 @@ const BANK: [(&[u8], u32); SND_COUNT] = [
     (include_bytes!("../assets/audio/sonic.psau"), 22_050),
     (include_bytes!("../assets/audio/pad_big.psau"), 22_050),
     (include_bytes!("../assets/audio/empty.psau"), 22_050),
+    (include_bytes!("../assets/audio/crowd_cheer.psau"), 16_000),
 ];
 
 /// A `.psau` is a 12 byte container header and a 20 byte audio header in
@@ -182,8 +184,11 @@ const V_CALL: u8 = 17;
 const V_ROAR: u8 = 18;
 const V_NET: u8 = 19;
 const V_EMPTY: u8 = 20;
-/// Voices this module drives, V_HIT (0) through V_EMPTY (20).
-const VOICE_COUNT: usize = 21;
+/// The rhythmic cheer: at a kickoff, and a second after a goal while the roar
+/// is still going. Its own voice, so it never takes the roar or the horn.
+const V_CHEER: u8 = 21;
+/// Voices this module drives, V_HIT (0) through V_CHEER (21).
+const VOICE_COUNT: usize = 22;
 
 /// Only the sustained boost runs on noise now.
 const NOISE_MASK: u32 = 1 << V_BOOST;
@@ -203,6 +208,10 @@ const BOOST_DRY: i32 = 36;
 const HIT_FLOOR: i32 = 260;
 /// Impulse that counts as a full-volume hit; anything above just saturates.
 const HIT_LOUD: i32 = 2600;
+/// The cheer after a goal starts when this many ticks of the 150 tick freeze
+/// are left: a second into the celebration, so its three seconds end inside the
+/// roar's four and the horn has the front of the goal to itself.
+const CHEER_AT: u16 = 90;
 
 // ---- levels -------------------------------------------------------------------
 //
@@ -242,7 +251,7 @@ const L_WHISTLE: i16 = 0x39B4;
 const L_HORN: i16 = 0x3800;
 const L_ROAR: i16 = 0x3C00;
 const L_GASP: i16 = 0x1FB5;
-const L_CROWD: i16 = 0x0A2B;
+const L_CROWD: i16 = 0x0E32;
 const L_ENGINE: i16 = 0x08F0;
 const L_SKID: i16 = 0x09AF;
 const L_JUMP: i16 = 0x180D;
@@ -254,6 +263,9 @@ const L_BUMP: i16 = 0x2EE6;
 const L_SONIC: i16 = 0x35D9;
 const L_PAD_BIG: i16 = 0x2B44;
 const L_EMPTY: i16 = 0x1CEC;
+/// The chant after a goal sits 7 dB under the horn; at a kickoff it is softer.
+const L_CHEER: i16 = 0x2E5C;
+const L_CHEER_KICKOFF: i16 = 0x1D42;
 
 /// Where each sample landed, so a retrigger can re-point its voice.
 static mut SAMPLE_ADDR: [u32; SND_COUNT] = [0; SND_COUNT];
@@ -541,7 +553,10 @@ pub fn ui(event: Ui) {
         Ui::Open => play_ratio(voice, Snd::UiOpen, L_UI_OPEN, 16),
         Ui::Close => play_ratio(voice, Snd::UiClose, L_UI_CLOSE, 16),
         // The match start is the same call as a kickoff's go.
-        Ui::Go => play_ratio(V_CALL, Snd::Go, L_GO, 16),
+        Ui::Go => {
+            play_ratio(V_CALL, Snd::Go, L_GO, 16);
+            play_ratio(V_CHEER, Snd::Cheer, L_CHEER_KICKOFF, 16);
+        }
     }
 }
 
@@ -660,6 +675,9 @@ pub fn update(s: &Sim) {
         let pace = (v.x.abs() + v.y.abs() + v.z.abs()).clamp(NET_SOFT, NET_HARD);
         let level = L_NET as i32 * pace / NET_HARD;
         play_ratio(V_NET, Snd::Net, level as i16, 16);
+    }
+    if freeze == CHEER_AT {
+        play_ratio(V_CHEER, Snd::Cheer, L_CHEER, 16);
     }
     unsafe { LAST_FREEZE = freeze };
 
@@ -797,6 +815,7 @@ fn clock_sounds(s: &Sim, seen: &mut Seen) {
             play_ratio(V_CALL, Snd::Beep, L_BEEP, 16);
         } else {
             play_ratio(V_CALL, Snd::Go, L_GO, 16);
+            play_ratio(V_CHEER, Snd::Cheer, L_CHEER_KICKOFF, 16);
         }
         seen.hold = digit;
     }
