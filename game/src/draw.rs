@@ -445,6 +445,19 @@ const fn ri_covered(ri: usize) -> bool {
     ri >= RAIL_HI_RING
 }
 
+/// How near a corner of a goal-box quad may be and the quad still be drawn
+/// whole. The faces are up to 1,786 uu across, so a corner nearer than the
+/// projection plane times that over 1,024 (the widest polygon the GPU takes)
+/// puts its neighbour more than 1,024 pixels off, and the GPU drops the
+/// face: from the goal mouth the box's floor went for a frame or two as the
+/// camera slid by (`make demo-check`, tick 8,695, which only fails when a
+/// screenshot lands on it). A quarter more, for the faces' depth. Quads with
+/// a corner this near go through `clip_piece`, which cuts the guard band.
+#[inline]
+fn goal_cut_depth() -> i32 {
+    (proj_h() * 2 * sim::GOAL_HALF_W * 5) >> 12
+}
+
 /// What [`Builder::clip_piece`] draws a clipped quad as.
 #[derive(Copy, Clone)]
 enum Pieces {
@@ -6528,14 +6541,17 @@ impl Builder<'_> {
     /// close lands off its true place. One wholly behind it shows nothing.
     #[inline]
     fn eye_reach(cull: &Cull, corners: &[(i32, i32, i32); 4]) -> EyeReach {
-        let mut inside = 0;
+        let (mut inside, mut shallow) = (0, 0);
+        let cut_depth = goal_cut_depth();
         for c in corners {
             let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-            inside += (Cull::dot(cull.fwd, d) <= gte_true_sz() + 8) as u8;
+            let z = Cull::dot(cull.fwd, d);
+            inside += (z <= gte_true_sz() + 8) as u8;
+            shallow += (z <= cut_depth) as u8;
         }
-        match inside {
-            0 => EyeReach::Clear,
-            4 => EyeReach::Behind,
+        match (inside, shallow) {
+            (4, _) => EyeReach::Behind,
+            (_, 0) => EyeReach::Clear,
             _ => EyeReach::Cuts,
         }
     }
@@ -6688,7 +6704,7 @@ impl Builder<'_> {
             return GoalReach::Behind;
         }
         let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-        if Cull::dot(cull.fwd, d) - e[0] <= gte_true_sz() + 8 {
+        if Cull::dot(cull.fwd, d) - e[0] <= goal_cut_depth() {
             GoalReach::Near
         } else {
             GoalReach::Clear
