@@ -29,8 +29,8 @@ runs at the original PlayStation's 320×240 resolution.
 ## Play it
 
 The disc image is on [itch.io](https://bonnie-studios.itch.io/nitroxide),
-music included: the soundtrack rides the disc as CD audio, so the download is
-the full experience. NitroXide also ships on the
+music included: the soundtrack rides the disc as compressed XA audio inside
+the one data track, so the download is the full experience. NitroXide also ships on the
 [PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo-disc), which
 runs [in your browser](https://bonnie-studios.itch.io/psoxide) on the PSoXide
 page, no console needed.
@@ -56,11 +56,19 @@ look, so a finished build is always one that can be launched or burned without
 a copy step. Override with `make disc GAMES_DIR=...` or `GAME_NAME=...`.
 
 Rust nightly is date-pinned in `rust-toolchain.toml`. The default disc has no
-music: add `CDDA_DIR=/path/to/PSoXide-demo-disc/audio` when those authorized
-source tracks are available. They are external to this repository; see
-[the audio notes](game/assets/audio/README.md). Keep the BIN and CUE together.
+music: add `MUSIC_DIR=/path/to/music` with the six WAVs (`jungle1-a`,
+`jungle1-b`, `jungle2-a`, `jungle2-b`, `dnb-a`, `dnb-b`, 37.8 kHz stereo) to
+pack them into XA files with the SDK's `xa-pack` and press them on the disc.
+They are external to this repository; see [the audio notes](game/assets/audio/README.md).
+Keep the BIN and CUE together.
 Blender and the original car models are needed only for `make assets`; normal
 builds use the committed cooked models.
+
+## Music
+
+Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
+Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/. The loops are chained into
+six tracks and play as a shuffled playlist, over the menus and the match alike.
 
 ## Controls
 

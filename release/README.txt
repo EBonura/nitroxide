@@ -17,8 +17,7 @@ To run:
     PCSX-Redux), or
   - burn it to a CD-R and run on a modchipped console.
 
-Music: four tracks by Just Music (https://www.youtube.com/@Just-Music-Beats),
-used with the artist's permission. Non-commercial, do not redistribute the
-audio separately.
+Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
+Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/
 
 Bonnie Studios  -  https://bonnie-studios.itch.io

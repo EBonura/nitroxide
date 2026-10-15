@@ -65,7 +65,7 @@ jobs:
           sparse-checkout: audio
           sparse-checkout-cone-mode: true
 
-      - name: Verify every licensed audio source byte
+      - name: Verify every music source byte
         working-directory: .private/demo-disc
         run: sha256sum --check "${GITHUB_WORKSPACE}/release/audio-manifest.sha256"
 
@@ -78,10 +78,10 @@ jobs:
       - name: Run host-side tests
         run: make test
 
-      - name: Build the five-track disc
+      - name: Build the XA music disc
         env:
           GAMES_DIR: ${{ runner.temp }}/ps1-games
-          CDDA_DIR: ${{ github.workspace }}/.private/demo-disc/audio
+          MUSIC_DIR: ${{ github.workspace }}/.private/demo-disc/audio/nitroxide
         run: make disc
 
       - name: Stage and validate the itch package
@@ -110,8 +110,8 @@ jobs:
             echo "NitroXide disc build is incomplete" >&2
             exit 1
           }
-          [[ "$(grep -c '^[[:space:]]*TRACK ' "${cue}")" -eq 5 ]] || {
-            echo "NitroXide release must contain one data and four audio tracks" >&2
+          [[ "$(grep -c '^[[:space:]]*TRACK ' "${cue}")" -eq 1 ]] || {
+            echo "NitroXide release must be a single data track (the music is XA files inside it)" >&2
             exit 1
           }
           grep -Fq 'FILE "NitroXide.bin" BINARY' "${cue}" || {

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+New music: six ambient jungle and drum and bass tracks, played as a shuffled
+playlist.
+
+- The soundtrack is six tracks of compressed XA audio inside the disc's single
+  data track, replacing the four CD audio tracks. The disc has no audio
+  tracks, and NitroXide no longer borrows the demo disc's menu music.
+- Music plays over the menus and the match alike and shuffles: every track
+  once, then a new order that never opens with the track that just ended. The
+  TRACK row steps through the same order.
+- Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
+  Vol 3, CC BY 4.0, https://mululavgmloops.itch.io/
+
 ## 0.4.1 | 2026-10-08
 
 A fix for how the ball rolls, a fresh set of attract demo matches and clearer

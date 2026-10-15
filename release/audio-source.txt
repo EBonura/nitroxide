@@ -1,3 +1,5 @@
-# NitroXide CI may read only audio/ from this exact private revision.
+# NitroXide CI may read only audio/ from this exact private revision. The
+# revision must be one that carries audio/nitroxide/*.wav (the six music WAVs
+# in audio-manifest.sha256); until then the manifest check fails on purpose.
 repository EBonura/PSoXide-demo-disc
 revision 6a619c98c3bed0dd10b5d1d8356214afec92e0aa
