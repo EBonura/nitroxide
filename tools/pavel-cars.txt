@@ -1,0 +1,6 @@
+razor|Sports cars/Veh_Sports_Car_02_Blue.fbx
+fury|Sports cars/Veh_Sports_Car_03_Blue.fbx
+bolt|Sports cars/Veh_Sports_Car_01_Blue.fbx
+brute|Muscle cars/Veh_Muscle_Car_01_Blue.fbx
+dash|Coupes/Veh_Coupe_01_Blue.fbx
+cinder|Hot Rod/Veh_HotRod_Blue.fbx

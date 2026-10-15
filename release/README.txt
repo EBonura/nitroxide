@@ -26,4 +26,8 @@ https://opengameart.org/
 Tyre squeal loop: Tom Haigh, CC BY 3.0,
 https://opengameart.org/content/car-tire-squeal-skid-loop
 
+Cars: Pavel 3D, Low Poly City Vehicles Pack, CC BY 4.0,
+https://pavel-3d.itch.io/low-poly-city-vehicles-pack (Razor, Fury, Bolt, Brute,
+Dash and Cinder).
+
 Bonnie Studios  -  https://bonnie-studios.itch.io

@@ -55,12 +55,19 @@ use paint::Role;
 /// (about 2.6 long to 1 wide) rather than Rocket League's stubby 1.4 to 1, so
 /// fitting any other axis distorts them. 163 uu matches the widened gameplay
 /// hitbox (`sim::CAR_HALF_L * 2`); the trucks get a small visual overhang.
-const CARS: [(&str, i32); 5] = [
+const CARS: [(&str, i32); 11] = [
     ("sedan", 163),
     ("hatchback", 163),
     ("hatchback2", 163),
     ("truck", 180),
     ("truck_2", 180),
+    // The six cars from the Pavel 3D pack (tools/convert_pavel_car.py).
+    ("razor", 163),
+    ("fury", 163),
+    ("bolt", 163),
+    ("brute", 163),
+    ("dash", 163),
+    ("cinder", 163),
 ];
 
 /// Component-aware vertex-cluster grid.
@@ -830,10 +837,18 @@ fn cluster_connected_components(
 /// chassis, glass, lamps) and the vertex table is whole uu. Two objects that
 /// meet along a sill therefore end with their seam vertices up to a few uu
 /// apart, and every pixel that falls in that gap shows the pitch: the dotted
-/// line along a car's flank in the garage. Two uu is a pixel and a bit at the
-/// garage's scale and under half a pixel in play, so closing it is invisible
-/// as geometry and removes the cracks.
-const SEAM_TOLERANCE: i32 = 3;
+/// line along a car's flank in the garage. A weld moves a vertex by at most
+/// half this, 2.5 uu on a 163 uu car (under a pixel and a half at the garage's
+/// scale, under half a pixel in play). Three left a third of the roofline and
+/// pillar cracks open on the sports cars; five closes most of them without any
+/// visible change to the shape.
+const SEAM_TOLERANCE: i32 = 5;
+
+/// The tolerance for a vertex used only by a lamp, the grille or the bumper. Those parts are small and sit close together on the nose; welding
+/// them across five uu pulled the grille into the bonnet and bent the nose, so
+/// they only close gaps the old three-uu weld could (and 2 keeps the lamps
+/// apart from the grille).
+const DETAIL_TOLERANCE: i32 = 2;
 
 /// Close the gaps between separately decimated parts of one car.
 ///
@@ -927,6 +942,23 @@ fn weld_seams(blob: &mut Vec<u8>, components: &[u8]) -> Result<(u16, u16, Vec<u8
             *part_ids.entry((components[v], cs)).or_insert(next)
         })
         .collect();
+    let detail_colours = [
+        Role::Headlight.colour(),
+        Role::Taillight.colour(),
+        Role::Indicator.colour(),
+        Role::Bumper.colour(),
+    ];
+    let detail: Vec<bool> = part_colours
+        .iter()
+        .map(|cs| cs.iter().all(|c| detail_colours.contains(&(c[0], c[1], c[2]))))
+        .collect();
+    let tolerance = |a: usize, b: usize| {
+        if detail[a] || detail[b] {
+            DETAIL_TOLERANCE
+        } else {
+            SEAM_TOLERANCE
+        }
+    };
     let mut joined: HashSet<(usize, usize)> = HashSet::new();
     for face in &faces {
         for (a, b) in [(face[0], face[1]), (face[1], face[2]), (face[2], face[0])] {
@@ -939,7 +971,8 @@ fn weld_seams(blob: &mut Vec<u8>, components: &[u8]) -> Result<(u16, u16, Vec<u8
         for j in i + 1..verts {
             if movable[i] && movable[j] && part[i] != part[j] && !joined.contains(&(i, j)) {
                 let d = d2(pos[i], pos[j]);
-                if d <= SEAM_TOLERANCE * SEAM_TOLERANCE {
+                let t = tolerance(i, j);
+                if d <= t * t {
                     pairs.push((d, i, j));
                 }
             }
@@ -1017,7 +1050,6 @@ fn weld_seams(blob: &mut Vec<u8>, components: &[u8]) -> Result<(u16, u16, Vec<u8
         .collect();
     let on_open_edge: HashSet<usize> = open.iter().flat_map(|&(a, b)| [a, b]).collect();
     let mut moved = pos.clone();
-    let tol = SEAM_TOLERANCE as f64;
     for &v in &on_open_edge {
         if !movable[v] {
             continue;
@@ -1043,7 +1075,7 @@ fn weld_seams(blob: &mut Vec<u8>, components: &[u8]) -> Result<(u16, u16, Vec<u8
             }
             let q = [0, 1, 2].map(|k| pa[k] + ab[k] * t);
             let dist = ((0..3).map(|k| (p[k] - q[k]).powi(2)).sum::<f64>()).sqrt();
-            if dist > 0.0 && dist <= tol && best.is_none_or(|(d, _)| dist < d) {
+            if dist > 0.0 && dist <= tolerance(v, v) as f64 && best.is_none_or(|(d, _)| dist < d) {
                 best = Some((dist, q));
             }
         }
@@ -1545,6 +1577,17 @@ mod tests {
     }
 
     #[test]
+    fn a_lamp_is_only_welded_across_the_small_tolerance() {
+        let (mut blob, components) = gapped_seam(
+            DETAIL_TOLERANCE as i16 + 1,
+            Role::Body.colour().into(),
+            Role::Headlight.colour().into(),
+        );
+        let (verts, faces, _) = weld_seams(&mut blob, &components).expect("weld");
+        assert_eq!((verts, faces), (6, 2));
+    }
+
+    #[test]
     fn a_wheel_is_never_welded_to_the_body() {
         let (mut blob, components) =
             gapped_seam(2, Role::Body.colour().into(), Role::Tyre.colour().into());
@@ -1742,8 +1785,10 @@ mod runtime_caps {
 
     use super::WHEEL_NONE;
 
-    /// `CAR_MAX_VERTS` in `game/src/draw.rs`.
-    const MAX_VERTS: u16 = 1344;
+    /// `CAR_SLOT_VERTS` and `CAR_SLOT_FACES` in `game/src/draw.rs`: the room
+    /// each of the eighteen car slots (nine cars and their LODs) has.
+    const MAX_VERTS: u16 = 512;
+    const MAX_SLOT_FACES: u16 = 512;
     /// `CAR_TRI_CAP` in `game/src/draw.rs`, shared by both cars.
     const MAX_PAIR_FACES: u16 = 1248;
 
@@ -1754,8 +1799,18 @@ mod runtime_caps {
             .canonicalize()
             .expect("game/assets");
         let mut seen = 0;
-        let mut car_faces = [0u16; 3];
-        let names = ["sedan", "hatchback", "hatchback2"];
+        let names = [
+            "sedan",
+            "hatchback",
+            "hatchback2",
+            "razor",
+            "fury",
+            "bolt",
+            "brute",
+            "dash",
+            "cinder",
+        ];
+        let mut car_faces = [0u16; 9];
         for entry in std::fs::read_dir(&dir).expect("read game/assets") {
             let path = entry.expect("dir entry").path();
             if path.extension().and_then(|e| e.to_str()) != Some("psxm") {
@@ -1769,6 +1824,10 @@ mod runtime_caps {
             assert!(
                 verts <= MAX_VERTS,
                 "{name}: {verts} vertices, renderer holds {MAX_VERTS}"
+            );
+            assert!(
+                faces <= MAX_SLOT_FACES,
+                "{name}: {faces} faces, renderer holds {MAX_SLOT_FACES}"
             );
             for (index, stem) in names.iter().enumerate() {
                 if name == format!("{stem}.psxm") {
@@ -1807,14 +1866,14 @@ mod runtime_caps {
             car_faces.iter().all(|&faces| faces > 0),
             "not every selectable car had a runtime blob"
         );
-        // Both seats now pick freely from the same three, so every ordered
+        // Both seats now pick freely from the same nine, so every ordered
         // pair has to fit, including a car against itself. Checking the two
         // heaviest covers all of them.
         let mut heaviest = car_faces;
         heaviest.sort_unstable();
         // Nothing stops both seats picking the same model, so the worst
         // pair is the heaviest car twice.
-        let pair = heaviest[2] * 2;
+        let pair = heaviest[heaviest.len() - 1] * 2;
         assert!(
             pair <= MAX_PAIR_FACES,
             "the two heaviest cars use {pair} faces, shared renderer holds {MAX_PAIR_FACES}"

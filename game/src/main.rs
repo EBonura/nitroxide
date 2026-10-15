@@ -73,6 +73,14 @@ const INTRO_HOLD: i32 = 74;
 const INTRO_TOTAL: i32 = 150;
 const INTRO_FADE_OUT: i32 = INTRO_TOTAL - INTRO_FADE_IN - INTRO_HOLD;
 
+/// The licence credit for the Pavel 3D cars (RAZOR, FURY, BOLT, BRUTE, DASH,
+/// CINDER), shown on the boot splash. The same words are in the README, the
+/// CHANGELOG and the release notes.
+const CARS_CREDIT_LINES: [&str; 2] = [
+    "Cars: Pavel 3D, Low Poly City Vehicles Pack, CC BY 4.0",
+    "pavel-3d.itch.io/low-poly-city-vehicles-pack",
+];
+
 /// Analog deflection below this is treated as centred: a worn DualShock never
 /// reads exactly 0x80.
 ///
@@ -1579,6 +1587,19 @@ impl NitroXide {
             font.draw_text(x, 150, glyph, (channel(76), channel(108), channel(128)));
             x += font.text_width(glyph) as i16;
         }
+
+        // The credit CC BY 4.0 asks for, for the six cars that are not ours.
+        let credit = |y: i16, text: &str| {
+            let tint = (level as i32 * 70 / 128) as u8;
+            font.draw_text(
+                draw::SCREEN_W / 2 - font.text_width(text) as i16 / 2,
+                y,
+                text,
+                (tint, tint + 8, tint + 22),
+            );
+        };
+        credit(176, CARS_CREDIT_LINES[0]);
+        credit(188, CARS_CREDIT_LINES[1]);
     }
 
     /// The settings panel, over whichever menu opened it. Same plate as the
@@ -2041,6 +2062,12 @@ impl Scene for NitroXide {
         #[cfg(feature = "boot-sprinter")]
         {
             self.cars[0] = 2;
+        }
+        #[cfg(feature = "boot-car")]
+        {
+            if let Some(car) = option_env!("NITRO_CAR0") {
+                self.cars[0] = car.parse::<usize>().unwrap_or(0).min(draw::CAR_COUNT - 1);
+            }
         }
         #[cfg(feature = "boot-wheels")]
         {

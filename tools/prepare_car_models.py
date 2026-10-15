@@ -4,6 +4,7 @@
 import bmesh
 import bpy
 import math
+import os
 import sys
 from mathutils import Vector
 
@@ -214,6 +215,12 @@ objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
 for obj in list(objects):
     if not material_stem(obj) and len(obj.data.polygons) <= 32:
         drop_underbody(obj)
+    elif material_stem(obj) == "black" and "mirror" in obj.name.lower():
+        # Both wing mirrors are one 56-polygon object; at the mirror budget of
+        # four faces they come out as thin dark fins at the roofline, which
+        # flicker between frames as the car turns. At gameplay size a mirror is
+        # a pixel and a half.
+        bpy.data.objects.remove(obj, do_unlink=True)
 objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
 
 # The source packs model both bumpers, both headlights and both tail lights as
@@ -249,6 +256,53 @@ for obj in list(objects):
         for o in parts:
             part_group[o.name] = (obj.name, len(o.data.polygons), total)
 objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+if os.environ.get("PREPARE_DEBUG"):
+    _parts = {}
+    for _o in objects:
+        if _o.name in part_group:
+            _parts.setdefault(material_stem(_o), []).append(round(sum(p.area for p in _o.data.polygons), 3))
+    print("PARTS", {k: sorted(v, reverse=True) for k, v in _parts.items()})
+
+# The distance LOD is a few dozen pixels long, where the third lamp, the
+# indicator or the mirror plate of a busy source model is a sub-pixel speck
+# that still costs a face. Keep only the largest parts of each detail material
+# there; the 60-face budget goes to the body, glass and wheels.
+LOD_MAX_PARTS = {
+    "turn_light": 0,
+    "white": 0,
+    "metal_gray": 2,
+    "metal_dark_gray": 2,
+    "light": 4,
+    "stop_light": 4,
+    "windows": 4,
+}
+# At gameplay size a busy trim material (the Pavel cars' black trim comes in
+# nine pieces) still costs two faces a piece and reads as clutter on the nose.
+GAMEPLAY_MAX_PARTS = {"metal_dark_gray": 6}
+if True:
+    by_material = {}
+    for obj in objects:
+        if obj.name in part_group:
+            by_material.setdefault(material_stem(obj), []).append(obj)
+    for material, parts in by_material.items():
+        keep = (LOD_MAX_PARTS if target_faces < 100 else GAMEPLAY_MAX_PARTS).get(material)
+        if keep is None:
+            continue
+        parts.sort(key=lambda o: sum(p.area for p in o.data.polygons), reverse=True)
+        for dropped in parts[keep:]:
+            part_group.pop(dropped.name, None)
+            bpy.data.objects.remove(dropped, do_unlink=True)
+    objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+    groups = {}
+    for obj in objects:
+        if obj.name in part_group:
+            name, polygons, _ = part_group[obj.name]
+            groups.setdefault(name, 0)
+            groups[name] += polygons
+    for obj in objects:
+        if obj.name in part_group:
+            name, polygons, _ = part_group[obj.name]
+            part_group[obj.name] = (name, polygons, groups[name])
 
 
 def part_share(obj, group_cap):
@@ -338,6 +392,31 @@ for obj, face_cap in decimate:
     bpy.ops.object.modifier_apply(modifier=modifier.name)
     rebuild_topology(obj)
 
+# A busy source can still land the 60-face LOD well over its share (the sum of
+# per-part minimums), so trim the largest non-wheel object until the cooked car
+# is about the size of the other LODs.
+LOD_TRIANGLE_BUDGET = 80
+if target_faces < 100:
+    def triangles(obj):
+        return sum(len(p.vertices) - 2 for p in obj.data.polygons)
+
+    for _ in range(12):
+        meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+        if sum(triangles(o) for o in meshes) <= LOD_TRIANGLE_BUDGET:
+            break
+        movable = [o for o in meshes if not is_wheel_part(o) and triangles(o) > 8]
+        if not movable:
+            break
+        biggest = max(movable, key=triangles)
+        bpy.context.view_layer.objects.active = biggest
+        modifier = biggest.modifiers.new(name="PS1 LOD trim", type="DECIMATE")
+        modifier.decimate_type = "COLLAPSE"
+        modifier.ratio = 0.8
+        modifier.use_collapse_triangulate = True
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+        rebuild_topology(biggest)
+
+
 def add_cabin_core():
     """Put a dark core inside the greenhouse.
 
@@ -360,32 +439,67 @@ def add_cabin_core():
     low = Vector(tuple(min(v[axis] for v in corners) for axis in range(3)))
     high = Vector(tuple(max(v[axis] for v in corners) for axis in range(3)))
     size = high - low
-    # Inset well into the greenhouse (30% from each side, 35% from each end,
-    # top at half the glass band): the further behind the glass the box sits,
-    # the less often the painter's algorithm, which sorts by mean depth, draws
-    # one of its walls over a pane or a pillar. Measured against a z-buffered
-    # reference, the pixels where a core wall wrongly covered bodywork fell
-    # from 72 to 11 on the Sprinter against a 16% / 62% box.
-    a = Vector((low.x + size.x * 0.30, low.y + size.y * 0.35, low.z + size.z * 0.2))
-    b = Vector((high.x - size.x * 0.30, high.y - size.y * 0.35, low.z + size.z * 0.50))
-    bpy.ops.mesh.primitive_cube_add(size=1.0, location=(a + b) * 0.5)
-    core = bpy.context.object
-    core.name = "cabin_core"
-    core.scale = b - a
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    # Inset well into the greenhouse (30% from each side, 35% from each end):
+    # the further behind the glass the box sits, the less often the painter's
+    # algorithm, which sorts by mean depth, draws one of its walls over a pane
+    # or a pillar. Measured against a z-buffered reference, the pixels where a
+    # core wall wrongly covered bodywork fell from 72 to 11 on the Sprinter
+    # against a 16% / 62% box. The walls have to reach the roofline, because a
+    # gap there is looked through down into the cabin.
+    x0, x1 = low.x + size.x * 0.30, high.x - size.x * 0.30
+    y0, y1 = low.y + size.y * 0.35, high.y - size.y * 0.35
+    # Each top corner goes as high as the roof allows. A roof is lower than the
+    # glass band's highest point (the pillars and the sloping panes reach it,
+    # the flat roof does not), so a fixed height can poke through the paint as
+    # a dark rectangle, and a height that is safe everywhere leaves the
+    # roofline gaps open. So cast a ray up from each corner against the
+    # bodywork and stop a little below where it hits paint.
+    from mathutils.bvhtree import BVHTree
+
+    body = [
+        o
+        for o in bpy.context.scene.objects
+        if o.type == "MESH" and not is_wheel_part(o) and material_stem(o) != "windows"
+    ]
+    verts, polys = [], []
+    for o in body:
+        base = len(verts)
+        verts += [o.matrix_world @ v.co for v in o.data.vertices]
+        polys += [tuple(base + i for i in p.vertices) for p in o.data.polygons]
+    tree = BVHTree.FromPolygons(verts, polys)
+    floor = low.z + size.z * 0.2
+    corners_xy = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    tops = []
+    for x, y in corners_xy:
+        hit = tree.ray_cast(Vector((x, y, floor)), Vector((0, 0, 1)))
+        if hit[0] is None:
+            tops.append(low.z + size.z * 0.5)
+        else:
+            tops.append(min(hit[0].z - size.z * 0.13, low.z + size.z * 0.90))
+    mesh = bpy.data.meshes.new("cabin_core")
+    ring = [Vector((x, y, floor)) for x, y in corners_xy] + [
+        Vector((x, y, max(t, floor + size.z * 0.1))) for (x, y), t in zip(corners_xy, tops)
+    ]
+    mesh.from_pydata(
+        [tuple(v) for v in ring],
+        [],
+        [(0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)],
+    )
+    mesh.update()
+    core = bpy.data.objects.new("cabin_core", mesh)
+    bpy.context.scene.collection.objects.link(core)
+    bpy.context.view_layer.objects.active = core
     core.data.materials.append(glass[0].material_slots[0].material)
-    # Open top and bottom: only the four walls remain. Nothing looks up into
-    # the cabin, and with no top face the core cannot be sorted over the roof
-    # by the painter's algorithm, which orders faces by their mean depth and
-    # gets a big roof panel against a small box wrong.
-    bpy.ops.object.mode_set(mode="EDIT")
-    bm = bmesh.from_edit_mesh(core.data)
-    bm.faces.ensure_lookup_table()
-    ends = [min(bm.faces, key=lambda f: f.calc_center_median().z), max(bm.faces, key=lambda f: f.calc_center_median().z)]
-    bmesh.ops.delete(bm, geom=ends, context="FACES_ONLY")
-    bmesh.update_edit_mesh(core.data)
-    bpy.ops.object.mode_set(mode="OBJECT")
-    rebuild_topology(core)
+    # Four walls only: no top and no bottom face. Nothing looks up into the
+    # cabin, and with no top face the core cannot be sorted over the roof by the
+    # painter's algorithm, which orders faces by their mean depth and gets a big
+    # roof panel against a small box wrong. The walls are wound to face
+    # outward here, since a wall-only box has no inside for Blender to find.
+    centre = sum(ring, Vector()) / len(ring)
+    for polygon in mesh.polygons:
+        if (polygon.center - centre).dot(polygon.normal) < 0:
+            polygon.flip()
+    mesh.update()
 
 
 # The distance LOD is too small on screen for a pillar gap to show, and its

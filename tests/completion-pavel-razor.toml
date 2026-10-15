@@ -1,0 +1,65 @@
+name = "nitroxide-pavel-razor"
+title = "NitroXide: RAZOR (the first Pavel 3D car) selected, started and driven"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2400
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+[[step]]
+wait = 40
+[[step]]
+checkpoint = "selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 5
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 3 }
+timeout = 400
+[[step]]
+press = ["r2"]
+hold = 420
+[[step]]
+checkpoint = "kickoff-driving"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 5
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
