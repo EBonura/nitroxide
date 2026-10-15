@@ -60,26 +60,61 @@ macro_rules! staged {
 
 pub const SCREEN_W: i16 = 320;
 pub const SCREEN_H: i16 = 240;
-/// Projection plane distance: about a 63 degree horizontal field of view.
-/// Narrower than Rocket League's ~100, deliberately. RL renders this arena at
-/// 1080p, where a ball 4600 uu away is still tens of pixels across; at 320x240
-/// the same shot is three pixels. Trading peripheral vision for reach is what
-/// keeps the ball legible at kickoff.
-#[cfg(not(any(feature = "cam-fov-77", feature = "cam-fov-90")))]
-const PROJ_H: u16 = 260;
-/// Dev options for Manny's field-of-view call (about 77 and 90 degrees
-/// horizontal). Not the shipping view: every PROJ_H user, the LOD pixel
-/// tables and the cull frustum follow it, but the frame budget was never
-/// re-measured at these.
-#[cfg(all(feature = "cam-fov-77", not(feature = "cam-fov-90")))]
-const PROJ_H: u16 = 200;
-#[cfg(feature = "cam-fov-90")]
-const PROJ_H: u16 = 160;
+/// The menu stage's projection plane distance: about a 63 degree horizontal
+/// field of view on the 320-wide screen. The front end's staged cars and their
+/// panels were laid out for it, and the field-of-view setting leaves it alone.
+const MENU_PROJ_H: i32 = 260;
+
+/// The player's field-of-view setting lives in `sim::camera` (the table, the
+/// step names and the settings byte, which the host tests cover): horizontal
+/// degrees at the 320-pixel view width, 60 to 110 in steps of 5.
+pub use sim::camera::{FOV_STEPS, FOV_DEFAULT_STEP, fov_degrees};
+/// The step a profile with no saved choice starts at. Dev builds can start
+/// elsewhere to measure the extremes (`boot-fov-60`, `boot-fov-110`).
+#[cfg(not(any(feature = "boot-fov-60", feature = "boot-fov-110")))]
+pub const FOV_DEFAULT: usize = FOV_DEFAULT_STEP;
+#[cfg(feature = "boot-fov-60")]
+pub const FOV_DEFAULT: usize = 0;
+#[cfg(all(feature = "boot-fov-110", not(feature = "boot-fov-60")))]
+pub const FOV_DEFAULT: usize = FOV_STEPS - 1;
+
+/// The chosen step, and the plane the frame being built projects to. A match
+/// frame uses the chosen step's; the front end's stage uses [`MENU_PROJ_H`].
+static mut FOV_INDEX: usize = FOV_DEFAULT;
+static mut PROJ_PLANE: i32 = MENU_PROJ_H;
+
+/// Projection plane distance in pixels for the frame under construction.
+#[inline]
+fn proj_h() -> i32 {
+    unsafe { PROJ_PLANE }
+}
+
+/// Choose a field of view (clamped to the table). Takes effect on the next
+/// match frame.
+pub fn set_fov(step: usize) {
+    unsafe { FOV_INDEX = step.min(FOV_STEPS - 1) };
+}
+
+/// The step in force.
+pub fn fov() -> usize {
+    unsafe { FOV_INDEX }
+}
+
+/// Point the GTE and everything built from it at one projection plane.
+fn use_plane(h: i32) {
+    unsafe { PROJ_PLANE = h };
+    scene::set_projection_plane(h as u16);
+}
+
+/// The plane of the chosen field of view.
+fn match_plane() -> i32 {
+    sim::camera::FOV_PLANE[fov()] as i32
+}
 
 /// One player's slice of the back buffer, stacked top and bottom, the way
 /// Rocket League splits a two-player game.
 ///
-/// The projection plane stays at [`PROJ_H`] in a half-height view, so a split
+/// The projection plane is the same in a half-height view, so a split
 /// player keeps the full horizontal field of view, which is the axis car
 /// soccer is played on, and gets half the vertical one. It also pays for the
 /// second pass: the cull frustum flattens with the viewport, so the roof and
@@ -345,19 +380,21 @@ fn clip_x(a: (i16, i16), b: (i16, i16), lo: i32, hi: i32) -> Option<((i16, i16),
 /// plane distance or less, and a vertex that close lands short of its true
 /// place without any sign of it: a pitch quad with one there met its
 /// neighbour at an angle and left a wedge of sky between them.
-const GTE_TRUE_SZ: i32 = PROJ_H as i32 / 2;
+fn gte_true_sz() -> i32 {
+    proj_h() / 2
+}
 
 /// The depth a projected vertex must be past to count as drawn where it
-/// belongs: [`GTE_TRUE_SZ`] in split screen, and in a full view only in
+/// belongs: [`gte_true_sz`] in split screen, and in a full view only in
 /// front at all, its old test. The pitch and wall passes that use it are
 /// built twice, `SPLIT` or not, so a full view runs its old code with none
 /// of the near-camera fix compiled in: inline, the fix's extra code cost a
 /// full view 28k cycles a frame where both cars are close (train tape polls
 /// 795..865, 505k to 533k, 2026-10-03).
 #[inline]
-const fn near_sz<const SPLIT: bool>() -> i32 {
+fn near_sz<const SPLIT: bool>() -> i32 {
     if SPLIT {
-        GTE_TRUE_SZ
+        gte_true_sz()
     } else {
         0
     }
@@ -2742,7 +2779,7 @@ impl Cull {
             return false;
         }
         let x = Self::dot(self.right, d);
-        x.abs() - Self::extent(self.right, h) <= z * cull_half_w() / PROJ_H as i32
+        (x.abs() - Self::extent(self.right, h)) * proj_h() <= z * cull_half_w()
     }
 
     /// Vertical half of the same conservative box/frustum test. Kept
@@ -2758,7 +2795,7 @@ impl Cull {
         // Follows the viewport the way the side planes do: a half-height view
         // has half the vertical frustum, and the roof and far floor go with it.
         let half_h = view_half_h();
-        y.abs() - Self::extent(self.vertical, h) <= z * half_h / PROJ_H as i32
+        (y.abs() - Self::extent(self.vertical, h)) * proj_h() <= z * half_h
     }
 
     /// How far a box with half-extents `h` reaches along the forward, right
@@ -2781,11 +2818,11 @@ impl Cull {
         if z <= 0 {
             return false;
         }
-        if Self::dot(self.right, d).abs() - e[1] > z * cull_half_w() / PROJ_H as i32 {
+        if (Self::dot(self.right, d).abs() - e[1]) * proj_h() > z * cull_half_w() {
             return false;
         }
         let half_h = view_half_h();
-        Self::dot(self.vertical, d).abs() - e[2] <= z * half_h / PROJ_H as i32
+        (Self::dot(self.vertical, d).abs() - e[2]) * proj_h() <= z * half_h
     }
 
     /// Chebyshev distance from the camera on the ground plane, which is what
@@ -2798,7 +2835,7 @@ impl Cull {
 /// Screen offset and projection plane. Call once at boot.
 pub fn setup() {
     scene::set_screen_offset((SCREEN_W as i32 / 2) << 16, (SCREEN_H as i32 / 2) << 16);
-    scene::set_projection_plane(PROJ_H);
+    use_plane(MENU_PROJ_H);
     build_meshes();
     build_spans();
     build_stands();
@@ -2828,7 +2865,7 @@ fn camera(
     let request = sim::camera::Request {
         rig: &CAM_RIG,
         screen: sim::camera::Screen {
-            proj_h: PROJ_H as i32,
+            proj_h: proj_h(),
             w: SCREEN_W as i32,
             h: if split { SCREEN_H as i32 / 2 } else { SCREEN_H as i32 },
         },
@@ -2942,15 +2979,13 @@ const CAR_SLOTS: usize = CAR_COUNT * 2;
 const CAR_LOD_ENTER_PX: [i32; SEATS] = [24, 56];
 const CAR_LOD_EXIT_PX: [i32; SEATS] = [28, 64];
 /// Camera-space depths those sizes fall at: car length on screen is
-/// `2 * CAR_HALF_L * PROJ_H / depth`.
-const CAR_LOD_ENTER_DEPTH: [i32; SEATS] = [
-    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_ENTER_PX[0],
-    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_ENTER_PX[1],
-];
-const CAR_LOD_EXIT_DEPTH: [i32; SEATS] = [
-    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_EXIT_PX[0],
-    2 * sim::CAR_HALF_L * PROJ_H as i32 / CAR_LOD_EXIT_PX[1],
-];
+/// `2 * CAR_HALF_L * plane / depth`, so they move with the field of view.
+fn car_lod_enter_depth(size: usize) -> i32 {
+    2 * sim::CAR_HALF_L * proj_h() / CAR_LOD_ENTER_PX[size]
+}
+fn car_lod_exit_depth(size: usize) -> i32 {
+    2 * sim::CAR_HALF_L * proj_h() / CAR_LOD_EXIT_PX[size]
+}
 /// Which seats a full-screen view is currently drawing from the LOD.
 static mut CAR_FAR_LOD: [bool; SEATS] = [false; SEATS];
 /// The same per split-screen half (top, bottom), each with its own camera.
@@ -2969,8 +3004,12 @@ static mut SPLIT_HALF: usize = 0;
 /// goes back to sixteen above [`BALL_LOD_EXIT_PX`].
 const BALL_LOD_ENTER_PX: i32 = 20;
 const BALL_LOD_EXIT_PX: i32 = 24;
-const BALL_LOD_ENTER_DEPTH: i32 = 2 * sim::BALL_R * PROJ_H as i32 / BALL_LOD_ENTER_PX;
-const BALL_LOD_EXIT_DEPTH: i32 = 2 * sim::BALL_R * PROJ_H as i32 / BALL_LOD_EXIT_PX;
+fn ball_lod_enter_depth() -> i32 {
+    2 * sim::BALL_R * proj_h() / BALL_LOD_ENTER_PX
+}
+fn ball_lod_exit_depth() -> i32 {
+    2 * sim::BALL_R * proj_h() / BALL_LOD_EXIT_PX
+}
 static mut BALL_FAR_LOD: bool = false;
 
 /// Hysteresis between two depths: `far` turns on past `enter` and off
@@ -3597,12 +3636,12 @@ fn draw_far_car<'a>(
         let (min_x, max_x, _, _) = view_bounds();
         (min_x + max_x) as i32 / 2
     };
-    let sx = cx + t.0 * PROJ_H as i32 / t.2;
-    let sy = (SCREEN_H as i32 / 2) + t.1 * PROJ_H as i32 / t.2;
+    let sx = cx + t.0 * proj_h() / t.2;
+    let sy = (SCREEN_H as i32 / 2) + t.1 * proj_h() / t.2;
     // ponytail: one isotropic half-extent between the car's width and length;
     // at a dozen pixels the yaw-correct footprint is a two-pixel refinement.
-    let hw = ((sim::CAR_HALF_W + sim::CAR_HALF_L) / 2 * PROJ_H as i32 / t.2).max(1);
-    let h = |uu: i32| (uu * PROJ_H as i32 / t.2).max(1);
+    let hw = ((sim::CAR_HALF_W + sim::CAR_HALF_L) / 2 * proj_h() / t.2).max(1);
+    let h = |uu: i32| (uu * proj_h() / t.2).max(1);
     let paint = PAINTS[unsafe { SEAT_PAINT }[seat].min(PAINT_COUNT - 1)];
     let (body_col, dark_col) = (paint.1, paint.2);
     let mut slab = |y0: i32, y1: i32, top: Rgb, bot: Rgb| {
@@ -4665,7 +4704,7 @@ impl Builder<'_> {
     /// stack (the pitch and wall phases have no room left on it).
     ///
     /// Near the camera a quad can have a corner behind the near plane or too
-    /// near for the GTE to project right (see [`GTE_TRUE_SZ`]), or a corner
+    /// near for the GTE to project right (see [`gte_true_sz`]), or a corner
     /// so close that its projection lands a thousand pixels off screen, and
     /// the rasteriser drops any triangle with an edge 1024 or more pixels
     /// wide or 512 tall. Either way the whole quad went and the sky showed
@@ -4827,7 +4866,7 @@ impl Builder<'_> {
     }
 
     /// Clip a queued quad in camera space to the depth the GTE still
-    /// projects right (see [`GTE_TRUE_SZ`]) and to a guard band around the
+    /// projects right (see [`gte_true_sz`]) and to a guard band around the
     /// view (480 pixels either side of its centre and 240 above and below),
     /// so every corner left projects close enough to the others for the GPU,
     /// and draw the clipped polygon as a fan of triangles (quads with a
@@ -4851,10 +4890,10 @@ impl Builder<'_> {
         type Corner = [i32; 11];
         // Four corners, and one more for each of the five planes at most.
         const MAX: usize = 9;
-        const H: i32 = PROJ_H as i32;
+        let focal = proj_h();
         const GUARD_X: i32 = 480;
         const GUARD_Y: i32 = 240;
-        const NEAR: i32 = GTE_TRUE_SZ + 8;
+        let near = gte_true_sz() + 8;
         let corner = |k: usize| -> Corner {
             let (p, c) = (world[k], rgb_of(tints[k]));
             let d = (p.0 - cull.pos.0, p.1 - cull.pos.1, p.2 - cull.pos.2);
@@ -4886,12 +4925,12 @@ impl Builder<'_> {
         let (half_w, half_h) = (view_half_w(), view_half_h());
         let quad = &bufs[0][..4];
         let past =
-            |test: fn(&Corner, i32, i32) -> bool| quad.iter().all(|c| test(c, half_w, half_h));
-        if past(|c, _, _| c[5] <= NEAR)
-            || past(|c, w, _| c[3] * H > w * c[5])
-            || past(|c, w, _| -c[3] * H > w * c[5])
-            || past(|c, _, h| c[4] * H > h * c[5])
-            || past(|c, _, h| -c[4] * H > h * c[5])
+            |test: &dyn Fn(&Corner, i32, i32) -> bool| quad.iter().all(|c| test(c, half_w, half_h));
+        if past(&|c, _, _| c[5] <= near)
+            || past(&|c, w, _| c[3] * focal > w * c[5])
+            || past(&|c, w, _| -c[3] * focal > w * c[5])
+            || past(&|c, _, h| c[4] * focal > h * c[5])
+            || past(&|c, _, h| -c[4] * focal > h * c[5])
         {
             return;
         }
@@ -4902,11 +4941,11 @@ impl Builder<'_> {
             let outside = |c: &Corner| {
                 let (x, y, z) = (c[3], c[4], c[5]);
                 match plane {
-                    0 => NEAR - z,
-                    1 => x * H - GUARD_X * z,
-                    2 => -x * H - GUARD_X * z,
-                    3 => y * H - GUARD_Y * z,
-                    _ => -y * H - GUARD_Y * z,
+                    0 => near - z,
+                    1 => x * focal - GUARD_X * z,
+                    2 => -x * focal - GUARD_X * z,
+                    3 => y * focal - GUARD_Y * z,
+                    _ => -y * focal - GUARD_Y * z,
                 }
             };
             let mut d = [0i32; MAX];
@@ -4953,7 +4992,7 @@ impl Builder<'_> {
         let mut screen = [(0i16, 0i16, 0i32); MAX];
         for (s, c) in screen.iter_mut().zip(&poly[..n]) {
             let v = project(Vec3I16::new(c[0] as i16, c[1] as i16, c[2] as i16));
-            if v.sz as i32 <= GTE_TRUE_SZ {
+            if v.sz as i32 <= gte_true_sz() {
                 return;
             }
             *s = (v.sx, v.sy, v.sz as i32);
@@ -5825,7 +5864,7 @@ impl Builder<'_> {
         // the ground, so no sky shows under it. An edge that runs behind the
         // lens is cut where it crosses the depth the GTE projects true, so one
         // quad still covers what is in front.
-        const NEAR: i32 = GTE_TRUE_SZ + 8;
+        let near = gte_true_sz() + 8;
         for edge in unsafe { APRON_EDGES.iter() } {
             if !cull.visible_box(edge.centre, cull.extents(edge.half)) {
                 continue;
@@ -5838,13 +5877,13 @@ impl Builder<'_> {
                 )
             };
             let d = [depth(pts[0]), depth(pts[1]), depth(pts[2]), depth(pts[3])];
-            let (end0, end1) = (d[0].min(d[2]) <= NEAR, d[1].min(d[3]) <= NEAR);
+            let (end0, end1) = (d[0].min(d[2]) <= near, d[1].min(d[3]) <= near);
             if end0 && end1 {
                 continue;
             }
             // How far along a line, from its end `a` (depth `da`) to its end `b`
-            // (depth `db`), the depth reaches NEAR; Q12.
-            let cut = |da: i32, db: i32| ((NEAR - da) * 4096 / (db - da).max(1)).clamp(0, 4096);
+            // (depth `db`), the depth reaches near; Q12.
+            let cut = |da: i32, db: i32| ((near - da) * 4096 / (db - da).max(1)).clamp(0, 4096);
             let lerp = |a: Vec3I16, b: Vec3I16, t: i32| {
                 Vec3I16::new(
                     (a.x as i32 + (((b.x as i32 - a.x as i32) * t) >> 12)) as i16,
@@ -6209,7 +6248,7 @@ impl Builder<'_> {
     }
 
     /// Where a quad's corners are against the depth the GTE stops projecting
-    /// true (see [`GTE_TRUE_SZ`]): every corner past it, none, or some. A
+    /// true (see [`gte_true_sz`]): every corner past it, none, or some. A
     /// quad with some is clipped rather than projected: [`project_quad`]
     /// drops a quad with a corner behind the eye, and one with a corner that
     /// close lands off its true place. One wholly behind it shows nothing.
@@ -6218,7 +6257,7 @@ impl Builder<'_> {
         let mut inside = 0;
         for c in corners {
             let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-            inside += (Cull::dot(cull.fwd, d) <= GTE_TRUE_SZ + 8) as u8;
+            inside += (Cull::dot(cull.fwd, d) <= gte_true_sz() + 8) as u8;
         }
         match inside {
             0 => EyeReach::Clear,
@@ -6375,7 +6414,7 @@ impl Builder<'_> {
             return GoalReach::Behind;
         }
         let d = (c.0 - cull.pos.0, c.1 - cull.pos.1, c.2 - cull.pos.2);
-        if Cull::dot(cull.fwd, d) - e[0] <= GTE_TRUE_SZ + 8 {
+        if Cull::dot(cull.fwd, d) - e[0] <= gte_true_sz() + 8 {
             GoalReach::Near
         } else {
             GoalReach::Clear
@@ -6859,8 +6898,8 @@ impl Builder<'_> {
         let far = lod_far(
             unsafe { &mut BALL_FAR_LOD },
             view.camera_space(ball_pos).2,
-            BALL_LOD_ENTER_DEPTH,
-            BALL_LOD_EXIT_DEPTH,
+            ball_lod_enter_depth(),
+            ball_lod_exit_depth(),
         );
         let lon_step = if split_view() || far { 2 } else { 1 };
         let mesh = unsafe { &BALL_MESH };
@@ -7166,8 +7205,8 @@ fn draw_cars<'a>(
         let far = lod_far(
             state,
             depth,
-            CAR_LOD_ENTER_DEPTH[size],
-            CAR_LOD_EXIT_DEPTH[size],
+            car_lod_enter_depth(size),
+            car_lod_exit_depth(size),
         );
         let which = if far { which + CAR_COUNT } else { which };
         // Mid-flip, spin the car about the axis across its dodge direction:
@@ -7557,7 +7596,7 @@ pub const STAGE_SOLO_X: i32 = 150;
 /// with. One place decides where a car stands and where its label goes.
 pub fn stage_car_screen_x(seat: usize, pair: bool) -> i16 {
     let x = stage_car_x(seat, pair);
-    (SCREEN_W as i32 / 2 + PROJ_H as i32 * x / STAGE_CAM_BACK) as i16
+    (SCREEN_W as i32 / 2 + MENU_PROJ_H * x / STAGE_CAM_BACK) as i16
 }
 
 /// Where the front end parks a seat's car, in world uu. `main` writes these
@@ -7586,6 +7625,7 @@ pub fn render_menu(s: &Sim, cars: [usize; SEATS], panels: FrontPanels, pair: boo
     // row list, without swinging the lens off it and foreshortening it into a
     // wedge.
     let _ = pair;
+    use_plane(MENU_PROJ_H);
     let view = look_from(
         (0, -STAGE_CAM_UP, STAGE_Z - STAGE_CAM_BACK),
         0,
@@ -7632,6 +7672,7 @@ const S_CAR_FLUSH: u16 = telemetry::stage::TEXTURED_MODEL_JOINTS;
 
 /// Draw one frame of the match for one player, on the whole screen.
 pub fn render(s: &Sim, cars: [usize; SEATS], ball_cam: bool, buffer_y: u16) {
+    use_plane(match_plane());
     enter_view(Viewport::FULL, buffer_y);
     // EXPERIMENT: kick the table the previous call built, then build this
     // frame's into the other set while the GPU draws that one.
@@ -7666,6 +7707,7 @@ pub fn render_split(
     buffer_y: u16,
     swapped: bool,
 ) {
+    use_plane(match_plane());
     let (near, far) = if swapped {
         (&s.opponent, &s.car)
     } else {
@@ -8317,11 +8359,11 @@ fn track_box_visible(cull: &TrackView, b: (i16, i16, i16, i16)) -> bool {
     }
     let reach = z + ef;
     let (x, ex) = at(&cull.right);
-    if x.abs() - ex > reach * cull.half_w / PROJ_H as i32 {
+    if (x.abs() - ex) * proj_h() > reach * cull.half_w {
         return false;
     }
     let (y, ey) = at(&cull.vertical);
-    y.abs() - ey <= reach * cull.half_h / PROJ_H as i32
+    (y.abs() - ey) * proj_h() <= reach * cull.half_h
 }
 
 /// One view axis with everything the floor-box test needs from it.
@@ -8722,7 +8764,7 @@ impl Builder<'_> {
         if v.sz == 0 {
             return;
         }
-        let h = (radius * PROJ_H as i32 / v.sz.max(1) as i32).clamp(1, cap) as i16;
+        let h = (radius * proj_h() / v.sz.max(1) as i32).clamp(1, cap) as i16;
         let sp = [
             (v.sx - h, v.sy - h),
             (v.sx + h, v.sy - h),
@@ -8746,7 +8788,7 @@ impl Builder<'_> {
         if h.sz == 0 || t.sz == 0 {
             return;
         }
-        let half = (w * PROJ_H as i32 / h.sz.max(1) as i32).clamp(2, 8);
+        let half = (w * proj_h() / h.sz.max(1) as i32).clamp(2, 8);
         let (mut dx, mut dy) = (h.sx as i32 - t.sx as i32, h.sy as i32 - t.sy as i32);
         let mut len = isqrt_i32(dx * dx + dy * dy).max(1);
         if len > 40 {

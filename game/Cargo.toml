@@ -85,11 +85,12 @@ arena-sunset = []
 # Dev: wreck the opponent in front of the camera at kickoff, so a headless
 # capture frames a demolition explosion at a known tick.
 boot-demo-fx = []
-# Dev options for the camera calls that are Manny's, not bugs: a wider
-# projection (PROJ_H 200 is about 77 degrees horizontal, 160 about 90, against
-# the shipping 260 at 63) and ball cam on from kickoff. Off by default.
-cam-fov-77 = []
-cam-fov-90 = []
+# Dev options for the camera. Field of view is a player setting now (a slider
+# in SETTINGS, 60 to 110 degrees, 90 by default); these two only change the
+# step a profile without a saved choice starts at, so the extremes can be
+# measured headlessly. `cam-ball-default` starts every match in ball cam.
+boot-fov-60 = []
+boot-fov-110 = []
 cam-ball-default = []
 # Dev: keep per-frame camera, tyre-track and draw state in RAM rings
 # (diaglog.rs) for a headless replay to read back with --dump-ram.

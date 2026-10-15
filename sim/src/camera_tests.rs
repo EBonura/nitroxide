@@ -810,3 +810,34 @@ fn kickoff_keeps_the_eye_straight_behind_the_car_at_every_spot() {
         }
     }
 }
+
+#[test]
+fn the_fov_table_is_the_horizontal_field_of_view_it_says() {
+    use crate::camera::{fov_degrees, FOV_PLANE, FOV_STEPS};
+    for step in 0..FOV_STEPS {
+        // Float is only the reference, on the host.
+        let want = 160.0 / (fov_degrees(step) as f64 / 2.0).to_radians().tan();
+        let got = FOV_PLANE[step] as f64;
+        assert!((got - want).abs() <= 0.51, "{} degrees: plane {got}, exact {want:.2}", fov_degrees(step));
+    }
+    assert_eq!(fov_degrees(0), 60);
+    assert_eq!(fov_degrees(FOV_STEPS - 1), 110);
+    assert_eq!(FOV_PLANE[crate::camera::FOV_DEFAULT_STEP], 160, "the default is 90 degrees, a plane of half the width");
+    assert!(FOV_PLANE.windows(2).all(|w| w[0] > w[1]), "wider is a shorter plane");
+}
+
+#[test]
+fn the_fov_setting_rides_the_spare_settings_byte_and_old_saves_load_the_default() {
+    use crate::camera::{fov_step_from_save, fov_step_to_save, FOV_DEFAULT_STEP, FOV_STEPS};
+    for step in 0..FOV_STEPS {
+        assert_eq!(fov_step_from_save(fov_step_to_save(step), FOV_DEFAULT_STEP), step);
+    }
+    // Every byte an old record could hold (the profile default is 1) is the default.
+    for old in 0..0x40u8 {
+        assert_eq!(fov_step_from_save(old, FOV_DEFAULT_STEP), FOV_DEFAULT_STEP, "byte {old:#x}");
+    }
+    // And garbage above the table is too.
+    for junk in (0x40 + FOV_STEPS as u8)..=0xff {
+        assert_eq!(fov_step_from_save(junk, FOV_DEFAULT_STEP), FOV_DEFAULT_STEP);
+    }
+}

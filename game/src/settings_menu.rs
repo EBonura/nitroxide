@@ -5,6 +5,7 @@ pub enum SettingsRow {
     Sound,
     Music,
     Track,
+    Fov,
     Brightness,
     ScreenX,
     ScreenY,
@@ -58,7 +59,7 @@ mod tests {
     #[test]
     fn cancel_and_navigation_never_authorize_a_card_write() {
         for row in [SettingsRow::Arena, SettingsRow::Sound, SettingsRow::Music,
-            SettingsRow::Track, SettingsRow::Brightness, SettingsRow::ScreenX,
+            SettingsRow::Track, SettingsRow::Fov, SettingsRow::Brightness, SettingsRow::ScreenX,
             SettingsRow::ScreenY, SettingsRow::Save, SettingsRow::Back] {
             assert_eq!(action(row, false, false, false, true), Action::Close);
             assert_eq!(action(row, false, false, true, true), Action::Close);

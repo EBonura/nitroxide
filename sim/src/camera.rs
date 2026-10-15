@@ -231,6 +231,46 @@ impl CameraState {
     };
 }
 
+// ---- the player's field of view -------------------------------------------
+
+/// The field-of-view setting: horizontal degrees at the 320 pixel view width,
+/// in five degree steps from Rocket League's 60 to its 110.
+pub const FOV_STEPS: usize = 11;
+pub const FOV_MIN_DEGREES: i32 = 60;
+pub const FOV_STEP_DEGREES: i32 = 5;
+/// The shipping step: 90 degrees, Rocket League's default.
+pub const FOV_DEFAULT_STEP: usize = 6;
+/// Projection plane distance for each step, `160 / tan(fov / 2)` (160 being
+/// half the view width) rounded to the nearest pixel. A table because the
+/// console has no trigonometry to spare.
+pub const FOV_PLANE: [u16; FOV_STEPS] = [277, 251, 229, 209, 191, 175, 160, 147, 134, 123, 112];
+
+/// Horizontal degrees of a step.
+pub const fn fov_degrees(step: usize) -> i32 {
+    FOV_MIN_DEGREES + FOV_STEP_DEGREES * step as i32
+}
+
+/// Marks a settings byte as holding a field-of-view step. The settings record
+/// has no field of its own for it (the record is the SDK's, shared by every
+/// game), so it rides in the profile's `difficulty` byte, which this game
+/// never reads. Every record written before the setting existed holds that
+/// byte at its default of 1, which is not marked and so loads as the default
+/// step: no migration pass, and an old save never reads as a wild field of view.
+pub const FOV_SAVE_MARK: u8 = 0x40;
+
+/// The step a settings byte holds, or `default` for a byte that holds none.
+pub fn fov_step_from_save(byte: u8, default: usize) -> usize {
+    match byte.checked_sub(FOV_SAVE_MARK) {
+        Some(step) if (step as usize) < FOV_STEPS => step as usize,
+        _ => default,
+    }
+}
+
+/// The settings byte that holds a step.
+pub fn fov_step_to_save(step: usize) -> u8 {
+    FOV_SAVE_MARK + step.min(FOV_STEPS - 1) as u8
+}
+
 // ---- tuning ---------------------------------------------------------------
 
 /// Rate limits, per two ticks: the figures the old camera was tuned with

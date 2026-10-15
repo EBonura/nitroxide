@@ -81,6 +81,8 @@ const INTRO_FADE_OUT: i32 = INTRO_TOTAL - INTRO_FADE_IN - INTRO_HOLD;
 /// lock the moment the stick clears the zone.
 const SETTINGS_FILE: &str = "BESLES-00000NITRO01";
 const SETTINGS_TITLE: &str = "NitroXide Settings";
+/// The field-of-view row's values, a step at a time: horizontal degrees.
+const FOV_LABELS: [&str; draw::FOV_STEPS] = ["60", "65", "70", "75", "80", "85", "90", "95", "100", "105", "110"];
 const ACT_LEFT: usize = 0;
 const ACT_RIGHT: usize = 1;
 const ACT_UP: usize = 2;
@@ -768,6 +770,7 @@ impl NitroXide {
                 SettingsRow::Sound,
                 SettingsRow::Music,
                 SettingsRow::Track,
+                SettingsRow::Fov,
                 SettingsRow::Brightness,
                 SettingsRow::ScreenX,
                 SettingsRow::ScreenY,
@@ -778,6 +781,7 @@ impl NitroXide {
             &[
                 SettingsRow::Arena,
                 SettingsRow::Sound,
+                SettingsRow::Fov,
                 SettingsRow::Brightness,
                 SettingsRow::ScreenX,
                 SettingsRow::ScreenY,
@@ -820,7 +824,7 @@ impl NitroXide {
         let lr = right as i8 - left as i8;
         let picture_row = matches!(
             rows[row],
-            SettingsRow::Brightness | SettingsRow::ScreenX | SettingsRow::ScreenY
+            SettingsRow::Fov | SettingsRow::Brightness | SettingsRow::ScreenX | SettingsRow::ScreenY
         );
         if lr == 0 && picture_row {
             return;
@@ -849,6 +853,12 @@ impl NitroXide {
             SettingsRow::Track => self.music.cycle_track(step, tick),
             // The picture rows are steppers that clamp at both ends, so X
             // (which steps the toggles forward) leaves them alone.
+            SettingsRow::Fov => {
+                let step = (draw::fov() as i32 + lr as i32).clamp(0, draw::FOV_STEPS as i32 - 1) as usize;
+                draw::set_fov(step);
+                self.profile.difficulty = nitroxide_sim::camera::fov_step_to_save(step);
+                self.settings_dirty = true;
+            }
             SettingsRow::Brightness => {
                 self.profile.brightness = self.profile.brightness.stepped(lr);
                 self.settings_dirty = true;
@@ -1586,6 +1596,7 @@ impl NitroXide {
                 SettingsRow::Sound => ("SOUND: ", if audio::muted() { "OFF" } else { "ON" }),
                 SettingsRow::Music => ("MUSIC: ", if self.music.enabled() { "ON" } else { "OFF" }),
                 SettingsRow::Track => ("TRACK: ", self.music.track_name()),
+                SettingsRow::Fov => ("FOV: ", FOV_LABELS[draw::fov()]),
                 SettingsRow::Brightness => ("BRIGHTNESS: ", brightness.as_str()),
                 SettingsRow::ScreenX => ("SCREEN X: ", screen_x.as_str()),
                 SettingsRow::ScreenY => ("SCREEN Y: ", screen_y.as_str()),
@@ -1919,6 +1930,9 @@ impl Scene for NitroXide {
         if let Ok(profile) = psx_settings::load_slot_one(SETTINGS_FILE) {
             self.profile = profile;
         }
+        // The saved field of view, from the spare settings byte; a record
+        // from before the option holds no step and reads as the default.
+        draw::set_fov(nitroxide_sim::camera::fov_step_from_save(self.profile.difficulty, draw::FOV_DEFAULT));
         // The saved picture position, programmed once; a centred picture
         // (the default, and every save from before the option) leaves the
         // display window as the engine set it.
