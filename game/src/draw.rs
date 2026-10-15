@@ -2286,6 +2286,73 @@ fn chalk_at(x: i32, z: i32) -> Rgb {
     )
 }
 
+/// A projected corner, as the GTE gives it.
+type Pv = scene::Projected;
+
+/// Both ends of a cut through one RTPT (the third slot repeats the second):
+/// the same per-vertex projection as two RTPS, one GTE wait.
+#[inline(always)]
+fn project_cut(s: &LineSection) -> (Pv, Pv) {
+    let vb = Vec3I16::new(s.b.0, 0, s.b.1);
+    let [a, b, _] = scene::project_triangle_scheduled(Vec3I16::new(s.a.0, 0, s.a.1), vb, vb);
+    (a, b)
+}
+
+/// The least a far marking is dimmed to, in sixteenths: a line under a pixel
+/// wide is still drawn a pixel wide, bright enough to read.
+const THIN_FADE_MIN: i32 = 11;
+/// Grass over chalk, per channel in 256ths: what a marking dims toward.
+const GRASS_OVER_CHALK: (i32, i32, i32) = (77, 116, 34);
+
+/// `c` with `fade` sixteenths of itself over the grass it lies on.
+#[inline(always)]
+fn faded(c: Rgb, fade: i32) -> Rgb {
+    let k = |v: u8, g: i32| (v as i32 * (g + ((256 - g) * fade >> 4)) >> 8) as u8;
+    (k(c.0, GRASS_OVER_CHALK.0), k(c.1, GRASS_OVER_CHALK.1), k(c.2, GRASS_OVER_CHALK.2))
+}
+
+/// The quad for a thin marking between two cuts (each under three pixels
+/// across), and how much of its colour to keep (sixteenths). The GTE rounds
+/// each end of a cut to a pixel by itself, so a marking a fraction of a
+/// pixel wide came out as nothing, one pixel or two from one frame to the
+/// next, twisted into a bow tie where the ends disagreed: a dashed, jittering
+/// line two pixels thick where the real one is thinner than one. This draws
+/// it from the middle of each cut at a whole number of pixels, never under
+/// one, so every column is filled and the width cannot change with the
+/// camera. How wide it really is comes from where it is: a marking `w` uu
+/// across the view at distance `z`, from an eye `h` high, seen over a plane
+/// `p` away, is p h w / z^2 pixels tall. Under a pixel it is drawn a pixel
+/// with the chalk dimmed by the share of the pixel it would cover.
+#[inline(always)]
+fn thin_quad(from: &(Pv, Pv), to: &(Pv, Pv), eye_scale: i32) -> ([(i16, i16); 4], i32) {
+    // Each cut's middle, in half pixels.
+    let mid = |c: &(Pv, Pv)| (c.0.sx as i32 + c.1.sx as i32, c.0.sy as i32 + c.1.sy as i32);
+    let (m0, m1) = (mid(from), mid(to));
+    // Its far end: a quad spanning a long run is thinner there than at the
+    // near end, and is drawn as thin as its thinnest.
+    let z = (from.0.sz as i32).max(to.0.sz as i32);
+    let width = (eye_scale * (2 * LINE_HALF_W) * 16) / (z * z).max(1);
+    let across_x = (m1.0 - m0.0).abs() >= (m1.1 - m0.1).abs();
+    let px = if across_x {
+        ((width + 8) >> 4).max(1)
+    } else {
+        // Running up the screen, the width is the cut's own.
+        let w = ((from.1.sx as i32 - from.0.sx as i32).abs() + (to.1.sx as i32 - to.0.sx as i32).abs() + 1) >> 1;
+        w.max(1)
+    };
+    let fade = if across_x && px == 1 { width.clamp(THIN_FADE_MIN, 16) } else { 16 };
+    // The near side of a middle `px` thick: half a pixel is 1 in halves.
+    let lo = |m: i32| ((m - px + 1) >> 1) as i16;
+    let hi = |m: i32| ((m + 1) >> 1) as i16;
+    let p = px as i16;
+    let quad = if across_x {
+        [(hi(m0.0), lo(m0.1)), (hi(m0.0), lo(m0.1) + p), (hi(m1.0), lo(m1.1)), (hi(m1.0), lo(m1.1) + p)]
+    } else {
+        [(lo(m0.0), hi(m0.1)), (lo(m0.0) + p, hi(m0.1)), (lo(m1.0), hi(m1.1)), (lo(m1.0) + p, hi(m1.1))]
+    };
+    (quad, fade)
+}
+
 /// Light every marking's sections from the current pitch light. Run after
 /// anything rewrites [`FLOOR_LIGHT`].
 fn paint_lines() {
@@ -5498,20 +5565,20 @@ impl Builder<'_> {
             (x0 as i32, x1 as i32, y0 as i32, y1 as i32)
         };
         let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
-        // Far away a marking seen edge-on is under a pixel thick, and the
-        // rasteriser then skips most of its columns: a solid line breaks
-        // into dashes. So a cut is never closer than two pixels across.
-        let cut = |s: &LineSection| {
-            // Both ends through one RTPT (the third slot repeats the second):
-            // the same per-vertex projection as two RTPS, one GTE wait.
-            let vb = Vec3I16::new(s.b.0, 0, s.b.1);
-            let [a, mut b, _] =
-                scene::project_triangle_scheduled(Vec3I16::new(s.a.0, 0, s.a.1), vb, vb);
-            let dy = b.sy - a.sy;
-            if (b.sx - a.sx).abs() < 2 && dy.abs() < 2 {
-                b.sy = a.sy + if dy < 0 { -2 } else { 2 };
-            }
-            (a, b)
+        let cut = project_cut;
+        // Height of the eye times the projection plane, for how wide a
+        // marking seen across the view is: see `thin_quad`.
+        let eye_scale = proj_h() * (-cull.pos.1).max(0);
+        // A cut that comes out under three pixels across is a marking far off
+        // (or edge-on), and the integer corners the GTE gives are then too
+        // coarse to draw it with: each end rounds on its own, so the width
+        // flickers between nothing and a pixel or two and the quad can twist
+        // into a bow tie (a dashed, jittering line two pixels thick where the
+        // real one is a fraction of a pixel). Such a marking is drawn from the
+        // exact projection of its centre line and its width, at a whole
+        // number of pixels, see [`thin_cut`].
+        let thin = |c: &(Pv, Pv)| {
+            (c.1.sx as i32 - c.0.sx as i32).abs() <= 2 && (c.1.sy as i32 - c.0.sy as i32).abs() <= 2
         };
         for k in 0..unsafe { LINE_STRIP_COUNT } {
             let strip = unsafe { LINE_STRIPS[k] };
@@ -5544,12 +5611,13 @@ impl Builder<'_> {
                     next = cut(unsafe { sections.get_unchecked(j) });
                 }
                 count_offered!();
-                let (a, b, cc, dd) = (prev.0, prev.1, next.0, next.1);
+                let (from, to) = (prev, next);
                 prev = next;
                 i = j;
-                if a.sz == 0 || b.sz == 0 || cc.sz == 0 || dd.sz == 0 {
+                if from.0.sz == 0 || from.1.sz == 0 || to.0.sz == 0 || to.1.sz == 0 {
                     continue;
                 }
+                let (a, b, cc, dd) = (from.0, from.1, to.0, to.1);
                 if !corners_overlap(
                     [a.sx as i32, b.sx as i32, cc.sx as i32, dd.sx as i32],
                     [a.sy as i32, b.sy as i32, cc.sy as i32, dd.sy as i32],
@@ -5558,13 +5626,19 @@ impl Builder<'_> {
                     continue;
                 }
                 count_kept!();
+                let (mut c0, mut c1) = (s.c, unsafe { sections.get_unchecked(j) }.c);
+                let mut sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
+                if thin(&from) || thin(&to) {
+                    let fade;
+                    (sp, fade) = thin_quad(&from, &to, eye_scale);
+                    c0 = faded(c0, fade);
+                    c1 = faded(c1, fade);
+                }
                 // Flat where the light barely moves along the quad: a
                 // Gouraud quad costs the GPU four times the setup and twice
                 // the fill. Shaded where it does move, in the goal pools and
                 // down a long far step, or the chalk steps visibly from quad
                 // to quad.
-                let sp = [(a.sx, a.sy), (b.sx, b.sy), (cc.sx, cc.sy), (dd.sx, dd.sy)];
-                let (c0, c1) = (s.c, unsafe { sections.get_unchecked(j) }.c);
                 let dif = |u: u8, v: u8| (u as i32 - v as i32).abs();
                 if dif(c0.0, c1.0).max(dif(c0.1, c1.1)).max(dif(c0.2, c1.2)) > LINE_FLAT_SPREAD {
                     if let Some(quad) = self.arena.push(QuadGouraud::new(sp, [c0, c0, c1, c1])) {
