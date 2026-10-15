@@ -92,8 +92,8 @@ static mut LAST_FREEZE: u16 = 0;
 pub fn init() {
     spu::init();
     spu::set_main_volume(Volume(0x2800), Volume(0x2800));
-    // Route the CD's own audio into the mix, for the disc music `music.rs`
-    // borrows. Without this the drive plays to nothing.
+    // Route the CD's own audio into the mix, for the XA music `music.rs`
+    // plays. Without this the drive plays to nothing.
     spu::set_cd_volume(CdVolume::MAX, CdVolume::MAX);
     spu::enable_cd_audio(true);
     // Noise clock for the boost hiss: dark enough to read as a jet rather

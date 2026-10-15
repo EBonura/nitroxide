@@ -1,116 +1,95 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! The demo disc's menu music, borrowed rather than carried.
+//! The soundtrack: six ambient jungle and drum and bass tracks on the disc as
+//! XA-ADPCM, played as a shuffled playlist over the front end and the match
+//! alike.
 //!
-//! NitroXide's image carries `WORLD.PAK` for startup assets, but has no CD-DA
-//! of its own and no reason to grow any: the four menu songs are already
-//! pressed onto the demo disc it boots from. CD-DA is addressed by track
-//! number rather than by LBA, independently of the pack's `disc_base`
-//! relocation.
+//! `make music` packs the tracks with the SDK's `xa-pack` into `MUSIC1.XA` and
+//! `MUSIC2.XA` (four songs interleaved in the first, two in the second) and
+//! checks that `music_map.rs`, the table it wrote, is the one compiled in:
+//! which file and channel hold which song, and how long each runs. The files
+//! are found by name in the disc's root directory when the game boots, so no
+//! sector address is baked in and the image can sit anywhere on a multi-
+//! program disc (`psx_io::disc_base` shifts it).
 //!
-//! Finding them is by convention. `mkdisc` lays the launcher's menu audio down
-//! before any program's, so the menu songs are always the first CD-DA tracks
-//! on the disc, and track 1 is data. That makes them 2 through 5, whatever
-//! else is on the disc and wherever NitroXide sits in the running order. The
-//! `cdda_track_base` the loader hands over does not point at them: it counts
-//! every audio track *ahead* of this program, so it lands past the menu in
-//! whatever the earlier programs carry.
+//! The drive decodes XA itself, so the CPU never sees the audio. What the
+//! drive cannot do is read data and stream a song at once, so every disc read
+//! the game makes (`WORLD.PAK` and the directory lookup) happens at boot,
+//! before the first song starts, and nothing reads the disc afterwards. A
+//! future runtime read has to stop the song first and start one again after.
 //!
-//! Which is why the base has to be subtracted before asking for a track.
-//! `cdrom::try_play_track` shifts every track number by that base on the way
-//! out (`disc_base::shift_track`), so handing it a plain 2 asks the drive for
-//! track 2 + base. On the Comicon pressing that is 33, the first of Half-Life's
-//! tracks; on the public pressing, 6. The console session on 2026-08-07 heard
-//! exactly that: KNUCKLE DUST playing Magikarp Pong's song, two titles playing
-//! the hardware-test tones, and NIGHT CRAWLER asking for a track past the end
-//! of the disc. Pre-subtracting the base cancels the shift, and standalone
-//! boot is unaffected because the base is 0 there.
-//!
-//! The cost of that convention is a coupling: if the disc's menu tracklist
-//! ever stops being four songs, this plays the wrong four. The drive is asked
-//! how many tracks exist before a note is played, so a disc without them --
-//! NitroXide's own, which is one data track and nothing else -- is silent
-//! rather than wrong.
+//! The order is a shuffle (`nitroxide_sim::playlist`): each song once, then a
+//! fresh shuffle that does not open with the song that just ended. The TRACK
+//! row of the settings menu steps through the same order.
 
-use psx_io::cdda::{CddaEndDetector, CddaStarter};
-use psx_io::cdrom;
+use nitroxide_sim::playlist::Playlist;
+use psx_fmv::iso;
+use psx_io::cd::xa::{DriveSpeed, Event, File, Player};
+use psx_io::periph::Cd;
+use psx_io::timers::{counter, Timer};
+use psx_pack::cd::{SectorReader, SECTOR_WORDS};
 
-/// First CD-DA track on a mixed-mode disc: track 1 is the data track.
-const FIRST_TRACK: u8 = 2;
-/// How many menu songs the demo disc carries.
-const TRACK_COUNT: u8 = 4;
+use crate::music_map::{XA_FILE_COUNT, XA_FILE_NAMES, XA_FILE_NUMBERS, XA_SONGS};
 
-/// What the demo disc calls its four menu songs, in disc order. Part of the
-/// same convention as the track numbers above: the launcher's Makefile presses
-/// these titles alongside these tracks, so a disc whose tracklist changes
-/// mislabels as well as misplays.
-pub const TRACK_NAMES: [&str; TRACK_COUNT as usize] = [
-    "KNUCKLE DUST",
-    "RUSTED HAMMER",
-    "CHAINSAW HEART",
-    "NIGHT CRAWLER",
+/// What the songs are called on screen, in the order `xa-pack` was given them
+/// (`music_map::XA_SONGS`). The tracks are chained loops from Mulula VGM
+/// Loops' Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B Vol 3, CC BY 4.0;
+/// the credit is in the README and the release notes.
+pub const SONG_NAMES: [&str; XA_SONGS.len()] = [
+    "JUNGLE 1A",
+    "JUNGLE 1B",
+    "JUNGLE 2A",
+    "JUNGLE 2B",
+    "DNB A",
+    "DNB B",
 ];
 
 /// How long the now-playing banner stays up once a song starts. Four seconds:
 /// long enough to read twice, gone before it reads as HUD. Public so the
 /// drawing side can time its slide-out against the same clock.
 pub const BANNER_TICKS: u32 = 240;
-/// The disc must show at least this many tracks for the menu music to be
-/// there at all.
-const TRACKS_NEEDED: u8 = FIRST_TRACK + TRACK_COUNT - 1;
 
-/// GetTN. Answers with the first and last track numbers, in BCD.
-const GET_TN: u8 = 0x13;
+/// The files are interleaved for single speed: the drive reads nothing else
+/// while a song plays.
+const SPEED: DriveSpeed = DriveSpeed::Single;
 
-/// Per-command spin budget. Emulators answer instantly; silicon does not.
-const SPINS: u32 = 0x10_0000;
-
-/// Ticks between drive status polls. A GetStat is a round trip to the drive,
-/// and this runs inside a frame that split screen already has at its
-/// deadline, so it is paced rather than issued every tick.
-const POLL_TICKS: u32 = 30;
-
-/// GetStat's first (and only) response is an acknowledge.
-const IRQ_ACK: u8 = 3;
-/// The drive answered with an error instead.
-const IRQ_ERROR: u8 = 5;
-/// Status register: the response FIFO holds at least one byte.
-const RESPONSE_NOT_EMPTY: u8 = 1 << 5;
-/// Status/index register and, at index 0, the response FIFO.
-const REG_INDEX: u32 = cdrom::BASE;
-const REG_RESPONSE: u32 = cdrom::BASE + 1;
-
-/// Consecutive quiet polls that mean the song is over rather than dipping.
-const IDLE_POLLS_TO_ADVANCE: u8 = 8;
-
-/// Ticks to wait before asking the drive anything. It has just been used to
-/// load this program and the head is still settling; the launcher's own
+/// Ticks to wait before asking the drive for anything. It has just loaded
+/// this program's data and the head is still settling; the launcher's own
 /// handshake takes the same precaution.
 const PROBE_TICK: u32 = 90;
+/// Between a refused start and the next attempt.
+const RETRY_TICKS: u32 = 60;
+/// Starts attempted before giving the drive up until the player asks again.
+const MAX_ATTEMPTS: u8 = 3;
 
-use psx_io::cdrom::bcd_to_bin as from_bcd;
+/// The drive is asked where its head is this often once a song is near its
+/// end. A song file ends in 16 guard sectors (0.2 s) the head reads through,
+/// so six ticks (0.1 s) cannot step over the end unseen.
+const POLL_TICKS: u32 = 6;
+/// How long before a song's computed end the polling starts. The sim ticks at
+/// 60 Hz on the console and a percent or so slow on the headless emulator, so
+/// the lead covers a few percent of the longest song.
+const POLL_LEAD_TICKS: u32 = 60 * 12;
+/// Sim ticks per second.
+const TICKS_PER_SECOND: u32 = 60;
 
 pub struct Music {
-    /// The disc really does carry the menu tracks.
+    /// The disc carries the song files.
     available: bool,
     /// The player has not turned it off.
     enabled: bool,
-    /// Which of the four is playing, 0-based.
-    index: u8,
-    /// Have we asked the drive what is on it yet?
-    probed: bool,
-    /// Tick the current song was started on, for the now-playing banner.
+    files: [Option<File>; XA_FILE_COUNT],
+    player: Player,
+    list: Playlist,
+    /// Tick to start the current song on, and the attempts made so far.
+    start_at: Option<(u32, u8)>,
+    /// A song has been started and has not finished.
+    playing: bool,
+    /// Tick the current song started on, for the now-playing banner.
     announced_at: Option<u32>,
-    starter: CddaStarter,
-    end: CddaEndDetector,
+    /// Ticks from which the head is polled for the song's end, and the next
+    /// tick to poll on.
+    poll_from: u32,
     next_poll: u32,
-    /// A GetStat sent on an earlier tick whose answer has not been read:
-    /// the CD-ROM IRQ enable it saved, and the tick it went out on.
-    ///
-    /// The status poll used to spin on the drive's acknowledge inside the
-    /// tick that sent it, once every 30 ticks, and at 60 fps that spin alone
-    /// made the frame it landed in miss its vblank (MEASURED). The drive
-    /// answers well inside a tick, so the answer is read on the next one.
-    pending_stat: Option<(u8, u32)>,
 }
 
 impl Music {
@@ -118,14 +97,48 @@ impl Music {
         Music {
             available: false,
             enabled: true,
-            index: 0,
-            probed: false,
+            files: [None; XA_FILE_COUNT],
+            // SAFETY: nothing else drives the CD controller while the game
+            // runs. The boot-time `SectorReader`s (`assets.rs`, `locate`) are
+            // finished before any song starts, and nothing reads the disc
+            // afterwards.
+            player: Player::new(unsafe { Cd::steal() }),
+            list: Playlist::new(XA_SONGS.len(), 1),
+            start_at: None,
+            playing: false,
             announced_at: None,
-            starter: CddaStarter::new().with_spins(SPINS),
-            end: CddaEndDetector::new(IDLE_POLLS_TO_ADVANCE),
+            poll_from: 0,
             next_poll: 0,
-            pending_stat: None,
         }
+    }
+
+    /// Find the song files in the disc's root directory and seed the shuffle.
+    /// Boot only: this reads the disc, which the music must not be doing.
+    pub fn locate(&mut self) {
+        let saved_irq_mask = psx_io::irq::mask();
+        let mut reader = SectorReader::new();
+        let mut sector = [0u32; SECTOR_WORDS];
+        self.available = false;
+        if read_sector(&mut reader, iso::PVD_LBA, &mut sector) {
+            if let Some((root_lba, _)) = iso::root_directory(sector_bytes(&sector)) {
+                if read_sector(&mut reader, root_lba, &mut sector) {
+                    self.available = true;
+                    for (i, slot) in self.files.iter_mut().enumerate() {
+                        *slot = iso::find_in_directory(sector_bytes(&sector), XA_FILE_NAMES[i])
+                            .map(|(lba, size)| {
+                                File::from_directory_entry(lba, size, XA_FILE_NUMBERS[i], SPEED)
+                            });
+                        self.available &= slot.is_some();
+                    }
+                }
+            }
+        }
+        psx_io::irq::set_mask(saved_irq_mask);
+        // How long the disc took to spin up and answer, to the cycle: the
+        // one thing that differs between boots of the same program.
+        let seed = ((counter(Timer::Timer2) as u32) << 16) ^ counter(Timer::Timer1) as u32;
+        self.list = Playlist::new(XA_SONGS.len(), seed);
+        self.player.set_volume(0x80, 0x80);
     }
 
     /// Is there music to talk about? The pause menu hides the row when not,
@@ -138,9 +151,9 @@ impl Music {
         self.enabled
     }
 
-    /// What the current song is called on the disc's own tracklist.
+    /// What the current song is called.
     pub fn track_name(&self) -> &'static str {
-        TRACK_NAMES[self.index as usize]
+        SONG_NAMES[self.list.current()]
     }
 
     /// The song to announce and how long it has been up, while a start is
@@ -156,20 +169,24 @@ impl Music {
         if elapsed > BANNER_TICKS {
             return None;
         }
-        Some((TRACK_NAMES[self.index as usize], elapsed))
+        Some((self.track_name(), elapsed))
     }
 
-    /// Step to the previous or next song. Starts it at once when the music is
-    /// on; off, it only moves the pointer the next start will use.
+    /// Step to the previous or next song of the shuffle. Starts it at once
+    /// when the music is on; off, it only moves the pointer the next start
+    /// will use.
     pub fn cycle_track(&mut self, step: i32, tick: u32) {
-        let n = TRACK_COUNT as i32;
-        self.index = ((self.index as i32 + step % n + n) % n) as u8;
+        if step >= 0 {
+            self.list.next();
+        } else {
+            self.list.prev();
+        }
         if self.available && self.enabled {
-            self.begin_track(tick);
+            self.begin_song(tick, true);
         }
     }
 
-    /// Turn the music on or off. Off pauses the drive rather than only
+    /// Turn the music on or off. Off stops the drive rather than only
     /// declining to start it again, or the current song would play on under
     /// a menu that claims it is off.
     pub fn set_enabled(&mut self, on: bool, tick: u32) {
@@ -178,133 +195,89 @@ impl Music {
             return;
         }
         if on {
-            self.begin_track(tick);
+            self.begin_song(tick, true);
         } else {
-            self.cancel_stat();
-            cdrom::try_pause(SPINS);
-            self.starter = CddaStarter::new().with_spins(SPINS);
+            self.start_at = None;
+            self.playing = false;
+            self.player.stop();
         }
     }
 
-    /// Arm the start handshake for the current track.
-    fn begin_track(&mut self, tick: u32) {
-        self.cancel_stat();
-        self.starter = CddaStarter::new().with_spins(SPINS);
-        self.starter.begin(tick);
-        self.end.rearm();
-        self.next_poll = tick.wrapping_add(POLL_TICKS);
+    /// Arrange for the current song to start on `tick`. `stop` pauses a song
+    /// still streaming first; the end of a song has already paused the drive.
+    fn begin_song(&mut self, tick: u32, stop: bool) {
+        if stop && self.playing {
+            self.player.stop();
+        }
+        self.playing = false;
+        self.start_at = Some((tick, 0));
         self.announced_at = Some(tick);
     }
 
-    /// One tick. Drives the start handshake, and once playing, watches for the
-    /// song ending so the next one can follow.
+    /// One tick. Starts a song that is due, and once one is playing, watches
+    /// for its end so the next can follow.
     pub fn update(&mut self, tick: u32) {
-        if !self.probed {
-            if tick < PROBE_TICK {
-                return;
-            }
-            self.probed = true;
-            self.available = disc_has_menu_tracks();
-            if self.available && self.enabled {
-                self.begin_track(tick);
-            }
-            return;
-        }
         if !self.available || !self.enabled {
             return;
         }
-
-        // The handshake first: the drive tolerates command-then-status-drain,
-        // and the launcher's console runs showed the reverse order wedging it.
-        // The track is absolute, so the loader's base is pre-subtracted here
-        // to cancel the shift `try_play_track` applies (see the module note).
-        let absolute = FIRST_TRACK + self.index;
-        self.starter.tick(
-            tick,
-            absolute.wrapping_sub(psx_io::disc_base::cdda_track_base()),
-        );
-
-        if let Some(status) = self.collect_stat(tick) {
-            if self.end.poll(status) {
-                self.index = (self.index + 1) % TRACK_COUNT;
-                self.begin_track(tick);
+        if let Some((due, attempts)) = self.start_at {
+            // Nothing is asked of the drive before the boot reads have
+            // settled, whatever the caller asked for.
+            if tick < PROBE_TICK || tick.wrapping_sub(due) >= u32::MAX / 2 {
                 return;
             }
+            self.start(tick, attempts);
+            return;
         }
-        if self.starter.started()
-            && self.pending_stat.is_none()
-            && tick.wrapping_sub(self.next_poll) < u32::MAX / 2
-        {
-            self.next_poll = tick.wrapping_add(POLL_TICKS);
-            match cdrom::dispatch_command(cdrom::CMD_GETSTAT, &[], SPINS) {
-                Some(saved) => self.pending_stat = Some((saved, tick)),
-                // The parameter FIFO never made room: the same verdict the
-                // blocking poll reached, and on the same tick.
-                None => {
-                    if self.end.poll(None) {
-                        self.index = (self.index + 1) % TRACK_COUNT;
-                        self.begin_track(tick);
-                    }
-                }
+        if !self.playing || tick.wrapping_sub(self.poll_from) >= u32::MAX / 2 {
+            return;
+        }
+        if tick.wrapping_sub(self.next_poll) >= u32::MAX / 2 {
+            return;
+        }
+        self.next_poll = tick.wrapping_add(POLL_TICKS);
+        match self.player.poll() {
+            // Finished: the song reached its end and the drive paused. Idle:
+            // the drive stopped without our asking, which is also the end.
+            Event::Finished | Event::Idle => {
+                self.list.next();
+                self.begin_song(tick, false);
             }
+            Event::Playing | Event::Looped => {}
         }
     }
 
-    /// Read the answer to a GetStat sent on an earlier tick. `None` while
-    /// there is nothing to report yet; `Some(None)` for a drive that answered
-    /// with an error or not at all within a poll interval, which is what the
-    /// blocking poll reported for those.
-    fn collect_stat(&mut self, tick: u32) -> Option<Option<u8>> {
-        let (saved, sent) = self.pending_stat?;
-        let irq = cdrom::irq_flag_value();
-        let status = match irq {
-            IRQ_ACK => {
-                // SAFETY: fixed CD-ROM MMIO registers; `irq_flag_value`
-                // leaves index 0 selected, where register 1 is the response
-                // FIFO.
-                unsafe {
-                    (psx_io::read8(REG_INDEX) & RESPONSE_NOT_EMPTY != 0)
-                        .then(|| psx_io::read8(REG_RESPONSE))
-                }
-            }
-            IRQ_ERROR => None,
-            _ => {
-                // Anything else is not this command's answer: drop it and
-                // keep waiting, as the blocking poll's loop did.
-                if irq != 0 {
-                    cdrom::discard_response();
-                    cdrom::acknowledge_irq(irq);
-                }
-                if tick.wrapping_sub(sent) < POLL_TICKS {
-                    return None;
-                }
-                None
-            }
+    /// Ask the drive for the current song.
+    fn start(&mut self, tick: u32, attempts: u8) {
+        let (file, channel, ms) = XA_SONGS[self.list.current()];
+        let Some(file) = self.files[file as usize] else {
+            self.start_at = None;
+            return;
         };
-        cdrom::restore_irq_output(saved);
-        self.pending_stat = None;
-        Some(status)
-    }
-
-    /// Give up on an unanswered GetStat before the drive is sent anything
-    /// else, restoring the IRQ enable it saved.
-    fn cancel_stat(&mut self) {
-        if let Some((saved, _)) = self.pending_stat.take() {
-            cdrom::restore_irq_output(saved);
+        if self.player.play(file.song(channel), false).is_ok() {
+            self.start_at = None;
+            self.playing = true;
+            self.announced_at = Some(tick);
+            self.poll_from = tick
+                .wrapping_add(ms / 1000 * TICKS_PER_SECOND)
+                .wrapping_sub(POLL_LEAD_TICKS);
+            self.next_poll = self.poll_from;
+        } else if attempts + 1 < MAX_ATTEMPTS {
+            self.start_at = Some((tick.wrapping_add(RETRY_TICKS), attempts + 1));
+        } else {
+            self.start_at = None;
         }
     }
 }
 
-/// Ask the drive how many tracks the disc has, and decide whether the menu
-/// songs can be among them.
-fn disc_has_menu_tracks() -> bool {
-    // Response is [status, first BCD, last BCD].
-    let Some(response) = cdrom::try_command(GET_TN, &[], SPINS) else {
-        return false;
-    };
-    let bytes = response.bytes();
-    if bytes.len() < 3 {
-        return false;
-    }
-    from_bcd(bytes[2]) >= TRACKS_NEEDED
+fn read_sector(reader: &mut SectorReader, lba: u32, sector: &mut [u32; SECTOR_WORDS]) -> bool {
+    let ok = reader.prepare() && reader.start_read(lba) && reader.read_sector(sector);
+    reader.stop();
+    ok
+}
+
+fn sector_bytes(sector: &[u32; SECTOR_WORDS]) -> &[u8] {
+    // SAFETY: `[u32; N]` reinterpreted as its own bytes; alignment shrinks and
+    // the length is the array's.
+    unsafe { core::slice::from_raw_parts(sector.as_ptr().cast::<u8>(), SECTOR_WORDS * 4) }
 }

@@ -44,6 +44,8 @@ mod diaglog;
 mod draw;
 mod gate_state;
 mod music;
+#[allow(dead_code)]
+mod music_map;
 
 /// Whether a match starts in ball cam. Off, as shipped: a dev option
 /// (`cam-ball-default`) for judging it, not a decision.
@@ -1946,6 +1948,8 @@ impl Scene for NitroXide {
             assets::load_arena_texture(),
             "arena texture missing or invalid in WORLD.PAK"
         );
+        // The last disc read of the game: after this the drive is the music's.
+        self.music.locate();
         #[cfg(feature = "arena-day")]
         {
             self.arena_time = draw::ArenaTime::Day;

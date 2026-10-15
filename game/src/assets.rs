@@ -13,7 +13,7 @@ const ARENA_TEXTURE_CHUNK: u32 = 1;
 const ARENA_TEXTURE_CAPACITY: usize = 100 * 1024;
 const ARENA_TEXTURE_WORDS: usize = ARENA_TEXTURE_CAPACITY.div_ceil(4);
 
-/// Load and upload the arena atlas before audio or CD-DA claim the CD drive.
+/// Load and upload the arena atlas before the music claims the CD drive.
 ///
 /// `SectorReader::prepare` deliberately leaves interrupts in VBlank-only mode;
 /// preserve the engine's boot mask around the synchronous transfer.

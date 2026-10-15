@@ -201,7 +201,7 @@ PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
 # train tape's gameplay polls. It binds by portable name and code hash, and
 # any change to the code the gameplay runs makes it stale (`apply` stops
 # below 98% bound): regenerate it with
-# `make pgo-order FRONTEND=x CDDA_DIR=...` and commit it with the change.
+# `make pgo-order FRONTEND=x MUSIC_DIR=...` and commit it with the change.
 PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # `off` since 60 fps: hot=500+profi wins on average work per frame (the
 # number `pgo-choose` ranks by) but loses on the heavy frames with both cars
@@ -221,28 +221,54 @@ compile: psoxide
 
 build: compile
 
-# The game plays CD-DA tracks 2-5 when the disc carries them (game/src/music.rs)
-# and stays silent when it does not. The four songs are the demo disc's menu
-# tracks, used with the artist's permission (credit: Just Music - YouTube
-# @Just-Music-Beats); the audio lives in the PSoXide-demo-disc repo, not here.
-# Point CDDA_DIR at its audio/ to press a disc with music:
-#   make disc CDDA_DIR=../psx-demo-disc/audio
-# The order matches the demo disc's menu tracklist, which is what music.rs
-# names on screen.
-CDDA_DIR  ?=
-CDDA_ARGS  = $(if $(CDDA_DIR),$(foreach t,knuckle-dust rusted-hammer chainsaw-heart night-crawler,--cdda-track "$(CDDA_DIR)/$(t).cdda"))
+# The game plays six tracks of XA-ADPCM music when the disc carries them
+# (game/src/music.rs) and stays silent when it does not. The tracks are Mulula
+# VGM Loops' Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B Vol 3
+# (CC BY 4.0, https://mululavgmloops.itch.io/), chained into six loudness-
+# matched 37.8 kHz stereo WAVs that live outside this repository. Point
+# MUSIC_DIR at the folder holding them to press a disc with music:
+#   make disc MUSIC_DIR=/path/to/music
+# `make music` packs them with the SDK's `psx-audio-cook xa-pack` into
+# build/music/MUSIC1.XA and MUSIC2.XA (which `pack` adds to the disc with
+# mkisopsx --xa-file) and checks game/src/music_map.rs, the table the game
+# compiles in, against what the packer wrote. If the songs change, copy
+# build/music/music_map.rs over it and rebuild.
+MUSIC_DIR   ?=
+MUSIC_SONGS := jungle1-a jungle1-b jungle2-a jungle2-b dnb-a dnb-b
+MUSIC_WAVS   = $(foreach s,$(MUSIC_SONGS),$(MUSIC_DIR)/$(s).wav)
+MUSIC_OUT   := $(ROOT)/build/music
+MUSIC_XA    := $(MUSIC_OUT)/MUSIC1.XA $(MUSIC_OUT)/MUSIC2.XA
+MUSIC_MAP   := $(GAME)/src/music_map.rs
+AUDIO_COOK  := $(ROOT)/tools/audio-cook
+XA_ARGS      = $(if $(MUSIC_DIR),$(foreach f,$(MUSIC_XA),--xa-file "$(f)"))
+
+.PHONY: music
+music:
+	@test -n "$(MUSIC_DIR)" || { echo "music: set MUSIC_DIR to the folder holding $(addsuffix .wav,$(MUSIC_SONGS))"; exit 1; }
+	@$(MAKE) --no-print-directory "$(MUSIC_OUT)/music.stamp"
+
+$(MUSIC_OUT)/music.stamp: $(MUSIC_WAVS) $(AUDIO_COOK)/Cargo.toml | psoxide
+	@rm -rf "$(MUSIC_OUT)" && mkdir -p "$(MUSIC_OUT)"
+	cargo run -q --release --locked --manifest-path "$(AUDIO_COOK)/Cargo.toml" -- \
+		xa-pack "$(MUSIC_OUT)" MUSIC $(foreach w,$(MUSIC_WAVS),"$(w)") \
+		--manifest "$(MUSIC_OUT)/music.json" --rust "$(MUSIC_OUT)/music_map.rs"
+	@cmp -s "$(MUSIC_OUT)/music_map.rs" "$(MUSIC_MAP)" || { \
+		echo "music: $(MUSIC_MAP) is not the table xa-pack wrote;"; \
+		echo "       cp $(MUSIC_OUT)/music_map.rs $(MUSIC_MAP) and rebuild"; \
+		rm -rf "$(MUSIC_OUT)"; exit 1; }
+	@touch "$@"
 
 # `make pack PACK_EXE=x PACK_OUT=y.bin` wraps any exe in the game's disc image.
 PACK_EXE ?= $(EXE)
 PACK_OUT ?= $(OUT)/$(GAME_NAME).bin
-pack: $(ARENA_PSXT)
+pack: $(ARENA_PSXT) $(if $(MUSIC_DIR),$(MUSIC_OUT)/music.stamp)
 	@mkdir -p "$$(dirname "$(PACK_OUT)")"
 	cd "$(MKISOPSX)" && cargo run -q --release --locked -- \
 		--exe "$(PACK_EXE)" \
 		--out "$(PACK_OUT)" \
 		--volume NITROXIDE \
 		--world-pack-extra-dir "$(ARENA_DISC_DIR)" \
-		$(CDDA_ARGS)
+		$(XA_ARGS)
 
 disc: build
 	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(OUT)/$(GAME_NAME).bin"
@@ -263,11 +289,11 @@ gate-disc: gate-symbols
 	@echo "GATE DISC -> $(patsubst %.bin,%.cue,$(GATE_DISC_OUT))"
 
 # Regenerating the profile and picking the variant need the emulator:
-#   make pgo-collect FRONTEND=/path/to/frontend CDDA_DIR=...  (after gameplay code changes or an SDK repin)
-#   make pgo-choose  FRONTEND=/path/to/frontend CDDA_DIR=...  (then commit the winner as PGO_VARIANT)
-# The committed profile and the variant were measured on a disc with the four
-# songs (CDDA_DIR = the demo disc's audio/), as the itch and demo-disc builds
-# ship. pgo/train.pxtape presses through the menus to kickoff; polls 396..1200
+#   make pgo-collect FRONTEND=/path/to/frontend MUSIC_DIR=...  (after gameplay code changes or an SDK repin)
+#   make pgo-choose  FRONTEND=/path/to/frontend MUSIC_DIR=...  (then commit the winner as PGO_VARIANT)
+# The committed profile and the variant were measured on a disc with the
+# songs (MUSIC_DIR = the folder of the six WAVs), as the itch and demo-disc
+# builds ship. pgo/train.pxtape presses through the menus to kickoff; polls 396..1200
 # are gameplay. There is no second route yet, so the gate has no holdout tape.
 # PGO_LAUNCH_ARGS adds frontend arguments (--launch-arg X per word).
 TRAIN_TAPE   = $(ROOT)/pgo/train.pxtape
@@ -343,7 +369,7 @@ DEMO_CHECK     := $(ROOT)/build/demo-check
 DEMO_CHECK_STEPS ?= 3000000000
 demo-check: psoxide $(ARENA_PSXT)
 	@$(MAKE) --no-print-directory compile FEATURES=diag-keys
-	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(DEMO_CHECK)/NitroXide.bin" CDDA_DIR=
+	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(DEMO_CHECK)/NitroXide.bin" MUSIC_DIR=
 	@rm -rf "$(DEMO_CHECK)/shots"
 	"$(FRONTEND)" launch --path "$(DEMO_CHECK)/NitroXide.cue" --steps $(DEMO_CHECK_STEPS) \
 		--route-screenshot-dir "$(DEMO_CHECK)/shots" --route-screenshot-interval 10
@@ -354,16 +380,16 @@ clean:
 	cd $(SIM) && cargo clean
 
 # Local fallback for the canonical CI publisher in
-# .github/workflows/itch-release.yml. CDDA_DIR must point at the demo-disc
-# audio/ so the itch build ships with its songs; the credit in
-# release/README.txt rides along. CI fetches the same four files through a
+# .github/workflows/itch-release.yml. MUSIC_DIR must point at the folder of
+# the six music WAVs so the itch build ships with its songs; the credit in
+# release/README.txt rides along. CI fetches the same six files through a
 # repository-specific read-only key and verifies release/audio-manifest.sha256.
 V_GAME = $(shell awk -F'"' '/^version/{print $$2; exit}' $(GAME)/Cargo.toml)
 .PHONY: itch
 itch:
-	@test -n "$(CDDA_DIR)" || { echo "itch: set CDDA_DIR=/path/to/PSoXide-demo-disc/audio (the itch build ships with music)"; exit 1; }
+	@test -n "$(MUSIC_DIR)" || { echo "itch: set MUSIC_DIR=/path/to/music (the itch build ships with music)"; exit 1; }
 	@command -v butler >/dev/null || { echo "itch: install butler and run 'butler login' first"; exit 1; }
-	$(MAKE) disc CDDA_DIR="$(CDDA_DIR)"
+	$(MAKE) disc MUSIC_DIR="$(MUSIC_DIR)"
 	@rm -rf build/itch && mkdir -p build/itch
 	cp "$(OUT)/$(GAME_NAME).bin" "$(OUT)/$(GAME_NAME).cue" release/README.txt build/itch/
 	butler push --userversion "$(V_GAME)" build/itch bonnie-studios/nitroxide:psx

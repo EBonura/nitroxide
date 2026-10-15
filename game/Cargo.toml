@@ -114,9 +114,10 @@ psx-math   = { path = "../.psoxide/sdk/crates/psx-math" }
 psx-pack   = { path = "../.psoxide/sdk/crates/psx-pack" }
 # Port 2, for the split-screen game. The engine's `Ctx` only carries port 1.
 psx-pad    = { path = "../.psoxide/sdk/crates/psx-pad" }
-# The CD drive, for WORLD.PAK startup reads and the disc music `music.rs`
-# borrows from the demo disc.
+# The CD drive, for WORLD.PAK startup reads and the XA music player.
 psx-io     = { path = "../.psoxide/sdk/crates/psx-io" }
+# Root directory lookup of the music files (`music.rs`).
+psx-fmv    = { path = "../.psoxide/sdk/crates/psx-fmv" }
 psx-spu    = { path = "../.psoxide/sdk/crates/psx-spu" }
 psx-display = { path = "../.psoxide/sdk/crates/psx-display" }
 psx-settings = { path = "../.psoxide/sdk/crates/psx-settings" }

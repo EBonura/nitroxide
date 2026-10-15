@@ -16,6 +16,7 @@ dependencies = [
  "psx-asset",
  "psx-display",
  "psx-engine",
+ "psx-fmv",
  "psx-font",
  "psx-gpu",
  "psx-gte",
@@ -85,6 +86,19 @@ dependencies = [
  "psx-spu",
  "psx-telemetry",
  "psx-tick",
+ "psx-vram",
+]
+
+[[package]]
+name = "psx-fmv"
+version = "0.1.0"
+dependencies = [
+ "psx-gpu",
+ "psx-hw",
+ "psx-io",
+ "psx-pack",
+ "psx-rt",
+ "psx-spu",
  "psx-vram",
 ]
 

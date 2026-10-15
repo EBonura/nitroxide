@@ -1,0 +1,14 @@
+[package]
+name = "audio-cook"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/EBonura/nitroxide"
+
+# The SDK's `psx-audio-cook` command line (`xa-pack`, `xa-score`, `xa-peaks`).
+# The crate is hydrated into .psoxide but is not a member of its root
+# workspace, so it is built from here, as its own docs describe.
+[workspace]
+
+[dependencies]
+psx-audio-cook = { path = "../../.psoxide/crates/psx-audio-cook" }
