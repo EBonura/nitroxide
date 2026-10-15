@@ -256,12 +256,23 @@ pub const fn fov_degrees(step: usize) -> i32 {
     FOV_MIN_DEGREES + FOV_STEP_DEGREES * step as i32
 }
 
-/// Marks a settings byte as holding a field-of-view step. The settings record
-/// has no field of its own for it (the record is the SDK's, shared by every
-/// game), so it rides in the profile's `difficulty` byte, which this game
-/// never reads. Every record written before the setting existed holds that
-/// byte at its default of 1, which is not marked and so loads as the default
-/// step: no migration pass, and an old save never reads as a wild field of view.
+/// Marks a settings byte as holding a field-of-view step.
+///
+/// THIS IS AN OVERLOAD, KEPT ON PURPOSE FOR NOW. NitroXide does not own its
+/// settings record: `game/src/main.rs` keeps a `psx_settings::Profile<9, 0>`,
+/// the SDK's shared record (`.psoxide/sdk/crates/psx-settings`, hydrated from
+/// the pinned PSoXide SDK and not edited from this repository), which has no
+/// field for a game-specific choice and a fixed version (2) every game reads.
+/// So the step rides in the profile's `difficulty` byte, which NitroXide never
+/// reads and the SDK only round-trips, as `FOV_SAVE_MARK + step`. Every record
+/// written before the setting existed holds `difficulty` at its default of 1,
+/// which is not a marked value and loads as the default step: no migration
+/// pass, and an old save never reads as a wild field of view.
+///
+/// The clean fix is a real field with a version bump and a decode that gives
+/// old records the default, and that is a change to the SDK record in the
+/// PSoXide repository, not here. When that lands, delete these two functions
+/// and read the field.
 pub const FOV_SAVE_MARK: u8 = 0x40;
 
 /// The step a settings byte holds, or `default` for a byte that holds none.
@@ -706,7 +717,13 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     // A ball high over the car does not fit under the lens from the usual
     // eye: back off and drop the eye with the ball's height, so the car stays
     // at the foot of the frame and the ball under its top.
-    let (back_off, drop) = if rq.ball_cam && rq.hold_car {
+    //
+    // Not in a split half. There the eye already sits low (`split_ball_height`)
+    // and pulling it back and lower shows more horizon and far stands: on the
+    // split stress route that alone took the late frames from 43 (3 percent) to
+    // 61 (4.2), against 47 on the camera it replaced. A high ball may leave the
+    // top of a half view; the car never leaves it.
+    let (back_off, drop) = if rq.ball_cam && rq.hold_car && !rq.split {
         let rise = (by - py).max(0);
         (
             (rise / BALL_BACKOFF_DIV).min(BALL_BACKOFF_MAX),
