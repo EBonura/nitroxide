@@ -1,0 +1,136 @@
+# Agreeing to format a blank card must not freeze the game: the format and the
+# save are queued and sent a frame at a time, so the notice stays up while the
+# game keeps presenting and polling the pad. Before the incremental save the
+# format held the CPU for 373 vblanks.
+name = "nitroxide-settings-format-stays-live"
+title = "NitroXide: formatting a blank card keeps the game presenting"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 2600
+memcard = "fresh"
+[card_fixture]
+path = "tests/fixtures/unformatted.mcd"
+sha256 = "fa43239bcee7b97ca62f007cc68487560a39e19f74f3dde7486db3f98df8e471"
+
+[[step]]
+wait = 440
+# Menu: Settings, change Sound, close, reopen, Save Settings.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["circle"]
+hold = 4
+wait = 20
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 12
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 30
+[[step]]
+checkpoint = "format-question"
+golden = false
+[[step.assert]]
+kind = "card_unchanged"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "eq"
+value = 1
+
+# Cross agrees: the card is being formatted for seconds.
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 40
+[[step]]
+checkpoint = "formatting-started"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "eq"
+value = 2
+[[step.assert]]
+kind = "presenting"
+window = 20
+min_changes = 4
+[[step]]
+wait = 200
+[[step]]
+checkpoint = "formatting-midway"
+golden = false
+# Still formatting two hundred ticks in, and the picture has not stood still.
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "eq"
+value = 2
+[[step.assert]]
+kind = "presenting"
+window = 60
+min_changes = 15
+[[step.assert]]
+kind = "pc_not_stuck"
+window = 60
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_SETTINGS_STATE", offset = 28, op = "eq", value = 1 }
+timeout = 1200
+[[step]]
+checkpoint = "formatted-and-saved"
+golden = false
+[[step.assert]]
+kind = "card_writes"
+min_count = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 24
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 20
+op = "zero"
+[[step]]
+card = { action = "snapshot" }
+[[step]]
+card = { action = "reboot" }
+[[step]]
+wait = 440
+[[step]]
+checkpoint = "settings-survive-reboot"
+golden = false
+# Sound was switched off before the save; the loaded profile says so.
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 32
+op = "zero"

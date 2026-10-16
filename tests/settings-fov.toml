@@ -68,7 +68,10 @@ repeat = 4
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 100
+wait = 4
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_SETTINGS_STATE", offset = 28, op = "eq", value = 1 }
+timeout = 400
 [[step]]
 checkpoint = "fov-saved"
 golden = false

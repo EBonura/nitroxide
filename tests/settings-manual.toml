@@ -140,7 +140,24 @@ op = "zero"
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 80
+wait = 28
+[[step]]
+checkpoint = "explicit-save-running"
+golden = false
+# The save is a card transaction a frame at a time: the panel still draws.
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_SETTINGS_STATE"
+offset = 28
+op = "eq"
+value = 5
+[[step.assert]]
+kind = "presenting"
+window = 8
+min_changes = 3
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_SETTINGS_STATE", offset = 28, op = "eq", value = 1 }
+timeout = 400
 [[step]]
 checkpoint = "explicit-save-completed"
 golden = false

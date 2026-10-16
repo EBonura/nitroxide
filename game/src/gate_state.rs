@@ -114,7 +114,7 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
         },
         save_status: match game.settings_save_status {
             "SAVED" => 1, "FAILED" => 2, "NO CARD" => 3,
-            "CANCELED" => 4, _ => 0,
+            "CANCELED" => 4, "SAVING" => 5, _ => 0,
         },
         sfx_volume: game.profile.sfx_volume as u32,
     };

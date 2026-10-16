@@ -91,6 +91,11 @@ const CARS_CREDIT_LINES: [&str; 2] = [
 /// lock the moment the stick clears the zone.
 const SETTINGS_FILE: &str = "BESLES-00000NITRO01";
 const SETTINGS_TITLE: &str = "NitroXide Settings";
+/// Frames the settings save may queue: a format and the record's write.
+const CARD_JOB_FRAMES: usize =
+    psx_mc::FORMAT_FRAMES + psx_mc::queue_frames(psx_settings::MAX_RECORD_LEN);
+/// The settings save, run a card transaction at a time (see `pump_card`).
+static mut CARD_JOB: psx_mc::CardJob<CARD_JOB_FRAMES> = psx_mc::CardJob::new();
 /// The field-of-view row's values, a step at a time: horizontal degrees.
 const FOV_LABELS: [&str; draw::FOV_STEPS] = ["60", "65", "70", "75", "80", "85", "90", "95", "100", "105", "110"];
 const ACT_LEFT: usize = 0;
@@ -121,9 +126,8 @@ enum CardAsk {
     Idle,
     /// The question is on screen and owns the pad.
     Asking,
-    /// Cross was pressed: this frame says the card is being formatted, and
-    /// the next update does it. Formatting runs a card's whole directory
-    /// through the pad port, seconds in which nothing else can be drawn.
+    /// Cross was pressed: the card is being formatted and the settings saved
+    /// onto it, a frame at a time, while the notice stays on screen.
     Formatting,
     /// The player said no: settings stay in memory for this session and the
     /// card is left alone.
@@ -524,9 +528,9 @@ struct NitroXide {
     /// header is never written to unasked: formatting it drops every other
     /// game's save from its directory.
     card_ask: CardAsk,
-    /// Updates spent on the formatting notice, so it is on the screen before
-    /// the work begins and blocks every frame after it.
-    card_wait: u8,
+    /// A settings save is running on the card, a frame at a time
+    /// (`pump_card`).
+    card_saving: bool,
     /// Ticks since the last press on a menu page; the demo starts at
     /// `DEMO_IDLE_TICKS`.
     idle: u32,
@@ -661,7 +665,7 @@ impl NitroXide {
             settings_save_status: "",
             display_dirty: false,
             card_ask: CardAsk::Idle,
-            card_wait: 0,
+            card_saving: false,
             idle: 0,
             demo: DemoState {
                 show: 0,
@@ -979,78 +983,117 @@ impl NitroXide {
         }
     }
 
+    /// Start saving the settings to the card, from the Save Settings row. The
+    /// save runs over the following updates (`pump_card`), so the menu keeps
+    /// drawing and the pads keep being read while the card works.
     fn save_settings(&mut self) {
-        if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
+        if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) || self.card_saving {
             return;
         }
-        let mut card = psx_mc::Card::new(psx_mc::HardwareCard::new(psx_mc::Slot::One));
-        match card.is_formatted() {
-            Ok(true) => {
-                if psx_settings::save(&mut card, SETTINGS_FILE, SETTINGS_TITLE, &self.profile)
-                    .is_ok()
-                {
-                    self.settings_dirty = false;
-                    self.settings_save_status = "SAVED";
-                    audio::ui(audio::Ui::Saved);
-                } else {
-                    self.settings_save_status = "FAILED";
-                    audio::ui(audio::Ui::Deny);
+        self.begin_card_job();
+        self.settings_save_status = "SAVING";
+    }
+
+    fn begin_card_job(&mut self) {
+        // SAFETY: single-threaded guest; the job is only touched from here
+        // and `pump_card`, never re-entered.
+        unsafe { (*core::ptr::addr_of_mut!(CARD_JOB)).begin() };
+        self.card_saving = true;
+    }
+
+    /// Advance the card job by one transaction, once an update. Formatting
+    /// (after the player's Cross on the question) is the same job with a format
+    /// planned in front of the save.
+    fn pump_card(&mut self, ctx: &mut Ctx) {
+        if !self.card_saving {
+            return;
+        }
+        let formatting = self.card_ask == CardAsk::Formatting;
+        // SAFETY: as in `begin_card_job`.
+        let job = unsafe { &mut *core::ptr::addr_of_mut!(CARD_JOB) };
+        // Still reading the directory: an error here is a card that is not
+        // there, not a save that failed.
+        let probing = job.progress_q8() < 16;
+        let mut card = psx_mc::HardwareCard::on_port(ctx.controller_port(), psx_mc::Slot::One);
+        let stepped = job.step(&mut card, psx_rt::interrupts::vblank_count());
+        match stepped {
+            Ok(psx_mc::Step::NeedsPlan) => {
+                let profile = self.profile;
+                let planned = job.plan(|c| {
+                    if formatting {
+                        c.format()?;
+                    } else if !c.is_formatted()? {
+                        return Err(psx_mc::Error::NotFormatted);
+                    }
+                    psx_settings::save(c, SETTINGS_FILE, SETTINGS_TITLE, &profile).map_err(|e| {
+                        match e {
+                            psx_settings::CardError::Card(e) => e,
+                            psx_settings::CardError::Codec(_) => psx_mc::Error::BadContainer,
+                        }
+                    })
+                });
+                match planned {
+                    // The profile as of now is what is written: a change made
+                    // while the frames go out marks it dirty again.
+                    Ok(()) => self.settings_dirty = false,
+                    // A card that answers but holds no header: ask, do not
+                    // format.
+                    Err(psx_mc::Error::NotFormatted) => {
+                        self.card_saving = false;
+                        self.settings_save_status = "";
+                        self.card_ask = CardAsk::Asking;
+                        audio::ui(audio::Ui::Open);
+                    }
+                    Err(_) => self.card_job_failed(formatting, false),
                 }
             }
-            // A card that answers but holds no header: ask, do not format.
-            Ok(false) => {
-                self.card_ask = CardAsk::Asking;
-                audio::ui(audio::Ui::Open);
+            Ok(psx_mc::Step::Done) => {
+                self.card_saving = false;
+                if formatting {
+                    self.card_ask = CardAsk::Idle;
+                }
+                self.settings_save_status = if self.settings_dirty { "" } else { "SAVED" };
+                audio::ui(audio::Ui::Saved);
             }
-            // No card in the slot, or it would not talk: nothing to ask.
-            Err(_) => {
-                self.settings_save_status = "NO CARD";
-                audio::ui(audio::Ui::Deny);
-            }
+            Ok(_) => {}
+            Err(_) => self.card_job_failed(formatting, probing),
+        }
+    }
+
+    /// The card job ended in an error. No card in the slot, or one that would
+    /// not talk, is "NO CARD"; anything after the probe is "FAILED", and a
+    /// card that would not format is not asked about again.
+    fn card_job_failed(&mut self, formatting: bool, probing: bool) {
+        self.card_saving = false;
+        self.settings_dirty = true;
+        self.settings_save_status = if probing && !formatting { "NO CARD" } else { "FAILED" };
+        audio::ui(audio::Ui::Deny);
+        if formatting {
+            self.card_ask = CardAsk::Declined;
         }
     }
 
     /// The player's answer to the format question: Cross formats the card and
     /// saves, Circle or Start cancels this save request. Another explicit
-    /// Save Settings selection can retry it.
+    /// Save Settings selection can retry it. The format itself is
+    /// `pump_card`'s, a frame at a time, with the notice up until it is done.
     fn card_answer(&mut self, ctx: &Ctx) {
         if self.card_ask == CardAsk::Formatting {
-            // Render is every second vblank: give it a few updates to show
-            // the notice before the format takes the CPU for seconds.
-            self.card_wait += 1;
-            if self.card_wait < 6 {
-                return;
+            return;
+        }
+        match settings_menu::format_action(ctx.just_pressed(button::CROSS),
+            ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START)) {
+            settings_menu::FormatAction::Cancel => {
+                self.card_ask = CardAsk::Declined;
+                self.settings_save_status = "CANCELED";
+                audio::ui(audio::Ui::Back);
             }
-            let mut card = psx_mc::Card::new(psx_mc::HardwareCard::new(psx_mc::Slot::One));
-            let saved = card.format().is_ok()
-                && psx_settings::save(&mut card, SETTINGS_FILE, SETTINGS_TITLE, &self.profile)
-                    .is_ok();
-            if saved {
-                self.settings_dirty = false;
+            settings_menu::FormatAction::Confirm => {
+                audio::ui(audio::Ui::Select);
+                self.card_ask = CardAsk::Formatting;
+                self.begin_card_job();
             }
-            self.settings_save_status = if saved { "SAVED" } else { "FAILED" };
-            audio::ui(if saved { audio::Ui::Saved } else { audio::Ui::Deny });
-            // A failed request ends the modal and permits an explicit retry.
-            self.card_ask = if saved {
-                CardAsk::Idle
-            } else {
-                CardAsk::Declined
-            };
-        } else {
-            match settings_menu::format_action(ctx.just_pressed(button::CROSS),
-                ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START)) {
-                settings_menu::FormatAction::Cancel => {
-                    self.card_ask = CardAsk::Declined;
-                    self.settings_save_status = "CANCELED";
-                    audio::ui(audio::Ui::Back);
-                }
-                settings_menu::FormatAction::Confirm => {
-                    audio::ui(audio::Ui::Select);
-                    self.card_ask = CardAsk::Formatting;
-                    self.card_wait = 0;
-                }
-                settings_menu::FormatAction::None => {}
-            }
+            settings_menu::FormatAction::None => {}
         }
     }
 
@@ -2256,6 +2299,7 @@ impl Scene for NitroXide {
         self.music.update(ctx.sim_tick.as_u32());
         // Every phase: a menu click is keyed off by this clock too.
         audio::tick();
+        self.pump_card(ctx);
         if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
             self.card_answer(ctx);
             return;
