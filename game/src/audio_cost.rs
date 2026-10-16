@@ -22,6 +22,8 @@ static mut COUNT: [u32; 2] = [0; 2];
 static mut SUM: [u32; 2] = [0; 2];
 static mut MAX: [u32; 2] = [0; 2];
 static mut FRAMES: u32 = 0;
+/// An update this many cycles over is logged with the frame it happened on.
+const SPIKE: u32 = 8000;
 
 pub fn init() {
     // SAFETY: root counter 2's mode register; nothing else here uses the counter.
@@ -43,6 +45,13 @@ pub fn measure<R>(slot: usize, f: impl FnOnce() -> R) -> R {
         SUM[slot] = SUM[slot].wrapping_add(cycles);
         if cycles > MAX[slot] {
             MAX[slot] = cycles;
+        }
+        if slot == UPDATE && cycles > SPIKE {
+            tty::print("audio-cost spike frame=");
+            tty::print_hex_u32(FRAMES);
+            tty::print(" cycles=");
+            tty::print_hex_u32(cycles);
+            tty::print("\n");
         }
     }
     out

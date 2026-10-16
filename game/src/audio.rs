@@ -866,9 +866,10 @@ pub fn update(s: &Sim, split: bool) {
     // that is a teleport, not a landing or a bounce.
     let live = s.goal_freeze == 0 && s.kickoff_hold == 0;
     // The sounds that are an edge in the sim's state are sampled every second
-    // tick, and the held voices every second as well (their placement moves
-    // with the camera, and a pan that steps fifteen times a second is heard as
-    // a zipper). An edge in this state lasts many ticks (a jump is airtime, a
+    // tick, and the held ones (the loops, whose placement moves with the
+    // cameras and whose note follows speed, at a walking pace) every fourth: a
+    // placement costs about 600 cycles a car and the loops are most of the
+    // audio's bill. An edge in this state lasts many ticks (a jump is airtime, a
     // bump a cooldown, a supersonic spell a second), so the lag is a fiftieth
     // of a second at worst. The one-tick flags above (a hit, a pad, a wreck,
     // a goal) are read every tick.
@@ -877,6 +878,8 @@ pub fn update(s: &Sim, split: bool) {
         car_sounds(s, seen, live);
         ball_sounds(s, seen, live);
         clock_sounds(s, seen);
+    }
+    if tick & 3 == 0 {
         held_sounds(s, seen, live);
     }
 }
