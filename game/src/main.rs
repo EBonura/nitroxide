@@ -36,6 +36,8 @@ use nitroxide_sim::{
 
 mod assets;
 mod audio;
+#[cfg(feature = "diag-audio-cost")]
+mod audio_cost;
 mod settings_menu;
 use settings_menu::{Action as SettingsAction, SettingsRow};
 mod bonnie;
@@ -2072,6 +2074,8 @@ impl Scene for NitroXide {
             draw::set_arena_time(self.arena_time);
         }
         audio::init();
+        #[cfg(feature = "diag-audio-cost")]
+        audio_cost::init();
         audio::set_muted(self.profile.sfx_volume == 0);
         self.music.set_enabled(self.profile.music_volume != 0, 0);
         self.sim = Sim::new();
@@ -2299,6 +2303,12 @@ impl Scene for NitroXide {
         // end and the match alike, and a pause holds the game, not the song.
         self.music.update(ctx.sim_tick.as_u32());
         // Every phase: a menu click is keyed off by this clock too.
+        #[cfg(feature = "diag-audio-cost")]
+        {
+            audio_cost::measure(audio_cost::TICK, audio::tick);
+            audio_cost::report();
+        }
+        #[cfg(not(feature = "diag-audio-cost"))]
         audio::tick();
         self.pump_card(ctx);
         if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
@@ -2637,7 +2647,10 @@ impl Scene for NitroXide {
                         (-2 << nitroxide_sim::SUSPENSION_VISUAL_FP) as i16,
                     ];
                 }
-                audio::update(&self.sim);
+                #[cfg(feature = "diag-audio-cost")]
+                audio_cost::measure(audio_cost::UPDATE, || audio::update(&self.sim, self.two_player));
+                #[cfg(not(feature = "diag-audio-cost"))]
+                audio::update(&self.sim, self.two_player);
                 #[cfg(any(feature = "boot-goal", feature = "boot-goal-ai"))]
                 if self.sim.goal_freeze == nitroxide_sim::GOAL_FREEZE_TICKS {
                     psx_rt::tty::println("boot-goal: GOAL, freeze started");
@@ -2712,7 +2725,10 @@ impl Scene for NitroXide {
                 // what happens.
                 self.sim.tick(&Input::default());
                 draw::track_tick(&self.sim);
-                audio::update(&self.sim);
+                #[cfg(feature = "diag-audio-cost")]
+                audio_cost::measure(audio_cost::UPDATE, || audio::update(&self.sim, self.two_player));
+                #[cfg(not(feature = "diag-audio-cost"))]
+                audio::update(&self.sim, self.two_player);
                 self.demo.t += 1;
                 if self.sim.goal_freeze > 0 {
                     self.demo.scored = true;

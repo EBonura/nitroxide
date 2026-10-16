@@ -71,6 +71,10 @@ silent when Sound is off. The four impacts are CC0 recordings, the crowd and the
 squeal are cut from recordings (credit below), and everything else is synthesised by
 `tools/sfx-synth` (`make sfx`). See [the audio notes](game/assets/audio/README.md).
 
+The sounds are in stereo: what comes from the arena is placed by distance and
+bearing from the chase camera (two listeners in split screen), through the
+SDK's `psx-sfx` mixer and its voice lanes (`game/src/audio.rs`).
+
 Crowd sounds: Gregor Quendel, Free Crowd Cheering Sounds, CC BY 4.0,
 https://opengameart.org/
 

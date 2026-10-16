@@ -105,6 +105,9 @@ cam-ball-default = []
 # Dev: keep per-frame camera, tyre-track and draw state in RAM rings
 # (diaglog.rs) for a headless replay to read back with --dump-ram.
 diag-log = []
+# Dev: time the audio calls with root counter 2 and print totals on the TTY
+# every thousand frames (audio_cost.rs).
+diag-audio-cost = []
 
 [[bin]]
 name = "nitroxide"

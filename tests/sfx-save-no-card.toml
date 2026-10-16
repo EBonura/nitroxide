@@ -21,8 +21,8 @@ golden = false
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x12070
-voice = 6
-voice_hi = 7
+voice = 0
+voice_hi = 1
 min_count = 1
 window = 28
 [[step]]
@@ -49,8 +49,8 @@ golden = false
 [[step.assert]]
 kind = "spu_kon"
 addr = 0xef70
-voice = 6
-voice_hi = 7
+voice = 0
+voice_hi = 1
 min_count = 1
 window = 60
 [[step]]

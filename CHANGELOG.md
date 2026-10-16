@@ -17,6 +17,22 @@ card the 29 vblanks the screen used to stand still are gone, and agreeing to
 format a blank card no longer holds the game for 373 vblanks. The row reads
 SAVING until the last frame has landed.
 
+Sound effects are now in stereo. Every sound that comes from something in the
+arena (a car's engine, tyre squeal, boost, jump and landing, the ball, a boost
+pad, a wreck, the goal) has a place: it gets quieter with distance and pans
+toward the side it comes from. The opponent's engine, boost, skid and jumps are
+heard too, where before only your own car made a sound. Split screen has two
+listeners, one per view: each sound is heard from the view it is louder to, an
+engine from the view it is nearest to, and a goal from the middle of both.
+Your own car sounds as loud and as centred as before. The announcer's calls,
+the crowd and the menus are not in the arena and stay centred.
+
+Under it the game now uses the SDK's shared sound mixer (psx-sfx) rather than
+one voice per job: sounds ask for a lane of voices (menu, loops, world, car,
+scene) and the mixer picks the voice and, when a lane is full, which sound to
+drop. The goal horn and the final whistle are protected and are never cut by
+anything. The samples and their levels are unchanged.
+
 New sound effects: every menu action and most of the match now has a sound.
 
 - Menus: cursor moves, value changes (higher or lower by direction), select,

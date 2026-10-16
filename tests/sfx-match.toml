@@ -58,71 +58,71 @@ golden = false
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x3b760
-voice = 13
-voice_hi = 13
+voice = 2
+voice_hi = 6
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x299a0
-voice = 15
-voice_hi = 15
+voice = 2
+voice_hi = 6
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x44fb0
-voice = 8
-voice_hi = 8
+voice = 12
+voice_hi = 16
 min_count = 2
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x45730
-voice = 8
-voice_hi = 8
+voice = 12
+voice_hi = 16
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x46610
-voice = 9
-voice_hi = 9
+voice = 12
+voice_hi = 16
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
-voice = 1
-voice_hi = 1
+voice = 22
+voice_hi = 23
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0xa400
-voice = 4
-voice_hi = 4
+voice = 12
+voice_hi = 16
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x4d840
-voice = 20
-voice_hi = 20
+voice = 12
+voice_hi = 16
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x3bbf0
-voice = 14
-voice_hi = 14
+voice = 2
+voice_hi = 6
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x47000
-voice = 10
-voice_hi = 10
+voice = 7
+voice_hi = 11
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x1010
-voice = 0
-voice_hi = 0
+voice = 7
+voice_hi = 11
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x2c60
-voice = 2
-voice_hi = 2
+voice = 7
+voice_hi = 11
 min_count = 1

@@ -633,6 +633,15 @@ pub fn drop_pending() {
 pub fn reset_cameras() {
     unsafe { CHASE_CAMERAS = [sim::camera::CameraState::EMPTY; 2] };
 }
+
+/// Where seat `slot`'s camera last was, as the ears for the audio mixer: the
+/// eye in uu (world space, Y up) and its yaw, a Q12 turn. `None` before the
+/// camera has drawn a frame since a reset. Read only; the camera is not
+/// touched, so audio costs the renderer nothing.
+pub fn listener_pose(slot: usize) -> Option<((i32, i32, i32), u16)> {
+    let cam = unsafe { &*(&raw const CHASE_CAMERAS[slot.min(1)]) };
+    cam.valid.then_some((cam.eye, cam.yaw))
+}
 const DEPTH_RANGE: DepthRange = DepthRange::new(120, 14000);
 const SKY_SLOT: usize = OT_DEPTH - 1;
 /// Horizontal centre of the scoreboard's dark middle panel, which is what the

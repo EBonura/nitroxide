@@ -38,27 +38,27 @@ golden = false
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x19610
-voice = 16
-voice_hi = 16
+voice = 17
+voice_hi = 21
 min_count = 1
 max_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x15010
 voice = 17
-voice_hi = 17
+voice_hi = 21
 min_count = 1
 max_count = 1
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x13060
 voice = 17
-voice_hi = 17
+voice_hi = 21
 max_count = 0
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x4e030
-voice = 21
+voice = 17
 voice_hi = 21
 min_count = 2
 max_count = 2
