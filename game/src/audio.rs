@@ -1045,7 +1045,7 @@ fn held_sounds(s: &Sim, seen: &mut Seen, live: bool) {
         let speed = car.v.len();
         let engine_on = live && !car.wrecked();
         let sliding = engine_on && car.grounded && car.slide > SKID_SLIDE && speed > SKID_SPEED;
-        if !engine_on && !cs.boosting && cs.engine.is_none() {
+        if !engine_on && !cs.boosting && cs.engine.is_none() && cs.skid.is_none() {
             continue;
         }
         // One placement serves the car's engine, skid and hiss: all three come
