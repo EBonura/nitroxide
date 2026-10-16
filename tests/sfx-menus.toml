@@ -183,7 +183,7 @@ window = 28
 press = ["down"]
 hold = 4
 wait = 10
-repeat = 4
+repeat = 6
 [[step]]
 checkpoint = "on-save-row"
 golden = false
@@ -192,7 +192,7 @@ kind = "ram"
 sym = "NITRO_SETTINGS_STATE"
 offset = 12
 op = "eq"
-value = 7
+value = 9
 [[step]]
 press = ["cross"]
 hold = 4

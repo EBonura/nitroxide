@@ -38,7 +38,7 @@ kind = "ram"
 sym = "NITRO_SETTINGS_STATE"
 offset = 12
 op = "eq"
-value = 7
+value = 9
 [[step]]
 press = ["cross"]
 hold = 4

@@ -97,7 +97,7 @@ value = 2
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 0
+wait = 2
 [[step]]
 checkpoint = "kickoff"
 golden = false
