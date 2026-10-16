@@ -7,6 +7,10 @@ license = "GPL-2.0-or-later"
 repository = "https://github.com/EBonura/nitroxide"
 
 [features]
+default = ["pad-irq-engine"]
+# Read the pads from the interrupt-driven pad engine instead of polling them
+# from the frame loop (sdk/docs/PAD-IRQ-ENGINE.md).
+pad-irq-engine = ["psx-engine/pad-irq-engine"]
 # Dev shortcut: boot straight into the match for headless capture.
 boot-play = []
 # Dev shortcut: the normal kickoff with both player views enabled, used to
