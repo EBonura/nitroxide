@@ -2034,9 +2034,10 @@ impl Scene for NitroXide {
         // the steering deadzone is reading a stick that never moves and the car
         // is D-pad only. VoXide has always done this; the retry in `update`
         // covers a pad that was not ready at boot or gets re-plugged.
-        let _ = psx_pad::enable_analog_port1();
-        let _ = psx_pad::enable_analog_port2();
-        if let Ok(profile) = psx_settings::load_slot_one(SETTINGS_FILE) {
+        let _ = ctx.enable_analog(psx_pad::Port::One);
+        let _ = ctx.enable_analog(psx_pad::Port::Two);
+        if let Ok(profile) = psx_settings::load_from_slot_one(ctx.controller_port(), SETTINGS_FILE)
+        {
             self.profile = profile;
         }
         // A step an earlier build kept in `difficulty` moves to its own game
@@ -2287,11 +2288,11 @@ impl Scene for NitroXide {
                 && self.analog_attempts[port] > 0
             {
                 self.analog_attempts[port] -= 1;
-                let _ = if port == 0 {
-                    psx_pad::enable_analog_port1()
+                let _ = ctx.enable_analog(if port == 0 {
+                    psx_pad::Port::One
                 } else {
-                    psx_pad::enable_analog_port2()
-                };
+                    psx_pad::Port::Two
+                });
             }
         }
         // Outside the phase machine: the disc's music plays over the front

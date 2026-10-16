@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+The pads are read from the SDK's interrupt-driven pad engine instead of being
+polled in the frame loop, so an empty second port costs the game nothing and
+the memory card takes the port as a lease for each save step. Analog mode is
+requested through the engine and confirmed a few frames later.
+
 The curved ramp between the pitch and the wall keeps one texture at every
 distance: the wall panel is stretched over the whole curve, so a ramp seen
 up close and from afar shows the same panel, not a stripe per cut.
