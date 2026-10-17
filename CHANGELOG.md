@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+The dotted pale line along the lower edge of a goal post halo, and the short bright
+dashes under other glows (the ball landing disc, the goal-line strip, sparks), are
+gone. A glow quad samples one row past its tile on the pixels of a sloped edge,
+and the ball texture sat in that row; it now starts one row lower, behind an
+empty one. The picture is otherwise unchanged and the frame cost is identical.
+
 The arena net is drawn in full in every frame. The packet governor is gone: it
 dropped the net's near columns and drew the far pitch lines the old way in any
 frame that already held 330 packets, which is most of a busy view. The frame
