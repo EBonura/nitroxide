@@ -439,16 +439,6 @@ const NEAR_COVER: i32 = 1600;
 const NEAR_COVER_COLUMN: i32 = 1200;
 const NEAR_COVER_H: i32 = 800;
 
-/// Packets in the previous full-view frame by the time its walls were done.
-static mut LAST_PACKETS: u32 = 0;
-/// Cutting the net at the lens costs a few thousand cycles a quad, and the
-/// frames that miss a vblank are the ones that are already full: on the
-/// train, wall and heavy tapes and Manny's benchmark the late frames all
-/// have 360 to 420 packets there, and a frame with a car on the wall and the
-/// net across the lens has under 250. A frame that follows a full one keeps
-/// the old drop, so the cut never tips a full frame over.
-const NET_PACKET_LIMIT: u32 = 330;
-
 /// Is the band whose lower ring is `ri` one of the covered ones?
 #[inline(always)]
 const fn ri_covered(ri: usize) -> bool {
@@ -5275,15 +5265,6 @@ impl Builder<'_> {
     #[inline(never)]
     #[cold]
     fn draw_wall_jobs(&mut self, cull: &Cull) {
-        // A frame that turned out full after all keeps the old drop: the
-        // last frame's count only guessed (see `NET_PACKET_LIMIT`).
-        if unsafe { WALL_JOB_COUNT } != 0
-            && self.textured.len() + self.arena.len() + self.flats.len() + self.glow.len()
-                >= NET_PACKET_LIMIT as usize
-        {
-            unsafe { WALL_JOB_COUNT = 0 };
-            return;
-        }
         for k in 0..unsafe { WALL_JOB_COUNT } {
             let job = unsafe { &WALL_JOBS[k] };
             self.clip_wall(Self::wall_job_world(job), job.uv, job.tints, cull);
@@ -5688,9 +5669,9 @@ impl Builder<'_> {
             (x0 as i32, x1 as i32, y0 as i32, y1 as i32)
         };
         let sections = unsafe { &*core::ptr::addr_of!(LINE_SECTIONS) };
-        // The exact thin quad costs a few hundred cycles: not in a split
-        // view, nor in a frame that follows a full one (see `NET_PACKET_LIMIT`).
-        let exact_thin = !split_view() && unsafe { LAST_PACKETS } < NET_PACKET_LIMIT;
+        // The exact thin quad is a full view's: a split view draws every
+        // line the old way.
+        let exact_thin = !split_view();
         // A full frame keeps the old fix in the cut itself: the GTE's
         // corners, two pixels apart where the ends round together.
         let cut = |sec: &LineSection| {
@@ -6112,9 +6093,7 @@ impl Builder<'_> {
         // this function, so every other span runs the code it always did.
         if !SPLIT && !NET && distance < NEAR_COVER {
             let slots = unsafe { &SPAN_SLOT[si] };
-            if unsafe { LAST_PACKETS } < NET_PACKET_LIMIT
-                && slots.iter().any(|p| cull.flat_distance(p.0, p.1) < NEAR_COVER_COLUMN)
-            {
+            if slots.iter().any(|p| cull.flat_distance(p.0, p.1) < NEAR_COVER_COLUMN) {
                 return self.wall_span::<false, true>(si, cull);
             }
         }
@@ -8512,12 +8491,6 @@ fn build_view(
                 b.lamps(&cull);
             });
             b.draw_pieces(&cull);
-            // How full this frame is once its walls are in, for the next
-            // one to judge by (see `NET_PACKET_LIMIT`).
-            unsafe {
-                LAST_PACKETS =
-                    (b.textured.len() + b.arena.len() + b.flats.len() + b.glow.len()) as u32;
-            }
         });
         staged!(S_TRIM, {
             on_scratchpad(|| {
