@@ -6238,7 +6238,9 @@ impl Builder<'_> {
         // ring-by-split vertex grid can be projected once. Every interior
         // vertex is shared by four quads, so projecting per quad ran the GTE
         // four times per vertex.
-        let mut rings = [0usize; PROFILE_LEN];
+        // Bytes: the table is initialised every span, and a seventh of the
+        // words is a few stores rather than a call to `memset`.
+        let mut rings = [0u8; PROFILE_LEN];
         let mut ring_count = 1;
         {
             let mut ri = 0;
@@ -6250,7 +6252,7 @@ impl Builder<'_> {
                 } else {
                     ri + 1
                 };
-                rings[ring_count] = top;
+                rings[ring_count] = top as u8;
                 ring_count += 1;
                 ri = top;
             }
@@ -6280,7 +6282,7 @@ impl Builder<'_> {
         }
         let cam_h = -cull.pos.1;
         for row in 0..ring_count {
-            let top = rings[row];
+            let top = rings[row] as usize;
             let (lower, upper) = {
                 let (a, b) = ring_buf.split_at_mut(1);
                 if row & 1 == 0 { (&a[0], &mut b[0]) } else { (&b[0], &mut a[0]) }
@@ -6321,7 +6323,7 @@ impl Builder<'_> {
             if row == 0 {
                 continue;
             }
-            let ri = rings[row - 1];
+            let ri = rings[row - 1] as usize;
             // Unchecked for the same reason the floor is: the ring index
             // walks a window over a table sized from `PROFILE_LEN`.
             let (llo, lhi) = unsafe { (light.get_unchecked(ri), light.get_unchecked(top)) };
@@ -6800,18 +6802,21 @@ impl Builder<'_> {
             }
             line
         };
-        let mut lo: Option<[Option<(i16, i16, i32)>; ROOF_COLS + 1]> = None;
+        // Two lines in place, the upper one the next row's lower: copying a
+        // line from one variable to another was a `memcpy` call a row.
+        let mut lines = [[None; ROOF_COLS + 1]; 2];
+        let (mut have_lo, mut at) = (false, 0usize);
         for iz in 0..ROOF_ROWS {
             let (z0, z1) = (roof_corner_z(iz), roof_corner_z(iz + 1));
             if !cull.visible((0, y, (z0 + z1) / 2), (ROOF_HALF_X, 0, (z1 - z0) / 2)) {
-                lo = None;
+                have_lo = false;
                 continue;
             }
-            let below = match lo {
-                Some(line) => line,
-                None => corner_line(z0),
-            };
-            let above = corner_line(z1);
+            if !have_lo {
+                lines[at] = corner_line(z0);
+            }
+            lines[at ^ 1] = corner_line(z1);
+            let (below, above) = (&lines[at], &lines[at ^ 1]);
             let h = ((z1 - z0 + COVER_UU_PER_TEXEL - 1) / COVER_UU_PER_TEXEL).clamp(1, ROOF_PATCH_V)
                 as u8;
             for ix in 0..ROOF_COLS {
@@ -6847,7 +6852,8 @@ impl Builder<'_> {
                     true,
                 );
             }
-            lo = Some(above);
+            have_lo = true;
+            at ^= 1;
         }
     }
 
