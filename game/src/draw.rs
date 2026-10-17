@@ -937,6 +937,12 @@ fn ramp_scale(x: i32) -> i32 {
 /// A curve point of the swept profile at ramp scale `s` (see [`ramp_scale`]).
 #[inline(always)]
 fn ramp_point(p: (i32, i32), s: i32) -> (i32, i32) {
+    // Exactly 4096 on the side walls and over most of a corner's columns:
+    // the scale is then the identity, and two multiplies (each stalling the
+    // next instruction that reads the product) are not needed to find that out.
+    if s == 4096 {
+        return p;
+    }
     ((p.0 * s) >> 12, (p.1 * s) >> 12)
 }
 const CEIL_R: i32 = sim::CEIL_R;
@@ -2405,21 +2411,39 @@ fn thin_quad_faded(
     c1: Rgb,
 ) -> ([(i16, i16); 4], Rgb, Rgb) {
     let (quad, fade) = thin_quad(from, to, scale);
-    (quad, faded(c0, fade), faded(c1, fade))
+    // One table read for the three channels' factors, the same for both
+    // colours, in place of three multiplies each.
+    debug_assert!((THIN_FADE_MIN..=16).contains(&fade));
+    let f = &FADE_FACTORS[(fade - THIN_FADE_MIN).clamp(0, 5) as usize];
+    let k = |v: u8, f: i32| ((v as i32 * f) >> 8) as u8;
+    (
+        quad,
+        (k(c0.0, f[0]), k(c0.1, f[1]), k(c0.2, f[2])),
+        (k(c1.0, f[0]), k(c1.1, f[1]), k(c1.2, f[2])),
+    )
 }
+
+/// What each channel of a marking is scaled by (in 256ths) at each fade from
+/// [`THIN_FADE_MIN`] to sixteen sixteenths: `fade` sixteenths of the marking
+/// over the grass it lies on.
+static FADE_FACTORS: [[i32; 3]; 6] = {
+    let mut t = [[0i32; 3]; 6];
+    let mut i = 0;
+    while i < 6 {
+        let fade = THIN_FADE_MIN + i as i32;
+        t[i][0] = GRASS_OVER_CHALK.0 + ((256 - GRASS_OVER_CHALK.0) * fade >> 4);
+        t[i][1] = GRASS_OVER_CHALK.1 + ((256 - GRASS_OVER_CHALK.1) * fade >> 4);
+        t[i][2] = GRASS_OVER_CHALK.2 + ((256 - GRASS_OVER_CHALK.2) * fade >> 4);
+        i += 1;
+    }
+    t
+};
 
 /// The least a far marking is dimmed to, in sixteenths: a line under a pixel
 /// wide is still drawn a pixel wide, bright enough to read.
 const THIN_FADE_MIN: i32 = 11;
 /// Grass over chalk, per channel in 256ths: what a marking dims toward.
 const GRASS_OVER_CHALK: (i32, i32, i32) = (77, 116, 34);
-
-/// `c` with `fade` sixteenths of itself over the grass it lies on.
-#[inline(always)]
-fn faded(c: Rgb, fade: i32) -> Rgb {
-    let k = |v: u8, g: i32| (v as i32 * (g + ((256 - g) * fade >> 4)) >> 8) as u8;
-    (k(c.0, GRASS_OVER_CHALK.0), k(c.1, GRASS_OVER_CHALK.1), k(c.2, GRASS_OVER_CHALK.2))
-}
 
 /// Light every marking's sections from the current pitch light. Run after
 /// anything rewrites [`FLOOR_LIGHT`].
@@ -4252,6 +4276,12 @@ const BALL_LAT: usize = 5;
 /// Ball sphere, built at boot so the sin/cos pairs are paid once.
 static mut BALL_MESH: [[(i32, i32, i32); BALL_LON]; BALL_LAT + 1] =
     [[(0, 0, 0); BALL_LON]; BALL_LAT + 1];
+/// Each facet's outward normal in the ball's own frame (the sum of its four
+/// corners, scaled), for a facet one column wide and for one two wide (a
+/// split view's), built at boot with the mesh. The cull's facing test then
+/// reads three numbers, not twelve corner coordinates and a multiply.
+static mut BALL_FACET: [[[(i32, i32, i32); BALL_LON]; BALL_LAT]; 2] =
+    [[[(0, 0, 0); BALL_LON]; BALL_LAT]; 2];
 /// The swept cross-section, built once. It used to be rebuilt inside every
 /// span, paying for every quarter-circle sample twenty-four times a frame.
 static mut WALL_PROFILE: [(i32, i32); PROFILE_LEN] = [(0, 0); PROFILE_LEN];
@@ -4276,6 +4306,22 @@ fn build_meshes() {
                     (sin_q12(lon as u16) * ring) >> 12,
                     y,
                     (cos_q12(lon as u16) * ring) >> 12,
+                );
+            }
+        }
+    }
+    for (step, table) in unsafe { (*core::ptr::addr_of_mut!(BALL_FACET)).iter_mut().enumerate() } {
+        let lon_step = step + 1;
+        for j in 0..BALL_LAT {
+            for i in (0..BALL_LON).step_by(lon_step) {
+                let i2 = (i + lon_step) % BALL_LON;
+                let (a, b) = unsafe { (BALL_MESH[j][i], BALL_MESH[j][i2]) };
+                let (c, d) = unsafe { (BALL_MESH[j + 1][i], BALL_MESH[j + 1][i2]) };
+                let k = 1024 / sim::BALL_R.max(1);
+                table[j][i] = (
+                    (a.0 + b.0 + c.0 + d.0) * k,
+                    (a.1 + b.1 + c.1 + d.1) * k,
+                    (a.2 + b.2 + c.2 + d.2) * k,
                 );
             }
         }
@@ -5479,8 +5525,36 @@ impl Builder<'_> {
         // The pitch is flat, so a tile's box is its footprint with no height.
         // The chamfer only ever pulls corners inward, so this stays generous.
         let tile_e = cull.extents((step_x / 2, 0, step_z / 2));
+        // The tile centres lie on a lattice, and the cull's three dot
+        // products are linear in the centre, so the sums before their shift
+        // step by a constant from one tile to the next: three adds a tile in
+        // place of nine multiplies. The same integers `Cull::visible_box`
+        // computes, so the same tiles. (The centre `(x0 + x1) / 2` is exact
+        // because the steps are even.)
+        const _: () = assert!(
+            (sim::HALF_X * 2 / TILES_X) % 2 == 0 && (sim::HALF_Z * 2 / TILES_Z) % 2 == 0
+        );
+        let d0 = (
+            -sim::HALF_X + step_x / 2 - cull.pos.0,
+            -cull.pos.1,
+            -sim::HALF_Z + step_z / 2 - cull.pos.2,
+        );
+        let raw = |n: [i16; 3]| (n[0] as i32) * d0.0 + (n[1] as i32) * d0.1 + (n[2] as i32) * d0.2;
+        let (mut f_row, mut r_row, mut v_row) = (raw(cull.fwd), raw(cull.right), raw(cull.vertical));
+        let (f_dx, f_dz) = (cull.fwd[0] as i32 * step_x, cull.fwd[2] as i32 * step_z);
+        let (r_dx, r_dz) = (cull.right[0] as i32 * step_x, cull.right[2] as i32 * step_z);
+        let (v_dx, v_dz) = (cull.vertical[0] as i32 * step_x, cull.vertical[2] as i32 * step_z);
+        let (proj, half_w, half_h) = (proj_h(), cull_half_w(), view_half_h());
         for ix in 0..TILES_X {
+            let (mut f, mut r, mut v) = (f_row, r_row, v_row);
+            f_row += f_dx;
+            r_row += r_dx;
+            v_row += v_dx;
             for iz in 0..TILES_Z {
+                let (tf, tr, tv) = (f, r, v);
+                f += f_dz;
+                r += r_dz;
+                v += v_dz;
                 let x0 = -sim::HALF_X + ix * step_x;
                 let z0 = -sim::HALF_Z + iz * step_z;
                 let (x1, z1) = (x0 + step_x, z0 + step_z);
@@ -5488,7 +5562,11 @@ impl Builder<'_> {
                 // The vertical test matters in a half-height view: the tiles
                 // under and just ahead of the camera, the subdivided ones,
                 // fall below its bottom edge.
-                if !cull.visible_box((mx, 0, mz), tile_e) {
+                let z = (tf >> 12) + tile_e[0];
+                if z <= 0
+                    || ((tr >> 12).abs() - tile_e[1]) * proj > z * half_w
+                    || ((tv >> 12).abs() - tile_e[2]) * proj > z * half_h
+                {
                     continue;
                 }
                 // Mown stripes down the pitch and the whole floodlight
@@ -6196,8 +6274,14 @@ impl Builder<'_> {
             };
             let curve = top <= CURVE_SEGS;
             let p = profile[top];
-            let p0 = if curve { ramp_point(p, ramp[0] as i32) } else { p };
-            let shared = ((cnx[0] * p0.0) >> 12, (cnz[0] * p0.0) >> 12, p0.1);
+            // Only a uniform span reads these: a corner's columns each take
+            // their own point below.
+            let shared = if uniform {
+                let p0 = if curve { ramp_point(p, ramp[0] as i32) } else { p };
+                ((cnx[0] * p0.0) >> 12, (cnz[0] * p0.0) >> 12, p0.1)
+            } else {
+                (0, 0, 0)
+            };
             for k in 0..columns {
                 // Each column sweeps the profile along its own normal: one
                 // normal for a straight span, turning round a corner span's
@@ -7454,6 +7538,7 @@ impl Builder<'_> {
         );
         let lon_step = if split_view() || far { 2 } else { 1 };
         let mesh = unsafe { &BALL_MESH };
+        let facet = unsafe { &BALL_FACET[lon_step - 1] };
         // Two latitude rows at a time, the band's top and bottom edge, so the
         // frame fits the scratchpad stack `build_view` runs this on.
         let mut sp = [[(0i16, 0i16); BALL_LON]; 2];
@@ -7547,14 +7632,8 @@ impl Builder<'_> {
                 }
                 // A quad's four corners already sit on the sphere, so their sum
                 // points straight out of it: that is the normal, for free.
-                let (a, b) = (mesh[j][i], mesh[j][i2]);
-                let (c, d) = (mesh[j + 1][i], mesh[j + 1][i2]);
-                let k = 1024 / sim::BALL_R.max(1);
-                let local = (
-                    (a.0 + b.0 + c.0 + d.0) * k,
-                    (a.1 + b.1 + c.1 + d.1) * k,
-                    (a.2 + b.2 + c.2 + d.2) * k,
-                );
+                // SAFETY: `j < BALL_LAT` and `i < BALL_LON`, the table's size.
+                let local = unsafe { *facet.get_unchecked(j).get_unchecked(i) };
                 // Facing away: behind the front of the ball, always. Tested
                 // before the lighting and the packet, so a culled facet costs
                 // one dot product and nothing else.
