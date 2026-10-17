@@ -24,7 +24,7 @@
 
 use nitroxide_sim as sim;
 use psx_asset::{Mesh, Texture};
-use psx_engine::{ActorTransform, DepthRange, GpuPacket, OtFrame, Vec3World};
+use psx_engine::{ActorTransform, CameraDepth, DepthRange, DepthSlot, GpuPacket, OtFrame, Vec3World};
 use psx_gpu::frame::PrimitiveArena;
 use psx_gpu::material::{BlendMode, TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
@@ -633,6 +633,15 @@ pub fn listener_pose(slot: usize) -> Option<((i32, i32, i32), u16)> {
     cam.valid.then_some((cam.eye, cam.yaw))
 }
 const DEPTH_RANGE: DepthRange = DepthRange::new(120, 14000);
+
+/// The ordering-table slot for a camera-space depth: `DEPTH_RANGE` through
+/// one `multu`. Worked out before a packet is written rather than after, so
+/// the multiply's twelve cycles run under the packet's stores instead of
+/// stalling the `mfhi` that reads it.
+#[inline(always)]
+fn depth_slot(depth: i32) -> DepthSlot {
+    DEPTH_RANGE.slot_depth::<OT_DEPTH>(CameraDepth::new(depth))
+}
 const SKY_SLOT: usize = OT_DEPTH - 1;
 /// Horizontal centre of the scoreboard's dark middle panel, which is what the
 /// clock is centred on. Exported so the HUD text and the plate under it cannot
@@ -4424,8 +4433,9 @@ impl Builder<'_> {
 
     /// Emit a projected quad of one colour. See [`MAX_FLAT_QUADS`].
     fn emit_flat(&mut self, sp: [(i16, i16); 4], depth: i32, color: Rgb) {
+        let slot = depth_slot(depth);
         if let Some(q) = self.flats.push(QuadFlat::new(sp, color.0, color.1, color.2)) {
-            self.ot.add_packet_depth(DEPTH_RANGE, depth, q);
+            self.ot.add_packet_slot(slot, q);
         } else {
             count_overflow!();
         }
@@ -4484,13 +4494,14 @@ impl Builder<'_> {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
     ) {
+        let slot = depth_slot(z_sum / 4 + bias);
         let mut prim =
             QuadTexturedGouraud::with_packet_material_packed_uv_words(sp, uvs, tints, packet);
         if blended {
             prim.color0_cmd |= SEMI_TRANSPARENT;
         }
         if let Some(q) = self.textured.push(prim) {
-            self.ot.add_packet_depth(DEPTH_RANGE, z_sum / 4 + bias, q);
+            self.ot.add_packet_slot(slot, q);
         } else {
             count_overflow!();
         }
@@ -4510,6 +4521,7 @@ impl Builder<'_> {
         packet: TexturedGouraudPacketMaterial,
         blended: bool,
     ) {
+        let slot = depth_slot(z_sum / 4 + bias);
         let mut prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
             sp,
             uvs,
@@ -4524,7 +4536,7 @@ impl Builder<'_> {
             prim.color0_cmd |= SEMI_TRANSPARENT;
         }
         if let Some(q) = self.textured.push(prim) {
-            self.ot.add_packet_depth(DEPTH_RANGE, z_sum / 4 + bias, q);
+            self.ot.add_packet_slot(slot, q);
         } else {
             count_overflow!();
         }
@@ -4580,8 +4592,9 @@ impl Builder<'_> {
     }
 
     fn emit(&mut self, sp: [(i16, i16); 4], depth: i32, colors: [Rgb; 4]) {
+        let slot = depth_slot(depth);
         if let Some(q) = self.arena.push(QuadGouraud::new(sp, colors)) {
-            self.ot.add_packet_depth(DEPTH_RANGE, depth, q);
+            self.ot.add_packet_slot(slot, q);
         } else {
             count_overflow!();
         }
