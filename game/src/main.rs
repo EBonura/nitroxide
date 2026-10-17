@@ -2982,16 +2982,16 @@ impl NitroXide {
 #[no_mangle]
 fn main() -> ! {
     draw::init_view();
-    // Sim every vblank, render every second one: 60 Hz control, 30 Hz picture.
+    // Sim every vblank and, by default, render every vblank too: 60 Hz control
+    // and a 60 fps target in single-player. Split screen holds 30 fps on its
+    // own (draw::hold_split_cadence). The scene runs the engine's immediate
+    // submission (draw::submit_detached says why not queued).
     //
-    // The default renders as fast as it can, which gives an uneven frame time
-    // as the camera moves through the arena. For a car that changing
-    // stick-to-picture delay feels worse than a steady rate. The scene runs
-    // the engine's immediate submission (draw::submit_detached says why not
-    // queued). A representative match frame was about 779,000 cycles. The
-    // detailed garage, including its denser foreground floor, is about
-    // 1,043,000; two vblanks provide roughly 1,127,000, so both remain inside
-    // the deadline while physics stays at the full 60 Hz.
+    // `pace-30` renders every second vblank instead, the game's original
+    // pacing: when a representative match frame was about 779,000 cycles and
+    // the detailed garage about 1,043,000, an uneven frame time felt worse
+    // for a car than a steady 30, and two vblanks (roughly 1,127,000) held
+    // both while physics stayed at the full 60 Hz.
     let config = Config {
         clear_color: (6, 8, 16),
         visual_pacing: if cfg!(feature = "pace-30") {

@@ -245,9 +245,13 @@ make shot        # boots into a match, holds accelerate, dumps a frame to /tmp
 
 ## Performance
 
-Physics and input run at 60 Hz; the picture is deliberately paced at a steady
-30 fps. Rendering uses PSoXide's queued scene contract, so the CPU prepares the
-next ordering table while the GPU rasterises the previous one. Text and other
+Physics and input run at 60 Hz. Single-player renders every vblank, targeting
+60 fps; split screen holds a steady 30 fps, and the `pace-30` feature paces
+single-player at 30 too. Each frame's ordering table is kicked to the GPU
+without waiting for the walk, and the next frame builds into a second table
+set, so the CPU prepares the next frame while the GPU rasterises this one. The
+engine's queued scene contract measured worse for this game
+(`draw::submit_detached` has the numbers). Text and other
 immediate overlays wait until the submitted list has drained, preventing a HUD
 write from serialising the whole CPU and GPU workload.
 

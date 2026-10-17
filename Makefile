@@ -412,8 +412,9 @@ pgo-order: psoxide
 		--launch-arg --embedded-playtest $(PGO_LAUNCH_ARGS) --profile "$(PGO_PROFILE)" \
 		--variant "$(patsubst %+order,%,$(PGO_VARIANT))" --out "$(PGO_LAYOUT)" -- $(GAME_CARGO)
 
-# NitroXide renders every second vblank and waits out the rest, so `choose`
-# ranks the variants by the work cycles `measure` counts outside the wait loops.
+# NitroXide waits out the rest of each frame's vblank (or two, in split
+# screen), so `choose` ranks the variants by the work cycles `measure` counts
+# outside the wait loops.
 # The last build is the last variant, so this rebuilds the shipping exe at the end.
 PGO_VARIANTS = off default hot=500 hot=500+profi accurate+nopgso+hot=1000 accurate+nopgso+hot=1500
 PGO_MEASURE  = "$$PSOXIDE_PGO" measure --frontend "$(FRONTEND)" --image "$$PSOXIDE_PGO_IMAGE" \
