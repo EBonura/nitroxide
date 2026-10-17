@@ -218,7 +218,12 @@ psoxide:
 # RUSTFLAGS would replace it.
 comma := ,
 PSX_DELAY_SLOT_FLAGS = $(filter -C%,$(subst ", ,$(subst $(comma), ,$(shell sed -n 's/^PSX_DELAY_SLOT_FLAGS :*= *//p' "$(PSOXIDE)/tools/sdk-examples.mk"))))
-DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rustflags=[$(foreach f,$(PSX_DELAY_SLOT_FLAGS),"$(f)",)]',$(error PSX_DELAY_SLOT_FLAGS not found in $(PSOXIDE)/tools/sdk-examples.mk))
+# A panic is a BREAK at the faulting instruction (-Cpanic=immediate-abort): core::fmt, the panic Location records and
+# their file names stay out of the image, and psx-rt's exception handler records Cause/EPC/BadVAddr
+# (__psx_rt_fault_*; `psoxide-size faults` reads them from a RAM dump). PSOXIDE_PANIC_MESSAGES=1 restores the
+# formatted panic.
+PANIC_FLAGS = $(if $(filter-out 0,$(PSOXIDE_PANIC_MESSAGES)),,"-Zunstable-options","-Cpanic=immediate-abort",)
+DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rustflags=[$(PANIC_FLAGS)$(foreach f,$(PSX_DELAY_SLOT_FLAGS),"$(f)",)]',$(error PSX_DELAY_SLOT_FLAGS not found in $(PSOXIDE)/tools/sdk-examples.mk))
 
 # Profile-guided optimisation through the SDK's shared driver
 # ($(PSOXIDE)/tools/psoxide-pgo/README.md). pgo/nitroxide.prof is committed and
