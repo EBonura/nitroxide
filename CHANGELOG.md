@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+The arena net is drawn in full in every frame. The packet governor is gone: it
+dropped the net's near columns and drew the far pitch lines the old way in any
+frame that already held 330 packets, which is most of a busy view. The frame
+time it saved is found elsewhere, with no change to the picture beyond that: the
+floor culls its tiles by sums that step along the lattice, the ball's facet
+normals come from a table built at boot, a packet's ordering-table slot is
+worked out before its words are written, the wall sweep and the roof no longer
+call `memset` and `memcpy` every row, floor edges snap with a shift, and the
+build links in the plain order, which measured as fast as a placed layout once
+the governor was gone. On the gate tapes the work per frame is 2 to 3 percent
+under the 0.4.1 build and the frames that miss a vblank are the same or fewer.
+
 The music is in the repository now, already encoded as the XA files the disc
 carries (`game/assets/music`, 82 MB), so a fresh clone and the release workflow
 press a disc with its six tracks and need no WAVs from anywhere else. The

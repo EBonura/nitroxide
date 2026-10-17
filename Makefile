@@ -240,21 +240,23 @@ PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools
 PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
 # The I-cache layout profile `+order` places functions from (see the
 # psoxide-pgo README, "order"): per-word counts and direct calls over the
-# train tape's gameplay polls. It binds by portable name and code hash, and
-# any change to the code the gameplay runs makes it stale (`apply` stops
-# below 98% bound): regenerate it with
-# `make pgo-order FRONTEND=x` and commit it with the change.
+# gameplay polls of the tapes below. Not committed while the variant is `off`;
+# `make pgo-order FRONTEND=x` writes it.
 PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # `off` since 60 fps: hot=500+profi wins on average work per frame (the
 # number `pgo-choose` ranks by) but loses on the heavy frames with both cars
 # on screen, which are the ones that miss a vblank. Judge a variant by the
-# share of frames at 60, not by the average. `+order` because this game is
-# at the mercy of its link order: the commit that added the stands measured
-# 84.8% of the train tape's frames at 60 linked plain and 95.3% placed.
-# Dev feature builds link plain: a boot shortcut such as boot-goal changes
-# code the gameplay runs, the layout then binds only part of itself and
-# `apply` refuses it (boot-play binds 100%, boot-goal 75%).
-PGO_VARIANT ?= $(if $(strip $(FEATURES)),off,off+order)
+# share of frames at 60, not by the average. This game is at the mercy of its
+# link order: the commit that added the stands measured 84.8% of the train
+# tape's frames at 60 linked plain and 95.3% placed. With the net always drawn
+# (no packet governor) the placed layouts measured no better than the plain
+# link on the gate tapes, 2 to 3 k cycles a frame worse on the heavy one, and
+# the plain link holds every tape at the late frames of the installed build,
+# so the shipping build links plain and no layout is committed. To try a
+# placed link again, `make pgo-order FRONTEND=x` and build with
+# PGO_VARIANT=off+order; the layout goes stale with any change to the code
+# the gameplay runs (`apply` stops below 98% bound).
+PGO_VARIANT ?= off
 
 compile: psoxide
 	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
