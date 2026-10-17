@@ -28,47 +28,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Resolve the pinned private audio source
-        id: audio
-        shell: bash
-        run: |
-          set -euo pipefail
-          repository="$(awk '$1 == "repository" { print $2 }' release/audio-source.txt)"
-          revision="$(awk '$1 == "revision" { print $2 }' release/audio-source.txt)"
-          [[ "${repository}" == "EBonura/PSoXide-demo-disc" ]] || {
-            echo "unexpected audio repository: ${repository}" >&2
-            exit 1
-          }
-          [[ "${revision}" =~ ^[0-9a-f]{40}$ ]] || {
-            echo "audio revision must be a full commit SHA" >&2
-            exit 1
-          }
-          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
-
-      - name: Require the read-only audio credential
-        env:
-          AUDIO_DEPLOY_KEY: ${{ secrets.NITROXIDE_AUDIO_DEPLOY_KEY }}
-        run: |
-          [[ -n "${AUDIO_DEPLOY_KEY}" ]] || {
-            echo "NITROXIDE_AUDIO_DEPLOY_KEY is not configured" >&2
-            exit 1
-          }
-
-      - name: Check out only the licensed audio directory
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: EBonura/PSoXide-demo-disc
-          ref: ${{ steps.audio.outputs.revision }}
-          ssh-key: ${{ secrets.NITROXIDE_AUDIO_DEPLOY_KEY }}
-          persist-credentials: false
-          path: .private/demo-disc
-          sparse-checkout: audio
-          sparse-checkout-cone-mode: true
-
-      - name: Verify every music source byte
-        working-directory: .private/demo-disc
-        run: sha256sum --check "${GITHUB_WORKSPACE}/release/audio-manifest.sha256"
-
       - name: Install the pinned Rust toolchain
         run: rustup show
 
@@ -78,10 +37,12 @@ jobs:
       - name: Run host-side tests
         run: make test
 
+      - name: Verify the committed XA music
+        run: make music-verify
+
       - name: Build the XA music disc
         env:
           GAMES_DIR: ${{ runner.temp }}/ps1-games
-          MUSIC_DIR: ${{ github.workspace }}/.private/demo-disc/audio/nitroxide
         run: make disc
 
       - name: Stage and validate the itch package

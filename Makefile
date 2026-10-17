@@ -238,7 +238,7 @@ PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
 # train tape's gameplay polls. It binds by portable name and code hash, and
 # any change to the code the gameplay runs makes it stale (`apply` stops
 # below 98% bound): regenerate it with
-# `make pgo-order FRONTEND=x MUSIC_DIR=...` and commit it with the change.
+# `make pgo-order FRONTEND=x` and commit it with the change.
 PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # `off` since 60 fps: hot=500+profi wins on average work per frame (the
 # number `pgo-choose` ranks by) but loses on the heavy frames with both cars
@@ -258,26 +258,35 @@ compile: psoxide
 
 build: compile
 
-# The game plays six tracks of XA-ADPCM music when the disc carries them
-# (game/src/music.rs) and stays silent when it does not. The tracks are Mulula
-# VGM Loops' Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B Vol 3
-# (CC BY 4.0, https://mululavgmloops.itch.io/), chained into six loudness-
-# matched 37.8 kHz stereo WAVs that live outside this repository. Point
-# MUSIC_DIR at the folder holding them to press a disc with music:
-#   make disc MUSIC_DIR=/path/to/music
-# `make music` packs them with the SDK's `psx-audio-cook xa-pack` into
-# build/music/MUSIC1.XA and MUSIC2.XA (which `pack` adds to the disc with
-# mkisopsx --xa-file) and checks game/src/music_map.rs, the table the game
-# compiles in, against what the packer wrote. If the songs change, copy
-# build/music/music_map.rs over it and rebuild.
+# The game plays six tracks of XA-ADPCM music (game/src/music.rs). The cooked
+# files are committed in game/assets/music/ (MUSIC1.XA, MUSIC2.XA, the pack
+# manifest music.json and their digests in SHA256SUMS), so a fresh clone and CI
+# press the music straight onto the disc; no WAV is needed to build. The tracks
+# are Mulula VGM Loops' Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B Vol 3
+# (CC BY 4.0, https://mululavgmloops.itch.io/; credits in
+# game/assets/music/README.md), chained into six loudness-matched 37.8 kHz
+# stereo WAVs that are NOT in this repository.
+#
+# Only a maintainer who changes the songs needs the WAVs. MUSIC_DIR is the
+# folder holding them; sources.sha256 refuses any other file:
+#   make music-check   MUSIC_DIR=/path/to/music   cook them with the SDK's
+#                      `psx-audio-cook xa-pack` into build/music and fail unless
+#                      the result is byte-for-byte the committed files
+#   make music-refresh MUSIC_DIR=/path/to/music   same, then replace the
+#                      committed files (and game/src/music_map.rs, the table
+#                      the game compiles in) with the new cook
+# `make pack MUSIC=off` presses a silent disc (the attract-demo frame check).
+MUSIC       ?= on
 MUSIC_DIR   ?=
+SHA256      := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo "shasum -a 256")
 MUSIC_SONGS := jungle1-a jungle1-b jungle2-a jungle2-b dnb-a dnb-b
 MUSIC_WAVS   = $(foreach s,$(MUSIC_SONGS),$(MUSIC_DIR)/$(s).wav)
 MUSIC_OUT   := $(ROOT)/build/music
-MUSIC_XA    := $(MUSIC_OUT)/MUSIC1.XA $(MUSIC_OUT)/MUSIC2.XA
+MUSIC_SRC   := $(GAME)/assets/music
+MUSIC_XA    := $(MUSIC_SRC)/MUSIC1.XA $(MUSIC_SRC)/MUSIC2.XA
 MUSIC_MAP   := $(GAME)/src/music_map.rs
 AUDIO_COOK  := $(ROOT)/tools/audio-cook
-XA_ARGS      = $(if $(MUSIC_DIR),$(foreach f,$(MUSIC_XA),--xa-file "$(f)"))
+XA_ARGS      = $(if $(filter off,$(MUSIC)),,$(foreach f,$(MUSIC_XA),--xa-file "$(f)"))
 
 # The synthesised sound effects (game/assets/audio, everything but the four
 # recorded impacts) come from tools/sfx-synth. Output is committed and
@@ -303,26 +312,37 @@ recordings: | psoxide
 	cargo run -q --release --locked --manifest-path "$(SFX_SYNTH)/Cargo.toml" -- import \
 		"$(SFX_SYNTH)/recordings.manifest" "$(SOURCES_DIR)" "$(GAME)/assets/audio"
 
-.PHONY: music
-music:
-	@test -n "$(MUSIC_DIR)" || { echo "music: set MUSIC_DIR to the folder holding $(addsuffix .wav,$(MUSIC_SONGS))"; exit 1; }
-	@$(MAKE) --no-print-directory "$(MUSIC_OUT)/music.stamp"
-
-$(MUSIC_OUT)/music.stamp: $(MUSIC_WAVS) $(AUDIO_COOK)/Cargo.toml | psoxide
+.PHONY: music-check music-refresh
+music-check music-refresh: | psoxide
+	@test -n "$(MUSIC_DIR)" || { echo "$@: set MUSIC_DIR to the folder holding $(addsuffix .wav,$(MUSIC_SONGS))"; exit 1; }
+	@(cd "$(MUSIC_DIR)" && $(SHA256) -c "$(MUSIC_SRC)/sources.sha256" >/dev/null) || { \
+		echo "$@: the WAVs in $(MUSIC_DIR) are not the ones listed in game/assets/music/sources.sha256"; exit 1; }
 	@rm -rf "$(MUSIC_OUT)" && mkdir -p "$(MUSIC_OUT)"
 	cargo run -q --release --locked --manifest-path "$(AUDIO_COOK)/Cargo.toml" -- \
 		xa-pack "$(MUSIC_OUT)" MUSIC $(foreach w,$(MUSIC_WAVS),"$(w)") \
 		--manifest "$(MUSIC_OUT)/music.json" --rust "$(MUSIC_OUT)/music_map.rs"
-	@cmp -s "$(MUSIC_OUT)/music_map.rs" "$(MUSIC_MAP)" || { \
-		echo "music: $(MUSIC_MAP) is not the table xa-pack wrote;"; \
-		echo "       cp $(MUSIC_OUT)/music_map.rs $(MUSIC_MAP) and rebuild"; \
-		rm -rf "$(MUSIC_OUT)"; exit 1; }
-	@touch "$@"
+	@if [ "$@" = music-check ]; then \
+		for f in MUSIC1.XA MUSIC2.XA music.json; do \
+			cmp "$(MUSIC_OUT)/$$f" "$(MUSIC_SRC)/$$f" || { echo "music-check: $$f differs from the committed file"; exit 1; }; \
+		done; \
+		cmp "$(MUSIC_OUT)/music_map.rs" "$(MUSIC_MAP)" || { echo "music-check: music_map.rs differs"; exit 1; }; \
+		echo "music-check: the cook is byte-identical to the committed music"; \
+	else \
+		cp "$(MUSIC_OUT)/MUSIC1.XA" "$(MUSIC_OUT)/MUSIC2.XA" "$(MUSIC_OUT)/music.json" "$(MUSIC_SRC)/"; \
+		cp "$(MUSIC_OUT)/music_map.rs" "$(MUSIC_MAP)"; \
+		(cd "$(MUSIC_SRC)" && $(SHA256) MUSIC1.XA MUSIC2.XA music.json > SHA256SUMS); \
+		echo "music-refresh: wrote game/assets/music and game/src/music_map.rs; commit them"; \
+	fi
+
+# `make music-verify` checks the committed files against their digests (CI).
+.PHONY: music-verify
+music-verify:
+	cd "$(MUSIC_SRC)" && $(SHA256) -c SHA256SUMS
 
 # `make pack PACK_EXE=x PACK_OUT=y.bin` wraps any exe in the game's disc image.
 PACK_EXE ?= $(EXE)
 PACK_OUT ?= $(OUT)/$(GAME_NAME).bin
-pack: $(ARENA_PSXT) $(if $(MUSIC_DIR),$(MUSIC_OUT)/music.stamp)
+pack: $(ARENA_PSXT) $(if $(filter off,$(MUSIC)),,music-verify)
 	@mkdir -p "$$(dirname "$(PACK_OUT)")"
 	cd "$(MKISOPSX)" && cargo run -q --release --locked -- \
 		--exe "$(PACK_EXE)" \
@@ -350,10 +370,10 @@ gate-disc: gate-symbols
 	@echo "GATE DISC -> $(patsubst %.bin,%.cue,$(GATE_DISC_OUT))"
 
 # Regenerating the profile and picking the variant need the emulator:
-#   make pgo-collect FRONTEND=/path/to/frontend MUSIC_DIR=...  (after gameplay code changes or an SDK repin)
-#   make pgo-choose  FRONTEND=/path/to/frontend MUSIC_DIR=...  (then commit the winner as PGO_VARIANT)
+#   make pgo-collect FRONTEND=/path/to/frontend  (after gameplay code changes or an SDK repin)
+#   make pgo-choose  FRONTEND=/path/to/frontend  (then commit the winner as PGO_VARIANT)
 # The committed profile and the variant were measured on a disc with the
-# songs (MUSIC_DIR = the folder of the six WAVs), as the itch and demo-disc
+# songs (the committed game/assets/music), as the itch and demo-disc
 # builds ship. pgo/train.pxtape presses through the menus to kickoff; polls 396..1200
 # are gameplay. There is no second route yet, so the gate has no holdout tape.
 # PGO_LAUNCH_ARGS adds frontend arguments (--launch-arg X per word).
@@ -430,7 +450,7 @@ DEMO_CHECK     := $(ROOT)/build/demo-check
 DEMO_CHECK_STEPS ?= 3000000000
 demo-check: psoxide $(ARENA_PSXT)
 	@$(MAKE) --no-print-directory compile FEATURES=diag-keys
-	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(DEMO_CHECK)/NitroXide.bin" MUSIC_DIR=
+	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(DEMO_CHECK)/NitroXide.bin" MUSIC=off
 	@rm -rf "$(DEMO_CHECK)/shots"
 	"$(FRONTEND)" launch --path "$(DEMO_CHECK)/NitroXide.cue" --steps $(DEMO_CHECK_STEPS) \
 		--route-screenshot-dir "$(DEMO_CHECK)/shots" --route-screenshot-interval 10
@@ -441,16 +461,13 @@ clean:
 	cd $(SIM) && cargo clean
 
 # Local fallback for the canonical CI publisher in
-# .github/workflows/itch-release.yml. MUSIC_DIR must point at the folder of
-# the six music WAVs so the itch build ships with its songs; the credit in
-# release/README.txt rides along. CI fetches the same six files through a
-# repository-specific read-only key and verifies release/audio-manifest.sha256.
+# .github/workflows/itch-release.yml. The itch build ships with the committed
+# music (game/assets/music); the credit in release/README.txt rides along.
 V_GAME = $(shell awk -F'"' '/^version/{print $$2; exit}' $(GAME)/Cargo.toml)
 .PHONY: itch
 itch:
-	@test -n "$(MUSIC_DIR)" || { echo "itch: set MUSIC_DIR=/path/to/music (the itch build ships with music)"; exit 1; }
 	@command -v butler >/dev/null || { echo "itch: install butler and run 'butler login' first"; exit 1; }
-	$(MAKE) disc MUSIC_DIR="$(MUSIC_DIR)"
+	$(MAKE) disc
 	@rm -rf build/itch && mkdir -p build/itch
 	cp "$(OUT)/$(GAME_NAME).bin" "$(OUT)/$(GAME_NAME).cue" release/README.txt build/itch/
 	butler push --userversion "$(V_GAME)" build/itch bonnie-studios/nitroxide:psx

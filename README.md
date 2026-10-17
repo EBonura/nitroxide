@@ -55,12 +55,12 @@ inside the repo. That is where the emulator's library and the burn tooling both
 look, so a finished build is always one that can be launched or burned without
 a copy step. Override with `make disc GAMES_DIR=...` or `GAME_NAME=...`.
 
-Rust nightly is date-pinned in `rust-toolchain.toml`. The default disc has no
-music: add `MUSIC_DIR=/path/to/music` with the six WAVs (`jungle1-a`,
-`jungle1-b`, `jungle2-a`, `jungle2-b`, `dnb-a`, `dnb-b`, 37.8 kHz stereo) to
-pack them into XA files with the SDK's `xa-pack` and press them on the disc.
-They are external to this repository; see [the audio notes](game/assets/audio/README.md).
-Keep the BIN and CUE together.
+Rust nightly is date-pinned in `rust-toolchain.toml`. The disc carries the six
+music tracks as the XA files committed in [`game/assets/music`](game/assets/music/README.md)
+(already encoded, 82 MB), so a fresh clone builds with music and needs no WAVs;
+`make pack MUSIC=off` presses a silent disc. `make music-check MUSIC_DIR=...`
+and `make music-refresh MUSIC_DIR=...` re-cook the files from the source WAVs,
+which are not in the repository. Keep the BIN and CUE together.
 Blender and the original car models are needed only for `make assets` and
 `make assets-pavel`; normal builds use the committed cooked models.
 

@@ -79,13 +79,13 @@ blocks included. The build fails if it outgrows the SPU (`BANK_BYTES` in
 
 # Music
 
-Six tracks, external to this repository: `jungle1-a`, `jungle1-b`,
-`jungle2-a`, `jungle2-b`, `dnb-a` and `dnb-b`, 16-bit 37.8 kHz stereo WAVs
-(chained, loudness-matched loops). `make music MUSIC_DIR=...` packs them with
-the SDK's `xa-pack` into `MUSIC1.XA` and `MUSIC2.XA`, and `pack` presses those
-on the disc. `game/src/music_map.rs` is the table `xa-pack` wrote (file,
-channel and length of each track); `make music` fails if it differs from the
-pack, and the fix is copying `build/music/music_map.rs` over it.
+Six tracks, `jungle1-a`, `jungle1-b`, `jungle2-a`, `jungle2-b`, `dnb-a` and
+`dnb-b`, already encoded as XA-ADPCM (`MUSIC1.XA`, `MUSIC2.XA`) and committed in
+[`game/assets/music`](../music/README.md), which also holds the credits and the
+steps to cook them again from the source WAVs (`make music-check`,
+`make music-refresh`). `pack` presses the committed files on the disc, so no WAV
+is needed to build. `game/src/music_map.rs` is the table `xa-pack` wrote (file,
+channel and length of each track).
 
 Source: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
 Vol 3, **CC BY 4.0**, <https://mululavgmloops.itch.io/>. The licence asks for

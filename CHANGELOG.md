@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+The music is in the repository now, already encoded as the XA files the disc
+carries (`game/assets/music`, 82 MB), so a fresh clone and the release workflow
+press a disc with its six tracks and need no WAVs from anywhere else. The
+release workflow no longer fetches an audio repository. `make music-check` and
+`make music-refresh` cook the files again from the source WAVs for a maintainer,
+and check the result is byte for byte the committed music. Music: Mulula VGM
+Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B Vol 3, CC BY 4.0,
+https://mululavgmloops.itch.io/ (credits and changes in
+`game/assets/music/README.md`).
+
 The pads are read from the SDK's interrupt-driven pad engine instead of being
 polled in the frame loop, so an empty second port costs the game nothing and
 the memory card takes the port as a lease for each save step. Analog mode is

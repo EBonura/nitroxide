@@ -3,9 +3,9 @@
 //! XA-ADPCM, played as a shuffled playlist over the front end and the match
 //! alike.
 //!
-//! `make music` packs the tracks with the SDK's `xa-pack` into `MUSIC1.XA` and
-//! `MUSIC2.XA` (four songs interleaved in the first, two in the second) and
-//! checks that `music_map.rs`, the table it wrote, is the one compiled in:
+//! The tracks are packed with `xa-pack` into `MUSIC1.XA` and `MUSIC2.XA`
+//! (four songs interleaved in the first, two in the second), committed in
+//! `game/assets/music`, and `music_map.rs`, the table it wrote, is compiled in:
 //! which file and channel hold which song, and how long each runs. The files
 //! are found by name in the disc's root directory when the game boots, so no
 //! sector address is baked in and the image can sit anywhere on a multi-
