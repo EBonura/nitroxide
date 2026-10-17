@@ -54,7 +54,11 @@ const CHALK_INDEX: u8 = 15;
 /// column of facets, and the latitude rows at `BALL_ROW_V`. Drawn through the
 /// ball palette, CLUT row 4.
 const BALL_U0: usize = 0;
-const BALL_V0: usize = 144;
+/// One row below the glow tile stays index 0: a glow quad's far edge maps to
+/// the row just past the tile (draw.rs `BALL_V0`), and the ball's first row
+/// there drew a dotted line along the lower edge of each halo.
+const BALL_V0: usize = GLOW_V0 + GLOW_W + 1;
+const _: () = assert!(BALL_V0 > GLOW_V0 + GLOW_W, "a guard row must separate the glow tile from the ball");
 const BALL_TEX_W: usize = 128;
 const BALL_TEX_H: usize = 64;
 const BALL_LON: usize = 16;

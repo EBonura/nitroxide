@@ -1853,8 +1853,15 @@ const BALL_CLUT: Clut = Clut::new(384, 261);
 const SPENT_CLUT: Clut = Clut::new(384, 262);
 /// The ball's texture (tools/cook-arena `ball_texture`): below the glow tile,
 /// eight texels a column of facets, the latitude rows at `BALL_ROW_V`.
+///
+/// One empty row lies between the two. A glow quad maps its far edge to
+/// `GLOW_V0 + GLOW_W` (half-open, so the tile stretches over the whole quad),
+/// and the rasteriser reaches that row on some pixels of a sloped edge. With
+/// the ball's first row there, those pixels sampled it through the glow
+/// palette and drew a dotted pale line along the quad's lower edge. The row
+/// is index 0, a hole, which an additive glow draws as nothing.
 const BALL_U0: u8 = 0;
-const BALL_V0: u8 = 144;
+const BALL_V0: u8 = GLOW_V0 + GLOW_W + 1;
 const BALL_ROW_V: [u8; BALL_LAT + 1] = [0, 13, 26, 38, 51, 64];
 const BALL_PACKET: TexturedGouraudPacketMaterial =
     TextureMaterial::new(BALL_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
