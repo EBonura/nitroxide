@@ -4830,7 +4830,14 @@ impl Builder<'_> {
                     continue;
                 };
                 let t = (i - a) as i32;
-                let lerp = |u: i32, v: i32| u + (v - u) * t / cs as i32;
+                // `cs` is a power of two (`floor_split`), so the division
+                // truncating toward zero is a shift with the bias a negative
+                // dividend needs: the same integer without a 36-cycle DIV.
+                let (sh, bias) = (cs.trailing_zeros(), cs as i32 - 1);
+                let lerp = |u: i32, v: i32| {
+                    let x = (v - u) * t;
+                    u + ((x + ((x >> 31) & bias)) >> sh)
+                };
                 let snapped = Some((
                     lerp(pa.0 as i32, pb.0 as i32) as i16,
                     lerp(pa.1 as i32, pb.1 as i32) as i16,
