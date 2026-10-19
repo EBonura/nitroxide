@@ -18,6 +18,11 @@ op = "eq"
 value = 100
 
 # From MATCH, Up wraps directly to SETTINGS.
+# Settings is the second row up from MATCH: CREDITS is the last row.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
 [[step]]
 press = ["up"]
 hold = 4

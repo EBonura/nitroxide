@@ -7941,12 +7941,12 @@ fn draw_cars<'a>(
 }
 
 /// How many rows the front end has, and where they sit on screen.
-pub const MENU_ROWS: usize = 4;
+pub const MENU_ROWS: usize = 5;
 const MENU_X: i16 = 10;
 const MENU_W: i16 = 164;
-/// Four rows since DEMO joined: the list moved up a row's height less a
-/// pixel per gap so the bottom row keeps its old margin.
-const MENU_TOP: i16 = 135;
+/// Five rows since CREDITS joined (four since DEMO): each time the list moved
+/// up one row's step so the bottom row keeps its old margin.
+const MENU_TOP: i16 = 111;
 const MENU_STEP: i16 = 24;
 
 /// Ordering-table slots the front end reserves for itself. The pitch and the

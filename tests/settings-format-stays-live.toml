@@ -15,6 +15,11 @@ sha256 = "fa43239bcee7b97ca62f007cc68487560a39e19f74f3dde7486db3f98df8e471"
 [[step]]
 wait = 440
 # Menu: Settings, change Sound, close, reopen, Save Settings.
+# Settings is the second row up from MATCH: CREDITS is the last row.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 12
 [[step]]
 press = ["up"]
 hold = 4

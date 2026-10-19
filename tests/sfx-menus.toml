@@ -306,6 +306,11 @@ sym = "NITRO_SETTINGS_STATE"
 offset = 12
 op = "eq"
 value = 0
+# From SETTINGS, MATCH is two rows down: CREDITS is the last row.
+[[step]]
+press = ["down"]
+hold = 4
+wait = 10
 [[step]]
 press = ["down"]
 hold = 4

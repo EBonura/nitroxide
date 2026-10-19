@@ -81,6 +81,9 @@ https://opengameart.org/
 Tyre squeal loop: Tom Haigh, CC BY 3.0,
 https://opengameart.org/content/car-tire-squeal-skid-loop
 
+All the credits (cars, music, crowd, tyre squeal, impacts and fonts) are also on
+the title menu's Credits page.
+
 ## Music
 
 Music: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B

@@ -33,7 +33,7 @@ integrated, dithered to 16 bits, and compressed to XA-ADPCM. The pieces are:
 | dnb-b | Lona, Corda, Sapo, Mamba (D&B Vol 3) |
 
 The Read-ME shipped with the packs that carry one says "CC BY 4.0" and names the
-author's pages; the credit also appears on the boot splash, in the README, the
+author's pages; the credit also appears on the title menu's Credits page, in the README, the
 CHANGELOG and the release notes. Keep those in step.
 
 ## Refreshing the files

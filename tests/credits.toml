@@ -1,0 +1,78 @@
+# The credits are a row of the title menu, not part of the boot splash.
+name = "nitroxide-credits"
+title = "NitroXide: no credits on the splash, a Credits row opens two pages"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 1000
+
+[[step]]
+wait = 160
+[[step]]
+checkpoint = "splash-no-credits"
+golden = false
+[[step.assert]]
+kind = "pixels"
+color = [132, 148, 181]
+color_tol = 30
+region = { x = 20, y = 168, w = 280, h = 32 }
+max_count = 0
+note = "the licence lines are not drawn under the logo"
+
+[[step]]
+wait = 280
+[[step]]
+checkpoint = "title"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1
+
+# CREDITS is the last row, one press up from MATCH. The masks are the breathing
+# title logo and the now-playing plate, which carries whichever song the shuffle drew.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "credits-row"
+mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
+[[step.assert]]
+kind = "spu_kon"
+addr = 0xdba0
+voice = 0
+voice_hi = 1
+min_count = 1
+window = 30
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "credits-page-1"
+mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
+
+[[step]]
+press = ["right"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "credits-page-2"
+mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
+
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "credits-closed"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1

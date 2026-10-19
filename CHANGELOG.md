@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+The credits moved off the boot splash. The splash is the Bonnie Studios logo and
+"Built with PSoXide" and nothing else; the cars, music, crowd, tyre squeal, impact
+and font credits are on a Credits row at the bottom of the title menu, two pages,
+styled like the controls page. The links are in the README and the release notes.
+
 The air game plays like Rocket League's. A car in the air used to turn at a fixed,
 slow rate (yaw 1.4 and roll 3.1 radians a second) and a dodge was a push along the
 ground with a drawn spin. The stick is now a torque with Rocket League's own
@@ -123,7 +128,7 @@ Six new cars: Razor, Fury, Bolt, Brute, Dash and Cinder, nine in all.
   as Comet, Hatch and Sprinter, each with its 60-face split-screen copy.
 - Cars: Pavel 3D, Low Poly City Vehicles Pack, CC BY 4.0,
   https://pavel-3d.itch.io/low-poly-city-vehicles-pack. The credit is also on
-  the boot splash, in the README and in the release notes.
+  the title menu's Credits page, in the README and in the release notes.
 
 Car models:
 

@@ -75,14 +75,6 @@ const INTRO_HOLD: i32 = 74;
 const INTRO_TOTAL: i32 = 150;
 const INTRO_FADE_OUT: i32 = INTRO_TOTAL - INTRO_FADE_IN - INTRO_HOLD;
 
-/// The licence credit for the Pavel 3D cars (RAZOR, FURY, BOLT, BRUTE, DASH,
-/// CINDER), shown on the boot splash. The same words are in the README, the
-/// CHANGELOG and the release notes.
-const CARS_CREDIT_LINES: [&str; 2] = [
-    "Cars: Pavel 3D, Low Poly City Vehicles Pack, CC BY 4.0",
-    "pavel-3d.itch.io/low-poly-city-vehicles-pack",
-];
-
 /// Analog deflection below this is treated as centred: a worn DualShock never
 /// reads exactly 0x80.
 ///
@@ -425,7 +417,7 @@ const DEFAULT_MATCH_RULE: usize = 2;
 /// row as well. Versus is decided by whether a second pad answers, which is a
 /// fact about the room rather than something to ask about; the garage was the
 /// select screen with one seat on it.
-const MENU: [&str; draw::MENU_ROWS] = ["MATCH", "PRACTICE", "DEMO", "SETTINGS"];
+const MENU: [&str; draw::MENU_ROWS] = ["MATCH", "PRACTICE", "DEMO", "SETTINGS", "CREDITS"];
 
 /// Index of the row that parks the opponent instead of driving it.
 const ROW_PRACTICE: usize = 1;
@@ -433,6 +425,8 @@ const ROW_PRACTICE: usize = 1;
 const ROW_DEMO: usize = 2;
 /// Index of the row that opens the settings panel instead of a match.
 const ROW_SETTINGS: usize = 3;
+/// Index of the row that opens the credits page.
+const ROW_CREDITS: usize = 4;
 
 /// The hint under the title menu that says where the controls page is.
 const CONTROLS_HINT: &str = "SELECT: CONTROLS";
@@ -462,6 +456,48 @@ const CONTROLS_PAGES: [(&str, &[(&str, &str)]); 2] = [
             ("PULL AGAINST", "CANCEL A FLIP IN PROGRESS"),
             ("HALF FLIP", "BACK FLIP THEN CANCEL AND ROLL"),
             ("STALL", "ROLL AGAINST STICK THEN FLIP"),
+        ],
+    ),
+];
+
+/// One line of the credits page: a heading, or a line of the credit under it.
+#[derive(Clone, Copy)]
+enum CreditLine {
+    Head(&'static str),
+    Text(&'static str),
+}
+use CreditLine::{Head, Text};
+
+/// The credits page, opened from the title menu. These are the credits the
+/// licences ask for (CC BY 4.0 for the cars, the music and the crowd, CC BY 3.0
+/// for the tyre squeal) and the CC0 sources that ask for nothing. No commas or
+/// full stops where a line can do without: the pixel face draws both as a raised
+/// tick. The links are in the README, the CHANGELOG and the release notes: keep
+/// the three in step.
+const CREDITS_PAGES: [(&str, &[CreditLine]); 2] = [
+    (
+        "CREDITS",
+        &[
+            Head("CARS"),
+            Text("Low Poly City Vehicles Pack by Pavel 3D"),
+            Text("CC BY 4.0 from itch io"),
+            Head("MUSIC"),
+            Text("Ambient Jungle Vol 1 and 2 and D&B Vol 3"),
+            Text("by Mulula VGM Loops"),
+            Text("CC BY 4.0 from itch io"),
+        ],
+    ),
+    (
+        "CREDITS",
+        &[
+            Head("CROWD"),
+            Text("Free Crowd Cheering Sounds by Gregor Quendel"),
+            Text("CC BY 4.0 from OpenGameArt"),
+            Head("TYRE SQUEAL"),
+            Text("Car tire squeal skid loop by Tom Haigh"),
+            Text("CC BY 3.0 from OpenGameArt"),
+            Head("IMPACTS AND FONTS"),
+            Text("Kronbits Free SFX and Kenney Fonts  CC0"),
         ],
     ),
 ];
@@ -530,6 +566,8 @@ struct NitroXide {
     settings: Option<usize>,
     /// The controls page is open, holding which page of it is showing.
     controls: Option<u8>,
+    /// The credits page is open (title menu only), holding its page.
+    credits: Option<u8>,
     /// Player two takes the left half. Whoever is sitting on the left of the
     /// sofa should be looking at the left of the screen, and that is not
     /// something the pad they picked up should decide.
@@ -693,6 +731,7 @@ impl NitroXide {
             scoreboard_open: draw::SCOREBOARD_STEPS,
             settings: None,
             controls: None,
+            credits: None,
             swap_seats: false,
             music: music::Music::new(),
             paints: [0, 5],
@@ -1701,19 +1740,6 @@ impl NitroXide {
             font.draw_text(x, 150, glyph, (channel(76), channel(108), channel(128)));
             x += font.text_width(glyph) as i16;
         }
-
-        // The credit CC BY 4.0 asks for, for the six cars that are not ours.
-        let credit = |y: i16, text: &str| {
-            let tint = (level as i32 * 70 / 128) as u8;
-            font.draw_text(
-                draw::SCREEN_W / 2 - font.text_width(text) as i16 / 2,
-                y,
-                text,
-                (tint, tint + 8, tint + 22),
-            );
-        };
-        credit(176, CARS_CREDIT_LINES[0]);
-        credit(188, CARS_CREDIT_LINES[1]);
     }
 
     /// The controls page, over the title or the pause menu: what each button
@@ -1747,6 +1773,46 @@ impl NitroXide {
             X as i16 + W as i16 / 2,
             y as i16 + h as i16 - 20,
             if usize::from(page) + 1 < CONTROLS_PAGES.len() {
+                "RIGHT: NEXT PAGE    X: BACK"
+            } else {
+                "LEFT: PREVIOUS PAGE    X: BACK"
+            },
+            (148, 158, 182),
+        );
+    }
+
+    /// The credits page, over the title menu: who made what, and under which
+    /// licence. Same plate as the controls page, left and right turn the pages.
+    fn draw_credits(&self, display: &FontAtlas, font: &FontAtlas, buffer_y: u16, page: u8) {
+        const X: u16 = 16;
+        const W: u16 = 288;
+        const ROW: i16 = 14;
+        let (title, lines) = CREDITS_PAGES[usize::from(page).min(CREDITS_PAGES.len() - 1)];
+        let h = 62 + lines.len() as u16 * ROW as u16;
+        let y = (draw::SCREEN_H as u16 - h) / 2;
+
+        psx_gpu::fill_rect(X, buffer_y + y, W, h, 10, 12, 22);
+        psx_gpu::fill_rect(X + 4, buffer_y + y + 4, W - 8, h - 8, 24, 28, 44);
+
+        Self::shadowed(
+            display,
+            X as i16 + (W as i16 - display.text_width(title) as i16) / 2,
+            y as i16 + 10,
+            title,
+            (255, 255, 255),
+        );
+        for (i, line) in lines.iter().enumerate() {
+            let row_y = y as i16 + 34 + i as i16 * ROW;
+            match line {
+                Head(text) => Self::shadowed(font, X as i16 + 12, row_y, text, (255, 210, 110)),
+                Text(text) => Self::shadowed(font, X as i16 + 24, row_y, text, (210, 218, 235)),
+            }
+        }
+        Self::centred(
+            font,
+            X as i16 + W as i16 / 2,
+            y as i16 + h as i16 - 20,
+            if usize::from(page) + 1 < CREDITS_PAGES.len() {
                 "RIGHT: NEXT PAGE    X: BACK"
             } else {
                 "LEFT: PREVIOUS PAGE    X: BACK"
@@ -2435,6 +2501,24 @@ impl Scene for NitroXide {
             }
             return;
         }
+        // The credits page does the same, opened from the title's CREDITS row.
+        if let Some(page) = self.credits {
+            self.idle = 0;
+            if ctx.just_pressed(button::LEFT) && page > 0 {
+                self.credits = Some(page - 1);
+                audio::ui(audio::Ui::Move);
+            } else if ctx.just_pressed(button::RIGHT) && usize::from(page) + 1 < CREDITS_PAGES.len() {
+                self.credits = Some(page + 1);
+                audio::ui(audio::Ui::Move);
+            } else if ctx.just_pressed(button::CROSS)
+                || ctx.just_pressed(button::CIRCLE)
+                || ctx.just_pressed(button::START)
+            {
+                self.credits = None;
+                audio::ui(audio::Ui::Back);
+            }
+            return;
+        }
         let menu_open = match self.phase {
             Phase::Title => self.settings.is_none(),
             Phase::Play => self.paused && self.settings.is_none(),
@@ -2500,6 +2584,9 @@ impl Scene for NitroXide {
                 if ctx.just_pressed(button::CROSS) || ctx.just_pressed(button::START) {
                     if self.menu == ROW_SETTINGS {
                         self.settings = Some(0);
+                        audio::ui(audio::Ui::Open);
+                    } else if self.menu == ROW_CREDITS {
+                        self.credits = Some(0);
                         audio::ui(audio::Ui::Open);
                     } else if self.menu == ROW_DEMO {
                         audio::ui(audio::Ui::Select);
@@ -3043,7 +3130,7 @@ impl NitroXide {
                 self.draw_title(display, hud, ctx.sim_tick.as_u32());
                 if self.settings.is_some() {
                     self.draw_settings(display, hud, ctx.fb.draw_origin().1);
-                } else if self.controls.is_none() {
+                } else if self.controls.is_none() && self.credits.is_none() {
                     Self::shadowed(
                         hud,
                         draw::SCREEN_W - 10 - hud.text_width(CONTROLS_HINT) as i16,
@@ -3054,6 +3141,9 @@ impl NitroXide {
                 }
                 if let Some(page) = self.controls {
                     self.draw_controls(display, hud, ctx.fb.draw_origin().1, page);
+                }
+                if let Some(page) = self.credits {
+                    self.draw_credits(display, hud, ctx.fb.draw_origin().1, page);
                 }
             }
             Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
