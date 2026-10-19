@@ -53,6 +53,7 @@
 use crate::draw;
 use nitroxide_sim::{uu, Car, Sim, WinCondition, GOAL_HALF_W, GOAL_H, HALF_Z, PADS};
 use psx_sfx::hw::Hw;
+use psx_sfx::master::{Master, Ratio};
 use psx_sfx::mixer::{Class, Handle, Lane, Mixer, Play, Policy, Sound, SoundId};
 use psx_sfx::space::{
     gains, Center, Curve, Emitter, Gains, Listener, ListenerRule, Listeners, PanLaw, Space,
@@ -316,21 +317,30 @@ static mut UI_HI: u32 = 0;
 // ("RMS dBFS"): each is 16384 * 10^((target - rms) / 20), where the target is
 // the sound's RMS at the voice in dBFS, before the master volume.
 //
-// The yardstick is the music. Alone it mixes to -24.8 dBFS RMS at the SPU
-// output (headless dump of the music disc, 2026-10-15): its -15 LUFS less the
-// 10.1 dB the master volume 0x2800 takes off, which a menu click measured the
-// same way confirms (a sound's in-mix peak is its sample peak, plus
-// 20 log10(volume / 16384), minus 10.1). In the terms of the targets below,
-// which are before the master, the music is -15.
+// The yardstick is the music. Alone it mixes to -15 dBFS RMS at the CD input
+// (its -15 LUFS), and its peaks sit within a dB of full scale. The SPU adds the
+// voices and the CD into one 16-bit sum and clips it before the main volume, so
+// the main volume makes no room and nothing can be levelled over the music
+// without taking the sum past the rail: the goal used to be levelled seven dB
+// over it, which put 6 to 14 percent of the goal's samples on the rail for two
+// and a half seconds. The mix is therefore built at `HEADROOM` (see the master,
+// above) and the figures below are the voice's own level, before that.
+// Measured on a headless dump of the attract demo with the SPU main volume as
+// the documented level (emulator dddd2814); the older emulators played the main
+// volume at half, so the same overload looked 6 dB quieter there.
 //
-// Menu sounds are 10 dB under that, so a click is heard but never competes.
-// The countdown and the go are a few dB under it: they carry information and
-// sit under the music's peaks. The engine, at top speed, and the crowd are
-// beds, 8 and 14 dB under, there to be felt when the music thins out. The
-// horn, the whistle and the roar are over it, because they are the match
-// telling you something; the horn and the roar run at the top of the range
-// because the explosion they share a goal with is already loud. Ball hits,
-// pads and the goal explosion keep the levels the game already shipped with.
+// Menu sounds are 10 dB under the music, so a click is heard but never
+// competes. The countdown and the go are a few dB under it: they carry
+// information and sit under the music's peaks. The engine, at top speed, and
+// the crowd are beds, 8 and 14 dB under, there to be felt when the music
+// thins out. The horn, the whistle and the roar are over it, because they are
+// the match telling you something, and the sounds that are over it duck the
+// music (`Sound::with_duck`) so that they have the room: a goal drops the song
+// 12 dB for its celebration. A goal's four sounds start in the same tick, so
+// their peaks add: the explosion, horn, net and roar are levelled together to
+// leave headroom (the loudest sample of the demo's goals is 0.85 of full scale,
+// against clipping before). Ball hits and pads keep the levels the game already
+// shipped with.
 //
 // These are the level a sound has at its loudest and dead centre. Distance
 // takes it down from there and the pan moves it between the ears; a sound at
@@ -348,8 +358,8 @@ const L_UI_CLOSE: i16 = 0x131B;
 const L_BEEP: i16 = 0x1B1B;
 const L_GO: i16 = 0x1B4D;
 const L_WHISTLE: i16 = 0x39B4;
-const L_HORN: i16 = 0x3800;
-const L_ROAR: i16 = 0x3C00;
+const L_HORN: i16 = 0x2600;
+const L_ROAR: i16 = 0x23A0;
 const L_GASP: i16 = 0x1FB5;
 const L_CROWD: i16 = 0x0E32;
 const L_ENGINE: i16 = 0x08F0;
@@ -358,13 +368,13 @@ const L_JUMP: i16 = 0x180D;
 const L_FLIP: i16 = 0x19C6;
 const L_LAND: i16 = 0x2393;
 const L_BOUNCE: i16 = 0x2776;
-const L_NET: i16 = 0x28D9;
+const L_NET: i16 = 0x17C0;
 const L_BUMP: i16 = 0x2EE6;
 const L_SONIC: i16 = 0x35D9;
 const L_PAD_BIG: i16 = 0x2B44;
 const L_EMPTY: i16 = 0x1CEC;
 /// The chant after a goal sits 7 dB under the horn; at a kickoff it is softer.
-const L_CHEER: i16 = 0x2E5C;
+const L_CHEER: i16 = 0x2600;
 const L_CHEER_KICKOFF: i16 = 0x1D42;
 
 // ---- space --------------------------------------------------------------------
@@ -502,10 +512,10 @@ fn at(
 /// Bring the SPU up, upload the samples, set the mixer up. Once, at boot.
 pub fn init() {
     spu::init();
-    spu::set_main_volume(Volume(0x2800), Volume(0x2800));
+    spu::set_main_volume(Volume(0x3FFF), Volume(0x3FFF));
     // Route the CD's own audio into the mix, for the XA music `music.rs`
-    // plays. Without this the drive plays to nothing.
-    spu::set_cd_volume(CdVolume::MAX, CdVolume::MAX);
+    // plays. Without this the drive plays to nothing. Its level is the
+    // mixer's music master, below.
     spu::enable_cd_audio(true);
     // Noise clock for the boost hiss: dark enough to read as a jet rather
     // than as static.
@@ -527,7 +537,13 @@ pub fn init() {
         } else {
             Sound::one_shot(id, sample, lane)
         };
-        unsafe { (*(&raw mut SOUNDS))[i] = sound.with_class(class).with_prio(prio) };
+        let sound = sound.with_class(class).with_prio(prio);
+        let sound = match i {
+            i if i == Snd::Goal as usize || i == Snd::Horn as usize => sound.with_duck(DUCK_GOAL),
+            i if i == Snd::Whistle as usize => sound.with_duck(DUCK_WHISTLE),
+            _ => sound,
+        };
+        unsafe { (*(&raw mut SOUNDS))[i] = sound };
         if i == Snd::UiMove as usize {
             unsafe { UI_LO = sample.addr().byte_offset() };
         }
@@ -540,6 +556,14 @@ pub fn init() {
     for v in V_BOOST {
         spu::Voice::new(v).set_adsr(HELD);
     }
+
+    // The mix levels: headroom for the effects and the music, and the duck.
+    let mut master = Master::new();
+    master.set_sfx(HEADROOM);
+    master.set_music(HEADROOM);
+    master.set_duck_rates(DUCK_ATTACK, DUCK_RELEASE);
+    mixer().set_master(hw(), master);
+    sync_music();
 }
 
 /// What the last tick looked like, for the sounds that are an edge between two
@@ -623,6 +647,65 @@ pub fn tick() {
         TICK
     };
     mixer().tick(hw(), now);
+    sync_music();
+}
+
+// ---- the master ---------------------------------------------------------------
+//
+// The SPU adds the voices and the CD (the XA music) into one 16-bit sum and
+// clips it there, before the main volume. The music is mastered at -15 LUFS and
+// peaks within a dB of full scale on its own, so any loud effect on top of it
+// clips the whole mix: a goal (explosion, horn, crowd and net together) took
+// 6 to 14 percent of the samples to the rail for its two and a half seconds,
+// the harsh noise the console played, and a hard kickoff hit still crackled.
+// Two things make the room, both the SDK's `Master`:
+//
+// - everything is mixed `HEADROOM` lower and the main volume is raised to
+//   make it up, so the loudness the player hears is what it was but the sum
+//   has 4.4 dB before it reaches the rail;
+// - a sound that is meant to be heard over the song (`with_duck`) pulls the
+//   music down for as long as it plays, and the music climbs back afterwards.
+
+/// What the effects and the music are mixed at, before the main volume, which
+/// is at its full 0x3FFF to give it back (0.6 against the 0.625 the main
+/// volume 0x2800 had: the same loudness to within 0.4 dB, whichever way the
+/// silicon scales the main volume word).
+const HEADROOM: Ratio = Ratio::new(3, 5);
+/// How far the music drops under the goal, the whistle and the like, as a Q12
+/// gain: 12 dB, and 6 dB for the whistle, which is quieter.
+const DUCK_GOAL: u16 = 1024;
+const DUCK_WHISTLE: u16 = 2048;
+/// How fast the music moves, Q12 per tick: down at once, back in 32 ticks.
+const DUCK_ATTACK: u16 = 4096;
+const DUCK_RELEASE: u16 = 128;
+
+/// The CD volume last written, so an unchanged music level costs no writes.
+static mut MUSIC_LEVEL: i16 = 0;
+
+/// Write the music level (the music master times the duck) to the CD volume
+/// when it has changed.
+fn sync_music() {
+    let level = mixer().master().music_level_q15();
+    unsafe {
+        if level != MUSIC_LEVEL {
+            MUSIC_LEVEL = level;
+            spu::set_cd_volume(CdVolume(level), CdVolume(level));
+        }
+    }
+}
+
+/// Take the duck a sound that has just started asked for on this tick rather
+/// than the next, for a sound that lands at full strength on its first sample
+/// (the goal's explosion): easing the music down would leave its peak on top of
+/// the song's. The step is a click in the music, buried under the bang.
+fn duck_now() {
+    mixer().tick(hw(), unsafe { TICK });
+    sync_music();
+}
+
+/// A boost hiss's level, which is outside the mixer, with the effects master.
+fn hiss(level: i16) -> Volume {
+    Volume(mixer().master().scale_level(level))
 }
 
 // ---- menus --------------------------------------------------------------------
@@ -684,6 +767,7 @@ pub fn match_end() {
         return;
     }
     let _ = flat(Snd::Whistle, L_WHISTLE, UNITY);
+    duck_now();
 }
 
 // ---- the match ----------------------------------------------------------------
@@ -792,7 +876,7 @@ pub fn update(s: &Sim, split: bool) {
         let wreck = if s.car.demo_timer >= s.opponent.demo_timer { &s.car } else { &s.opponent };
         let _ = at(
             Snd::Goal,
-            0x2C00,
+            0x1C00,
             UNITY,
             0,
             at_car(wreck),
@@ -812,7 +896,7 @@ pub fn update(s: &Sim, split: bool) {
             let pos = at_car(car);
             if car.boosting {
                 let (l, r) = ears(place(pos, &CURVE_CAR, ListenerRule::Nearest), 0x1000);
-                v.set_volume(Volume(l), Volume(r));
+                v.set_volume(hiss(l), hiss(r));
                 v.set_pitch(Pitch::for_frequency(8_000, 44_100));
                 spu::Voice::start(1 << V_BOOST[k]);
                 let _ = at(Snd::Boost, 0x1C00, UNITY, 0, pos, &CURVE_CAR, ListenerRule::Loudest);
@@ -839,7 +923,7 @@ pub fn update(s: &Sim, split: bool) {
     if freeze > 0 && unsafe { LAST_FREEZE } == 0 {
         let _ = at(
             Snd::Goal,
-            0x3000,
+            0x1CC0,
             at_rate(Snd::Goal, 32_000),
             0,
             ball,
@@ -848,6 +932,7 @@ pub fn update(s: &Sim, split: bool) {
         );
         let _ = flat(Snd::Horn, L_HORN, UNITY);
         let _ = flat(Snd::Roar, L_ROAR, UNITY);
+        duck_now();
         // The ball into the netting. The world stops the instant it crosses
         // the line, so it never reaches the back of the net by itself: this
         // is that thump, as hard as the ball was going.
@@ -1115,7 +1200,7 @@ fn held_sounds(s: &Sim, seen: &mut Seen, live: bool) {
 
         if cs.boosting {
             let (l, r) = ears(g, 0x1000);
-            spu::Voice::new(V_BOOST[k]).set_volume(Volume(l), Volume(r));
+            spu::Voice::new(V_BOOST[k]).set_volume(hiss(l), hiss(r));
         }
     }
 }

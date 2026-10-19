@@ -90,3 +90,17 @@ channel and length of each track).
 Source: Mulula VGM Loops, Ambient Jungle Vol 1, Vol 2 and Ambient Jungle D&B
 Vol 3, **CC BY 4.0**, <https://mululavgmloops.itch.io/>. The licence asks for
 this attribution, which the README, the changelog and the release notes carry.
+
+## The mix
+
+The SPU adds every voice and the CD (the XA music) into one 16-bit sum and
+clips it before the main volume is applied, so the main volume does not make
+room. The music is -15 LUFS and peaks within a dB of full scale on its own.
+`game/src/audio.rs` therefore mixes the effects and the music at 0.6 (the
+mixer's `Master`) and sets the main volume to 0x3FFF to give the level back, so
+the sum has 4.4 dB of room, and the goal explosion, the horn and the final
+whistle duck the music while they sound (`Sound::with_duck`). Check a change
+to a level with a headless dump of the attract demo (`--dump-audio`) on an
+emulator that applies the main volume as documented (the demo disc's, dddd2814
+or newer): no second of it should have more than a handful of samples at
+32,767.

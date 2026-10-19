@@ -7,6 +7,19 @@ The credits moved off the boot splash. The splash is the Bonnie Studios logo and
 and font credits are on a Credits row at the bottom of the title menu, two pages,
 styled like the controls page. The links are in the README and the release notes.
 
+The goal sound no longer clips. The SPU adds every voice and the music into one
+16-bit sum and clips that sum before the main volume, and the music alone peaks
+within a dB of full scale, so the goal's explosion, horn, net and crowd on top of
+it put 6 to 14 percent of the samples on the rail for the two and a half seconds
+of the celebration, a crushed, harsh noise (a hard kickoff hit crackled too). The
+effects and the music are now mixed 4.4 dB lower and the main volume is raised to
+give it back (the same loudness to within half a dB), the goal, the horn and the
+final whistle pull the music down while they sound (the SDK's `Master` duck, which
+the game had not wired up), and the goal's sounds are levelled so that their peaks
+add up to well under full scale. Over the 255 s attract demo the clipped samples
+went from 77,273 to 6, and the loudest sample of a goal is 0.85 of full scale at
+most.
+
 The air game plays like Rocket League's. A car in the air used to turn at a fixed,
 slow rate (yaw 1.4 and roll 3.1 radians a second) and a dodge was a push along the
 ground with a drawn spin. The stick is now a torque with Rocket League's own
