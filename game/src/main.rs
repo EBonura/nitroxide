@@ -442,13 +442,13 @@ const CONTROLS_PAGES: [(&str, &[(&str, &str)]); 2] = [
         "CONTROLS",
         &[
             ("R2 / L2", "ACCELERATE / REVERSE"),
-            ("D-PAD / STICK", "STEER"),
-            ("X", "JUMP, HOLD FOR HEIGHT"),
+            ("DPAD / STICK", "STEER"),
+            ("X", "JUMP: HOLD FOR HEIGHT"),
             ("CIRCLE", "BOOST"),
             ("L1", "POWERSLIDE ON THE GROUND"),
             ("TRIANGLE", "BALL CAM"),
             ("START", "PAUSE"),
-            ("SELECT", "THIS PAGE, FROM A MENU"),
+            ("SELECT", "THIS PAGE FROM A MENU"),
         ],
     ),
     (
@@ -457,11 +457,11 @@ const CONTROLS_PAGES: [(&str, &[(&str, &str)]); 2] = [
             ("STICK", "PITCH AND TURN THE CAR"),
             ("L1 + STICK", "FREE AIR ROLL"),
             ("SQUARE / R1", "ROLL LEFT / RIGHT"),
-            ("X, X AGAIN", "SECOND JUMP"),
-            ("X, X + DIRECTION", "FLIP: FRONT, BACK OR SIDE"),
+            ("X THEN X", "DOUBLE JUMP"),
+            ("X THEN X + STICK", "FLIP: FRONT BACK OR SIDE"),
             ("PULL AGAINST", "CANCEL A FLIP IN PROGRESS"),
-            ("BACK FLIP, CANCEL", "HALF FLIP: ROLL TO FACE FORWARD"),
-            ("ROLL + OTHER WAY", "STALL: FLIP IN PLACE"),
+            ("HALF FLIP", "BACK FLIP THEN CANCEL AND ROLL"),
+            ("STALL", "ROLL AGAINST THE STICK: FLIP"),
         ],
     ),
 ];
@@ -1740,7 +1740,7 @@ impl NitroXide {
         for (i, (keys, what)) in rows.iter().enumerate() {
             let row_y = y as i16 + 34 + i as i16 * ROW;
             Self::shadowed(font, X as i16 + 12, row_y, keys, (255, 210, 110));
-            Self::shadowed(font, X as i16 + 104, row_y, what, (210, 218, 235));
+            Self::shadowed(font, X as i16 + 112, row_y, what, (210, 218, 235));
         }
         Self::centred(
             font,
