@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+The air game plays like Rocket League's. A car in the air used to turn at a fixed,
+slow rate (yaw 1.4 and roll 3.1 radians a second) and a dodge was a push along the
+ground with a drawn spin. The stick is now a torque with Rocket League's own
+strength and damping (pitch 130, yaw 95, roll 400 against damping 30, 20 and 50)
+and the whole spin is capped at its 5.5 radians a second, so a car turns quickly,
+keeps turning when you let go and has to be caught. A flip is a real angular
+impulse from the same orientation the car is drawn in: the kick is 500 uu/s
+scaled up to 1.9 times sideways and 2.5 times backward by speed, the flip's
+torque and the pull-down on its climb are Rocket League's, and so are the flip
+cancel, the stall, the half flip and the short pitch lockout after a flip. L1
+with the stick is free air roll, and Square and R1 roll left and right. The stick
+is proportional in the air. A flip at speed keeps its kick instead of being cut
+back to the throttle's top speed, a fast car falling is held to the 2300 uu/s
+ceiling, a car lands facing the way its nose pointed, and a car leaving a wall by
+a jump leaves in the attitude it had. L1 with the stick to the right used to roll
+the car to the left; it rolls right now. The controls are on a page of their own
+(Select, from the title or the pause menu). The numbers are checked against
+RocketSim in `sim/PARITY.md`. Three of the attract demo's four matches use
+different seeds, since flips changed how the old ones played out.
+
 The dotted pale line along the lower edge of a goal post halo, and the short bright
 dashes under other glows (the ball landing disc, the goal-line strip, sparks), are
 gone. A glow quad samples one row past its tile on the pixels of a sloped edge,

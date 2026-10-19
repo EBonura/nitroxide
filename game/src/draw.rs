@@ -7795,8 +7795,21 @@ fn car_world(c: &sim::Car) -> Mat3I16 {
 
 /// Where the car's mesh origin sits in render space: on the ground under the
 /// hitbox centre, because that is where `tools/cook-models` puts it.
+///
+/// Under the hitbox centre along the car's own down axis once it is in the
+/// air, so a car tumbling through a flip turns about the point the physics
+/// turns it about rather than swinging the mesh round a spot below it. On the
+/// ground, and level, that is straight down as it always was.
 fn car_ground(c: &sim::Car) -> (i32, i32, i32) {
-    (r(c.p.x), ry(c.p.y) + sim::CAR_REST_Y, r(c.p.z))
+    if c.grounded {
+        return (r(c.p.x), ry(c.p.y) + sim::CAR_REST_Y, r(c.p.z));
+    }
+    let lift = |component: i32| (component * sim::CAR_REST_Y) >> 12;
+    (
+        r(c.p.x) - lift(c.up.x),
+        ry(c.p.y) + lift(c.up.y),
+        r(c.p.z) - lift(c.up.z),
+    )
 }
 
 /// Draw the player car: a cooked mesh through the engine's Gouraud pass.
@@ -7872,19 +7885,9 @@ fn draw_cars<'a>(
             car_lod_exit_depth(size),
         );
         let which = if far { which + CAR_COUNT } else { which };
-        // Mid-flip, spin the car about the axis across its dodge direction:
-        // yaw into the dodge frame, tumble about X, yaw back out. A forward
-        // dodge front-flips, a sideways one barrel-rolls, which is the whole
-        // reason the move looks like anything.
-        let mut world = car_world(body);
-        if body.dodge_timer > 0 {
-            let done = (sim::DODGE_TICKS - body.dodge_timer) as i32;
-            let spin = (done * 4096 / sim::DODGE_TICKS as i32) as u16;
-            world = world
-                .mul(&rot_y_q12(body.dodge_dir))
-                .mul(&rot_x_q12(spin))
-                .mul(&rot_y_q12(body.dodge_dir.wrapping_neg()));
-        }
+        // A flip is the car's own spin now (`Car::w`), so the pose it is
+        // drawn in is just its attitude: there is no animation to add here.
+        let world = car_world(body);
         // `Car::steer` stores tan(angle), because that is what the bicycle
         // model consumes. Convert it back to a signed turn for the authored
         // front-wheel groups. Wheel roll is about their local axle before the

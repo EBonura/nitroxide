@@ -35,6 +35,8 @@ pub mod camera;
 pub mod playlist;
 #[cfg(test)]
 mod camera_tests;
+#[cfg(test)]
+mod air_tests;
 
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
@@ -268,26 +270,48 @@ const JUMP_SLICES_PER_TICK: u8 = 2;
 const JUMP_STICKY_NUM: i32 = 26;
 const JUMP_STICKY_DEN: i32 = 9;
 const JUMP_STICKY_SLICES: u8 = 3;
-/// Yaw rate in the air, Q0.12 per tick. RL gives a car full pitch, yaw and
-/// roll airborne; with no 3D orientation yet this is the yaw part, which is
-/// the one that decides where a landing points and whether an aerial touch
-/// happens at all. About 1.4 rad/s, deliberately under the ground turn rate.
-const AIR_TURN: i32 = 15;
-/// Pitch and roll rate in the air, Q0.12 per tick. Faster than the yaw, the
-/// way Rocket League has it: roll is how you set up a landing or a flick, so
-/// it wants to be quick enough to correct with.
-const AIR_ROLL: i32 = 34;
-/// How quickly an air-control rate reaches the rate the stick is asking for,
-/// `/1024`. Not instant: the car used to snap to the commanded rate on the
-/// tick the stick moved and back to nothing the tick it was released, which
-/// is the largest remaining reason the air feels unlike Rocket League.
-const AIR_SPIN_GAIN: i32 = 300;
-/// What survives of a rate with nothing commanded, `/1024`. A released input
-/// coasts to a stop over about a third of a second instead of stopping dead.
-const AIR_SPIN_DECAY: i32 = 880;
-/// Ceiling on any one axis, in Q12 turns a tick. RL caps angular speed at
-/// about 5.5 rad/s, which is 0.875 turns a second, or 60 Q12 units a tick.
-const AIR_SPIN_MAX: i32 = 60;
+// ---- air control -----------------------------------------------------------
+// Rocket League's own model, from RocketSim. The stick is a torque, not a
+// rate: what opposes it is damping proportional to how fast the car already
+// turns on that axis, and the whole rotation is capped. Together those make an
+// airborne car something to be caught as well as aimed, which is the
+// difference between a car that is being posed and one with momentum.
+//
+// RL applies `invInertia.inverse() * (torque - damping) * CAR_TORQUE_SCALE`,
+// so the inertia cancels and the torque is the angular acceleration.
+// `CAR_TORQUE_SCALE` is `2pi/65536 * 1000` (0.09587), which turns
+// `CAR_AIR_CONTROL_TORQUE` (130, 95, 400) pitch/yaw/roll into 12.46, 9.11 and
+// 38.35 rad/s^2 and `CAR_AIR_CONTROL_DAMPING` (30, 20, 50) into 2.88, 1.92 and
+// 4.79 per second.
+//
+// The car's spin is one vector, held in the world frame in radians a tick
+// scaled by `2^ANG_FP`. A rate of 5.5 rad/s is 0.0917 rad a tick, so 20 bits
+// leave 96,000 steps across the cap: fine enough that a tenth of a stick
+// still turns the car smoothly and a released axis settles instead of
+// stalling on a rounding.
+/// Fractional bits of [`Car::w`].
+pub const ANG_FP: i32 = 20;
+/// Angular acceleration about the car's own right axis at full stick, per tick
+/// squared in [`ANG_FP`] units. RL pitch torque 130 (12.46 rad/s^2).
+const AIR_TORQUE_PITCH: i32 = 3630;
+/// The same about its up axis. RL yaw torque 95 (9.11 rad/s^2).
+const AIR_TORQUE_YAW: i32 = 2653;
+/// The same about its nose. RL roll torque 400 (38.35 rad/s^2), by far the
+/// strongest: roll is how a landing or a flick gets set up.
+const AIR_TORQUE_ROLL: i32 = 11170;
+/// Pitch damping per tick, `/65536` of the rate on that axis. RL 30.
+const AIR_DAMP_PITCH: i32 = 3142;
+/// Yaw damping per tick, `/65536`. RL 20.
+const AIR_DAMP_YAW: i32 = 2094;
+/// Roll damping per tick, `/65536`. RL 50.
+///
+/// Unlike the other two this one is never relaxed by the stick, which is why
+/// a held roll would settle at a terminal 8 rad/s (above the cap) instead of
+/// running away the way a held pitch or yaw does.
+const AIR_DAMP_ROLL: i32 = 5236;
+/// Ceiling on the whole spin, `/2^ANG_FP` rad a tick. RL `CAR_MAX_ANG_SPEED`
+/// 5.5 rad/s.
+const AIR_SPIN_MAX: i32 = 96119;
 /// Maximum automatic landing correction, in Q12 turns per tick. Sixteen is
 /// about 1.4 degrees a frame: visible and useful during a ceiling-height fall,
 /// but slow enough that leaving the upper curve never looks like a pose snap.
@@ -309,10 +333,61 @@ const SHALLOW_UP: i32 = 2896;
 /// Ticks after leaving the ground in which a second press still counts. RL
 /// allows 1.25 s; this is the same window.
 const DODGE_WINDOW: u8 = 75;
-/// Forward speed a flip adds, RL-ish: a dodge is worth about 500 uu/s.
+/// How hard a flip kicks along the ground, uu/s as sub-units a tick. RL
+/// `FLIP_INITIAL_VEL_SCALE` 500, scaled by the speed the car already has and
+/// by which way it is flipping (below).
 const DODGE_IMPULSE: i32 = 533;
-/// How long the car is committed to a flip, and how long it draws rotated.
-pub const DODGE_TICKS: u8 = 40;
+/// Flip impulse scale at full speed, `/4096`, forward / sideways / backward.
+/// RL `FLIP_{FORWARD,SIDE,BACKWARD}_IMPULSE_MAX_SPEED_SCALE` 1.0, 1.9, 2.5:
+/// a flip adds `500 * (1 + (scale - 1) * speed / 2300)` uu/s, so a standing
+/// flip is the same every way and a flip at speed is worth far more across the
+/// car or against its travel than along it.
+const DODGE_FWD_SCALE: i32 = 4096;
+const DODGE_SIDE_SCALE: i32 = 7782;
+const DODGE_BACK_SCALE: i32 = 10240;
+/// Extra on a backward flip's forward component, `/4096`. RL
+/// `FLIP_BACKWARD_IMPULSE_SCALE_X` 16/15.
+const DODGE_BACK_EXTRA: i32 = 4369;
+/// Below this forward speed a flip is "backward" simply because the stick was
+/// pulled back; above it, because it opposes the travel. RL: 100 uu/s.
+const DODGE_TURNAROUND: i32 = 107;
+/// A stick this far off centre (sum of its axes, of 128) starts a flip rather
+/// than a plain second jump. RL `dodgeDeadzone` 0.5.
+const DODGE_DEADZONE: i32 = 64;
+/// How long the car is committed to a flip: RL `FLIP_TORQUE_TIME` 0.65 s, which
+/// is 39 ticks. The tick the flip starts on applies no torque, as in RL.
+pub const DODGE_TICKS: u8 = 39;
+/// How long pitch control stays locked out from the start of a flip. RL
+/// `FLIP_TORQUE_TIME + FLIP_PITCHLOCK_EXTRA_TIME` 0.65 + 0.3 s = 57 ticks.
+const FLIP_PITCH_LOCK: u8 = 57;
+
+// The turning half of a flip. RL builds a torque in the car's own frame from
+// the direction the stick asked for, `(-dir.y * FLIP_TORQUE_X, dir.x *
+// FLIP_TORQUE_Y, 0)`, and applies it every tick the flip lasts. Unlike air
+// control it is not scaled by `CAR_TORQUE_SCALE`: 260 and 224 are rad/s^2
+// outright, so a flip is up to the 5.5 rad/s cap in about three 120 Hz steps
+// (checked against RocketSim: 1.97 rad/s after one step, 5.5 after three).
+//
+// So a forward flip front-flips and a sideways one barrel-rolls, and neither
+// is a drawn animation: the car really is on its back mid-flip and really has
+// to come back from it.
+/// Roll acceleration at a fully sideways flip, per tick squared in
+/// [`ANG_FP`] units. RL `FLIP_TORQUE_X` 260.
+const FLIP_TORQUE_ROLL: i32 = 75730;
+/// Pitch acceleration at a fully forward flip. RL `FLIP_TORQUE_Y` 224.
+const FLIP_TORQUE_PITCH: i32 = 65245;
+/// What survives of the car's vertical speed each tick inside the damping
+/// window, `/4096`. RL kills 35% of it per 120 Hz step, so at 60 Hz that is
+/// `0.65^2`. It is why a flip hangs in the air instead of climbing: the move
+/// converts the second jump into distance.
+const FLIP_Z_DAMP: i32 = 1731;
+/// When that window opens and closes for a still-rising car, in ticks from
+/// the flip's start (it ends with the flip, at 0.65 s). RL says 0.15 s and
+/// 0.21 s, but compares them as floats that have been summed a step at a
+/// time, and the first damped step measured out of RocketSim is the one
+/// after 0.15 s, so the opening is 10 ticks rather than 9.
+const FLIP_Z_DAMP_START: u8 = 10;
+const FLIP_Z_DAMP_RISING_END: u8 = 12;
 
 // ---- supersonic and demolitions ---------------------------------------------
 // The one place in Rocket League where a car is a weapon. Past 2200 uu/s you
@@ -637,10 +712,10 @@ pub struct DemoMatch {
 
 /// The attract demo's matches, in the order it plays them.
 pub const DEMO_MATCHES: [DemoMatch; 4] = [
-    DemoMatch { spot: 0, seed: 1, first_goal: 1813, scorer: Team::Blue },
-    DemoMatch { spot: 3, seed: 2, first_goal: 1345, scorer: Team::Orange },
-    DemoMatch { spot: 2, seed: 22, first_goal: 1136, scorer: Team::Blue },
-    DemoMatch { spot: 4, seed: 37, first_goal: 1529, scorer: Team::Orange },
+    DemoMatch { spot: 0, seed: 1, first_goal: 1395, scorer: Team::Blue },
+    DemoMatch { spot: 3, seed: 18, first_goal: 1606, scorer: Team::Orange },
+    DemoMatch { spot: 2, seed: 8, first_goal: 953, scorer: Team::Blue },
+    DemoMatch { spot: 4, seed: 16, first_goal: 1482, scorer: Team::Orange },
 ];
 
 /// The demo bots' flair (see `Sim::flair`), in uu relative to the car: how
@@ -996,10 +1071,17 @@ pub struct Car {
     pub jumps_used: u8,
     /// Ticks left of the window in which the second jump still counts.
     pub dodge_window: u8,
-    /// Ticks left of a flip in progress. The renderer rolls the car by this.
+    /// Ticks of torque left in a flip in progress; zero when none is. The
+    /// flip itself is [`Car::w`] being driven, not an animation.
     pub dodge_timer: u8,
-    /// Q0.12 direction of the flip in progress, relative to the car's nose.
-    pub dodge_dir: u16,
+    /// Ticks left in which a flip (or the one that just ended) still locks
+    /// out pitch control. RL keeps it off for 0.3 s after the torque ends.
+    pub flip_lock: u8,
+    /// The flip's direction in the car's own frame, Q12 and unit length:
+    /// `x` is toward the nose, `y` toward the right. Both zero is a stall: a
+    /// flip whose stick cancelled itself, which adds no spin.
+    pub flip_dx: i16,
+    pub flip_dy: i16,
     /// Past 2200 uu/s. Worth drawing, and worth fearing: a supersonic car
     /// destroys any opponent it catches with its bumper.
     pub supersonic: bool,
@@ -1036,12 +1118,11 @@ pub struct Car {
     /// same reason gravity's is: rounding 17.63 up to 18 every tick is 2.1%.
     pub boost_rem: i16,
     pub air_throttle_rem: i16,
-    /// Air-control rates about the car's own pitch, yaw and roll axes, in Q12
-    /// turns a tick. Orientation is integrated from these rather than being
-    /// set straight from the stick, so rotation carries and decays.
-    pub w_pitch: i16,
-    pub w_yaw: i16,
-    pub w_roll: i16,
+    /// Angular velocity in the world frame, radians a tick scaled by
+    /// `2^`[`ANG_FP`]. Real state: the attitude is integrated from it each
+    /// tick, so rotation carries, a flip spins the car, and a released stick
+    /// leaves it turning until the damping takes it.
+    pub w: V3,
 }
 
 impl Car {
@@ -1050,11 +1131,11 @@ impl Car {
     /// as well as the jump count -- otherwise the next jump inherits a spent
     /// slice budget and refuses to build.
     fn clear_jump_state(&mut self) {
-        // Contact settles the air rates too, or a car lands still turning and
-        // slides off the direction it was pointed.
-        self.w_pitch = 0;
-        self.w_yaw = 0;
-        self.w_roll = 0;
+        // Contact settles the spin and any flip too, or a car lands still
+        // turning and slides off the direction it was pointed.
+        self.w = V3::ZERO;
+        self.dodge_timer = 0;
+        self.flip_lock = 0;
         self.jumps_used = 0;
         self.jump_slices = 0;
         self.jump_min_left = 0;
@@ -1172,22 +1253,6 @@ fn plane_axes(up: V3) -> (V3, V3) {
     (a, cross_q12(a, up).unit_q12())
 }
 
-/// Rotate `v` about the Q12 unit `axis` by a Q0.12 angle.
-///
-/// Rodrigues, with the parallel term dropped. Air-control always turns a
-/// basis vector about a perpendicular basis axis, so the omitted term is zero
-/// and costs need not be paid on PlayStation.
-fn rotate_about(v: V3, axis: V3, angle_q12: i32) -> V3 {
-    let a = (angle_q12 & 0xFFF) as u16;
-    let (s, c) = (sin_q12(a), cos_q12(a));
-    let k = cross_q12(axis, v);
-    V3::new(
-        ((v.x * c) >> 12) + ((k.x * s) >> 12),
-        ((v.y * c) >> 12) + ((k.y * s) >> 12),
-        ((v.z * c) >> 12) + ((k.z * s) >> 12),
-    )
-}
-
 /// Full Rodrigues rotation for an arbitrary axis.
 ///
 /// Landing correction rotates both stored basis vectors about the shortest
@@ -1228,6 +1293,80 @@ fn cross_q12(a: V3, b: V3) -> V3 {
     cross_shift(a, b, 12)
 }
 
+/// [`yaw_for`] with the table arctangent instead of the SDK's, which is off
+/// by up to four degrees mid-octant. The air control turns the attitude a
+/// little every tick and reads the yaw back out of it, so that error would
+/// show as a wobble in every spin.
+fn yaw_for_fine(up: V3, dir: V3) -> u16 {
+    let (a, b) = plane_axes(up);
+    angle::atan2_q12_fine(dot_q12(dir, a), dot_q12(dir, b))
+}
+
+/// The heading a car lands with, as the yaw it has on a level floor: where its
+/// nose points over the ground, or, nose straight up or down, where its roof
+/// leans. `Car::yaw` is measured from axes that move with `up`, so keeping the
+/// raw number across a landing turned the car by a different angle each time.
+fn floor_yaw(car: &Car) -> u16 {
+    let (_, up, fwd) = car.basis();
+    let flat = isqrt_i32(fwd.x * fwd.x + fwd.z * fwd.z);
+    let (x, z) = if flat >= 1024 {
+        (fwd.x, fwd.z)
+    } else if fwd.y < 0 {
+        (up.x, up.z)
+    } else {
+        (-up.x, -up.z)
+    };
+    angle::atan2_q12_fine(x, z)
+}
+
+/// The yaw and roll the sticks ask for in the air: the steer axis is yaw,
+/// unless free air roll is held, when it is roll; the directional roll buttons
+/// add to roll either way. Both `-128..=128`.
+fn air_axes(input: &Input, steer: i32) -> (i32, i32) {
+    let yaw = if input.air_roll { 0 } else { steer };
+    let roll = input.roll.clamp(-128, 128) + if input.air_roll { steer } else { 0 };
+    (yaw, roll.clamp(-128, 128))
+}
+
+#[inline]
+fn v3_add(a: V3, b: V3) -> V3 {
+    V3::new(a.x + b.x, a.y + b.y, a.z + b.z)
+}
+
+/// `w . axis` for a spin in [`ANG_FP`] units and a Q12 axis, rounded.
+#[inline]
+fn spin_about(w: V3, axis: V3) -> i32 {
+    (w.x * axis.x + w.y * axis.y + w.z * axis.z + 2048) >> 12
+}
+
+/// Length of a spin vector. Its components reach 1e5, which does not square
+/// inside an i32, so it is measured sixteen times coarser (0.02% of the cap).
+fn spin_len(w: V3) -> i32 {
+    V3::new(w.x >> 4, w.y >> 4, w.z >> 4).len() << 4
+}
+
+/// A spin held to RL's cap on its whole length.
+fn clamp_spin(w: V3) -> V3 {
+    let speed = spin_len(w);
+    if speed <= AIR_SPIN_MAX {
+        return w;
+    }
+    let (cap, now) = (AIR_SPIN_MAX >> 4, speed >> 4);
+    V3::new(w.x * cap / now, w.y * cap / now, w.z * cap / now)
+}
+
+/// `w x v` for a spin in [`ANG_FP`] units and a Q12 vector: how far the vector
+/// moves in one tick, rounded to nearest so a slow turn is not biased.
+#[inline]
+fn spin_cross(w: V3, v: V3) -> V3 {
+    const HALF: i32 = 1 << (ANG_FP - 1);
+    V3::new(
+        (w.y * v.z - w.z * v.y + HALF) >> ANG_FP,
+        (w.z * v.x - w.x * v.z + HALF) >> ANG_FP,
+        (w.x * v.y - w.y * v.x + HALF) >> ANG_FP,
+    )
+}
+
 /// One tick of player intent. Throttle and steer are `-128..=127` so both a
 /// D-pad and an analog stick can drive it.
 #[derive(Copy, Clone, Debug, Default)]
@@ -1254,9 +1393,14 @@ pub struct Input {
     /// a fifth of a second while it is held, which is what makes the height
     /// controllable rather than fixed.
     pub jump_held: bool,
-    /// Held: turns the steer axis into roll rather than yaw while airborne,
-    /// the way Rocket League's air-roll button does.
+    /// Held: free air roll. Turns the steer axis into roll rather than yaw
+    /// while airborne, the way Rocket League's air-roll button does; pitch
+    /// stays on the stick's other axis, so all three can be worked at once.
     pub air_roll: bool,
+    /// Directional air roll: right (+) / left (-), `-128..=127`, from its own
+    /// buttons. Rolls the car whatever the stick is doing, so it can be held
+    /// against a yaw (the stall) or while steering the nose with the stick.
+    pub roll: i32,
     /// Held: powerslide. Takes nine tenths of the sideways grip away and adds
     /// steering lock, so the back end comes round and the car corners on the
     /// slide rather than on the tyres.
@@ -2153,6 +2297,165 @@ impl Sim {
 
     // ---- car ---------------------------------------------------------------
 
+    /// Begin a flip. `forward` is the stick toward the nose (+) or tail (-)
+    /// and `side` toward the right (+) or left (-), yaw and roll together as
+    /// RL sums them, so a roll held against a yaw cancels to a stall. `along`
+    /// is the car's speed along its nose, which scales the kick.
+    fn start_flip(car: &mut Car, forward: i32, side: i32, along: i32) {
+        car.dodge_timer = DODGE_TICKS;
+        car.flip_lock = FLIP_PITCH_LOCK;
+        // Unit direction, or none: a stick that cancels itself is a stall.
+        if forward.abs() < 13 && side.abs() < 13 {
+            car.flip_dx = 0;
+            car.flip_dy = 0;
+            return;
+        }
+        let len = isqrt_i32(forward * forward + side * side).max(1);
+        let dx = forward * 4096 / len;
+        let dy = side * 4096 / len;
+        car.flip_dx = dx as i16;
+        car.flip_dy = dy as i16;
+
+        // RL's torque begins on the 120 Hz step after the press, and this
+        // tick is two such steps: the press lands on the first of them half
+        // the time, in which case the second already carries torque. Giving
+        // that step to every flip also makes the torque last the same 77
+        // steps RL's does (38 ticks and this half tick).
+        let (right, _, fwd) = car.basis();
+        let (pitch, roll) = (dx * FLIP_TORQUE_PITCH >> 12, dy * FLIP_TORQUE_ROLL >> 12);
+        car.w = clamp_spin(V3::new(
+            car.w.x + rz(right.x * pitch - fwd.x * roll, 13),
+            car.w.y + rz(right.y * pitch - fwd.y * roll, 13),
+            car.w.z + rz(right.z * pitch - fwd.z * roll, 13),
+        ));
+
+        // RL drops a component under a tenth of the stick from the kick (not
+        // from the spin) so a near-straight flip is exactly straight.
+        let (kx, ky) = (
+            if dx.abs() < 410 { 0 } else { dx },
+            if dy.abs() < 410 { 0 } else { dy },
+        );
+        if kx == 0 && ky == 0 {
+            return;
+        }
+        // The kick scales with speed, against the boost top speed, in the
+        // direction it is aimed. Against the travel, or pulled back from a
+        // standing start, it is the backward flip.
+        let ratio = along.abs() * 4096 / CAR_BOOST_SPEED;
+        let backward = if along.abs() < DODGE_TURNAROUND {
+            kx < 0
+        } else {
+            (kx >= 0) != (along >= 0)
+        };
+        let fscale = if backward { DODGE_BACK_SCALE } else { DODGE_FWD_SCALE };
+        let mut x = rz(kx * DODGE_IMPULSE, 12);
+        x = rz(x * (4096 + (fscale - 4096) * ratio / 4096), 12);
+        if backward {
+            x = rz(x * DODGE_BACK_EXTRA, 12);
+        }
+        let mut y = rz(ky * DODGE_IMPULSE, 12);
+        y = rz(y * (4096 + (DODGE_SIDE_SCALE - 4096) * ratio / 4096), 12);
+
+        // In the ground plane, along the nose's heading however the car is
+        // tilted. A nose straight up or down has no heading and no kick.
+        let (_, _, nose) = car.basis();
+        let flat = isqrt_i32(nose.x * nose.x + nose.z * nose.z);
+        if flat > 0 {
+            let (fx, fz) = (nose.x * 4096 / flat, nose.z * 4096 / flat);
+            // Right of a heading `(fx, fz)` is `(fz, -fx)`.
+            car.v.x += rz(fx * x + fz * y, 12);
+            car.v.z += rz(fz * x - fx * y, 12);
+        }
+    }
+
+    /// One tick of the car's spin in the air, then the attitude it implies.
+    ///
+    /// Two torques, both about the car's own axes: the stick's (RL
+    /// `CAR_AIR_CONTROL_TORQUE`, against damping on the rate the car already
+    /// has) and a flip's, which shuts the stick out for as long as it lasts
+    /// unless it is being cancelled. The spin is capped at RL's 5.5 rad/s as
+    /// a whole, then the car's up and forward are turned by it.
+    ///
+    /// Axis signs follow the sim's own: pitch is a turn about the car's right
+    /// (positive nose down, as `Input::pitch`), yaw about its up (positive to
+    /// the right), roll about its nose reversed (positive right side down).
+    fn air_spin(car: &mut Car, input: &Input, basis: (V3, V3, V3), steer: i32) {
+        let (right, up, fwd) = basis;
+        let pitch_in = input.pitch.clamp(-128, 128);
+        let (yaw_in, roll_in) = air_axes(input, steer);
+
+        let (mut a_pitch, mut a_yaw, mut a_roll) = (0, 0, 0);
+        let mut stick = true;
+        if car.dodge_timer > 0 {
+            stick = false;
+            let (dx, dy) = (car.flip_dx as i32, car.flip_dy as i32);
+            if dx == 0 && dy == 0 {
+                // A stall: the flip adds no spin and leaves the stick live.
+                stick = true;
+            } else {
+                // Pulling against the flip's own pitch scales it away, and a
+                // full pull cancels it. That is the only stick the flip lets
+                // through, and the only one that is damped for it.
+                let mut scale = 128;
+                if dx != 0 && pitch_in != 0 && (dx > 0) != (pitch_in > 0) {
+                    scale = 128 - pitch_in.abs();
+                    stick = true;
+                }
+                a_pitch += (dx * FLIP_TORQUE_PITCH >> 12) * scale / 128;
+                a_roll += dy * FLIP_TORQUE_ROLL >> 12;
+            }
+        }
+        if stick {
+            // Pitch stays locked out for a while after a flip, as in RL.
+            let pitch_in = if car.flip_lock > 0 { 0 } else { pitch_in };
+            let w_pitch = spin_about(car.w, right);
+            let w_yaw = spin_about(car.w, up);
+            let w_roll = -spin_about(car.w, fwd);
+            // Pitch and yaw damping relax as the stick is pushed, so a held
+            // stick runs to the cap; roll's never does.
+            a_pitch += pitch_in * AIR_TORQUE_PITCH / 128
+                - rz(w_pitch * (AIR_DAMP_PITCH * (128 - pitch_in.abs()) / 128), 16);
+            a_yaw += yaw_in * AIR_TORQUE_YAW / 128
+                - rz(w_yaw * (AIR_DAMP_YAW * (128 - yaw_in.abs()) / 128), 16);
+            a_roll += roll_in * AIR_TORQUE_ROLL / 128 - rz(w_roll * AIR_DAMP_ROLL, 16);
+        }
+        if a_pitch == 0 && a_yaw == 0 && a_roll == 0 {
+            // Nothing pushing and the damper too weak to take another unit
+            // off what is left: a spin under 0.004 rad/s is settled, and
+            // leaving it would cost the maths every tick for no motion.
+            if car.w.x.abs() < 64 && car.w.y.abs() < 64 && car.w.z.abs() < 64 {
+                car.w = V3::ZERO;
+                return;
+            }
+        }
+        // RL steps at 120 Hz, so the tick is two of its steps. Each adds half
+        // the tick's torque, carries the car on at that speed and only then
+        // clamps it to the cap; the car therefore turns a little faster than
+        // the cap while a torque keeps pushing against it (a flip's 224
+        // rad/s^2 against 5.5 rad/s turns it at 7.4 rad/s, measured). Two
+        // clamps, one rotation by the mean of the two unclamped speeds.
+        let half = V3::new(
+            rz(right.x * a_pitch + up.x * a_yaw - fwd.x * a_roll, 13),
+            rz(right.y * a_pitch + up.y * a_yaw - fwd.y * a_roll, 13),
+            rz(right.z * a_pitch + up.z * a_yaw - fwd.z * a_roll, 13),
+        );
+        let first = v3_add(car.w, half);
+        let second = v3_add(clamp_spin(first), half);
+        car.w = clamp_spin(second);
+
+        let turn = V3::new(
+            (first.x + second.x) >> 1,
+            (first.y + second.y) >> 1,
+            (first.z + second.z) >> 1,
+        );
+        if turn != V3::ZERO {
+            let turned_up = v3_add(up, spin_cross(turn, up)).unit_q12();
+            let turned_fwd = v3_add(fwd, spin_cross(turn, fwd)).unit_q12();
+            car.up = turned_up;
+            car.yaw = yaw_for_fine(turned_up, turned_fwd);
+        }
+    }
+
     fn tick_car(car: &mut Car, input: &Input, gravity: i32) {
         let (right, up, fwd) = car.basis();
         // Speed and heading are measured in the surface plane now, not in XZ.
@@ -2160,6 +2463,12 @@ impl Sim {
         // game behaves exactly as it did.
         let speed = plane_len(car.v, up);
         let along = dot_q12(car.v, fwd);
+        // What the speed cap below lets a car keep. On the ground that is its
+        // speed over the surface; in the air the whole velocity, because a
+        // car tumbling through a flip has no surface to measure over, and
+        // measuring over whichever way its roof happens to point cut a flip's
+        // kick back to the throttle's top speed.
+        let carried = if car.grounded { speed } else { car.v.len() };
 
         // The powerslide is analog even though the button is not: it takes
         // about a fifth of a second to commit to and half a second to come out
@@ -2224,75 +2533,21 @@ impl Sim {
         }
 
         if !car.grounded {
-            // Air control. Without it a jump is a commitment: you leave the
-            // ground pointing wherever you happened to be and land the same
-            // way, which makes both the jump and the dodge close to useless
-            // for anything but a straight-line flick.
-            //
-            // Pitch on the throttle axis, roll on steer with the modifier
-            // held, yaw on steer without it. All three work the same way:
-            // turn the car's own basis about one of its own axes, then read
-            // the new up and yaw back out of it, since those two are what the
-            // car actually stores.
-            // Rates rather than rotations. Each axis chases what the stick is
-            // asking for and coasts when it is let go, which is the whole
-            // difference between an airborne car that has momentum and one
-            // that is being posed.
-            let spin = |rate: i16, target: i32| -> i16 {
-                let rate = rate as i32;
-                let next = if target != 0 {
-                    rate + (((target - rate) * AIR_SPIN_GAIN) >> 10)
-                } else {
-                    damp(rate, AIR_SPIN_DECAY)
-                };
-                next.clamp(-AIR_SPIN_MAX, AIR_SPIN_MAX) as i16
-            };
-            car.w_pitch = spin(car.w_pitch, AIR_ROLL * input.pitch.clamp(-128, 128) / 128);
-            car.w_roll = spin(
-                car.w_roll,
-                if input.air_roll {
-                    AIR_ROLL * want / 128
-                } else {
-                    0
-                },
-            );
-            car.w_yaw = spin(
-                car.w_yaw,
-                if input.air_roll {
-                    0
-                } else {
-                    AIR_TURN * want / 128
-                },
-            );
+            // Air control, then the flip's own torque, then the attitude
+            // follows the spin. See `Sim::air_spin`.
+            Self::air_spin(car, input, (right, up, fwd), want);
 
-            let pitch = car.w_pitch as i32;
-            let roll = car.w_roll as i32;
-            if pitch != 0 || roll != 0 {
-                let mut u = up;
-                let mut f = fwd;
-                if pitch != 0 {
-                    u = rotate_about(u, right, pitch);
-                    f = rotate_about(f, right, pitch);
-                }
-                if roll != 0 {
-                    // Roll turns about the nose, so forward is unchanged and
-                    // only up moves.
-                    u = rotate_about(u, f, roll);
-                }
-                car.up = u.unit_q12();
-                car.yaw = yaw_for(car.up, f.unit_q12());
-            }
-            if car.w_yaw != 0 {
-                car.yaw = car.yaw.wrapping_add(car.w_yaw as u16);
-            }
-
-            // A car that runs out of grip on the upper curve keeps the pose it
-            // had at the instant of release. With no explicit pitch or roll,
-            // gently turn that pose toward a wheels-down landing while it
-            // falls. The correction is capped and proportional near the end,
-            // so it is a recovery over many frames rather than the old
-            // one-tick assignment to world-up.
-            if input.pitch == 0 && !input.air_roll {
+            // Left alone with no stick and no jump behind it (rolled off a
+            // wall, or bumped into the air), the car eases toward a wheels-down
+            // landing the way it always did. Once it has jumped, or any air
+            // input is held, the attitude is the player's and nothing here
+            // touches it: Rocket League has no auto-right in the air.
+            if car.jumps_used == 0
+                && car.w == V3::ZERO
+                && input.pitch == 0
+                && input.roll == 0
+                && !input.air_roll
+            {
                 let (_, current_up, current_forward) = car.basis();
                 let world_up = V3::new(0, 4096, 0);
                 let mut axis = cross_q12(current_up, world_up);
@@ -2332,6 +2587,7 @@ impl Sim {
             }
         }
 
+        let mut flipped = false;
         if car.grounded {
             if throttle != 0 {
                 // Throttle against the direction of travel is a brake first.
@@ -2378,10 +2634,11 @@ impl Sim {
                 // pushes away from the wall.
                 add_scaled(&mut car.v, up, CAR_JUMP_V);
                 car.grounded = false;
-                // Remember the surface before `up` is flattened, or the sticky
-                // force below pulls toward the floor after a wall jump.
+                // Remember the surface the jump left, for the sticky force
+                // below. The attitude is kept: a car jumping off a wall leaves
+                // it nose up the wall, the way Rocket League has it, and the
+                // air control takes it from there.
                 car.jump_normal = up;
-                car.up = V3::new(0, 4096, 0);
                 car.jumps_used = 1;
                 car.jump_holding = true;
                 car.jump_slices = 0;
@@ -2393,27 +2650,16 @@ impl Sim {
                 car.dodge_window = 0;
             }
         } else if input.jump_pressed && car.jumps_used == 1 && car.dodge_window > 0 {
-            // Second press in the air. With a direction held it is a dodge,
-            // which is the move the whole game is built on: it converts the
-            // jump into speed along the ground rather than height. Without
-            // one it is a plain double jump.
+            // Second press in the air. With the stick off centre it is a
+            // dodge, the move the whole game is built on: a kick along the
+            // ground plane and a spin that turns the car over. Without one it
+            // is a plain double jump.
             car.jumps_used = 2;
-            // The stick, not the throttle. Holding accelerate is not a request
-            // to flip forwards, and reading it as one meant a neutral double
-            // jump -- the move you want when you are going for height -- was
-            // impossible without first letting go of the trigger.
-            let (steer, pitch) = (input.steer.clamp(-128, 128), input.pitch.clamp(-128, 128));
-            if steer.abs() > 40 || pitch.abs() > 40 {
-                // Direction in the car's own frame: sine is the steer axis,
-                // cosine the pitch axis, so forward is 0 and right is a
-                // quarter turn. Then rotated onto the car's heading.
-                let local = atan2_q12(steer, pitch);
-                car.dodge_dir = local;
-                car.dodge_timer = DODGE_TICKS;
-                let world = car.yaw.wrapping_add(local);
-                let (sn, cs) = heading(world);
-                car.v.x += (sn * DODGE_IMPULSE) >> 12;
-                car.v.z += (cs * DODGE_IMPULSE) >> 12;
+            let pitch = input.pitch.clamp(-128, 128);
+            let (yaw_in, roll_in) = air_axes(input, want);
+            if pitch.abs() + yaw_in.abs() + roll_in.abs() >= DODGE_DEADZONE {
+                Self::start_flip(car, pitch, yaw_in + roll_in, along);
+                flipped = true;
             } else {
                 // Additive, and along the roof rather than straight up: a
                 // second jump should always gain speed, which an assignment to
@@ -2426,10 +2672,18 @@ impl Sim {
         // carried from a boost is kept when you let go: RL does not brake you
         // back down, it just stops adding. `speed` here is this tick's entry
         // speed, before the acceleration above.
-        let limit = if car.boosting {
+        //
+        // A flip's kick is not engine power, so it is held to the 2300 uu/s
+        // ceiling rather than to the throttle's 1410: a front flip at full
+        // throttle speed adds its 500 uu/s instead of being cut back to where
+        // it started.
+        let limit = if car.boosting || flipped {
             CAR_BOOST_SPEED
         } else {
-            CAR_MAX_SPEED.max(speed)
+            // Kept, but never past the ceiling: a fast car falling picked up
+            // a tick of gravity beyond it every tick, where RL clamps the
+            // whole velocity to 2300 uu/s each step.
+            CAR_MAX_SPEED.max(carried).min(CAR_BOOST_SPEED)
         };
         // The whole velocity, not the part of it lying in the driving
         // surface. `plane_len` drops the component along the surface normal,
@@ -2481,6 +2735,17 @@ impl Sim {
             }
         }
 
+        // A flip crushes the climb it started with (RL `FLIP_Z_DAMP`): from
+        // 0.15 s in, every tick while the car is falling, and until 0.21 s
+        // while it is still rising. This is what makes a dodge distance
+        // rather than height.
+        if car.dodge_timer > 0
+            && car.dodge_timer + FLIP_Z_DAMP_START <= DODGE_TICKS + 1
+            && (car.v.y < 0 || car.dodge_timer + FLIP_Z_DAMP_RISING_END >= DODGE_TICKS + 1)
+        {
+            car.v.y = rz(car.v.y * FLIP_Z_DAMP, 12);
+        }
+
         if !car.grounded {
             car.v.y -= gravity;
         }
@@ -2519,6 +2784,7 @@ impl Sim {
         }
         car.dodge_window = car.dodge_window.saturating_sub(1);
         car.dodge_timer = car.dodge_timer.saturating_sub(1);
+        car.flip_lock = car.flip_lock.saturating_sub(1);
         car.bump_cool = car.bump_cool.saturating_sub(1);
 
         // Supersonic, and it is a state rather than a speed: Rocket League
@@ -2542,6 +2808,13 @@ impl Sim {
             car.p.y = floor;
             car.v.y = 0;
             car.grounded = true;
+            // Wheels down, whatever the car was doing: but keep the way it was
+            // pointing, which is not what the stored yaw means once `up` has
+            // moved (see `floor_yaw`). A car that never tilted keeps its yaw
+            // untouched.
+            if car.up.y < 4094 {
+                car.yaw = floor_yaw(car);
+            }
             car.up = V3::new(0, 4096, 0);
             car.clear_jump_state();
             car.dodge_window = 0;
@@ -4129,8 +4402,9 @@ mod tests {
     #[ignore]
     fn bot_match_survey() {
         let ticks: i32 = std::env::var("TICKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2400);
+        let seeds: u32 = std::env::var("SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
         for spot in 0..KICKOFF_SPOTS.len() {
-            for seed in 1u32..=12 {
+            for seed in 1u32..=seeds {
                 let mut sim = Sim::new();
                 sim.blue_ai = true;
                 sim.bot_flair = true;
@@ -4256,7 +4530,9 @@ mod tests {
             jumps_used: 2,
             dodge_window: 9,
             dodge_timer: 7,
-            dodge_dir: 1234,
+            flip_lock: 40,
+            flip_dx: 3000,
+            flip_dy: -2000,
             supersonic: true,
             sonic_grace: 33,
             demo_timer: 0,
@@ -4271,9 +4547,7 @@ mod tests {
             boost_ticks: 6,
             boost_rem: 21,
             air_throttle_rem: 8,
-            w_pitch: 80,
-            w_yaw: -90,
-            w_roll: 100,
+            w: V3::new(8000, -9000, 10_000),
         }
     }
 
@@ -4397,6 +4671,7 @@ mod tests {
             jump_pressed: true,
             jump_held: true,
             air_roll: true,
+            roll: 100,
             handbrake: true,
         };
         for tick in 0..KICKOFF_HOLD_TICKS {
@@ -6491,6 +6766,7 @@ mod tests {
                 // the edge.
                 jump_held: t % 37 < 6,
                 air_roll: t % 11 == 0,
+                roll: if t % 29 < 8 { 128 } else { 0 },
                 handbrake: t % 23 < 6,
             });
             assert!(
@@ -7009,10 +7285,10 @@ mod tests {
         sim.car.jump_normal = V3::new(4096, 0, 0);
         sim.car.dodge_window = 40;
         sim.car.dodge_timer = 20;
-        sim.car.dodge_dir = 1024;
-        sim.car.w_pitch = 30;
-        sim.car.w_yaw = -20;
-        sim.car.w_roll = 15;
+        sim.car.flip_lock = 30;
+        sim.car.flip_dx = 4096;
+        sim.car.flip_dy = 1000;
+        sim.car.w = V3::new(3000, -2000, 1500);
         sim.car.boosting = true;
         sim.car.boost_ticks = 4;
         sim.car.boost_rem = 300;
@@ -7030,13 +7306,13 @@ mod tests {
         assert_eq!((c.jump_bonus_rem, c.jump_sticky_rem), (0, 0));
         assert_eq!(c.jump_normal, V3::ZERO);
         assert_eq!(
-            (c.dodge_window, c.dodge_timer, c.dodge_dir),
-            (0, 0, 0),
+            (c.dodge_window, c.dodge_timer, c.flip_lock, c.flip_dx, c.flip_dy),
+            (0, 0, 0, 0, 0),
             "no dodge should survive a restart"
         );
         assert_eq!(
-            (c.w_pitch, c.w_yaw, c.w_roll),
-            (0, 0, 0),
+            c.w,
+            V3::ZERO,
             "and the car should not still be turning"
         );
         assert!(!c.boosting);

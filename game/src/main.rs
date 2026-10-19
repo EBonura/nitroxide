@@ -120,6 +120,11 @@ const DRIVE_ACTIONS: ActionMap<9> = ActionMap::new([
     ActionBinding::new(button::CROSS, 0),
     ActionBinding::new(button::L1, 0),
 ]);
+/// The directional air-roll buttons. Not in `DRIVE_ACTIONS`: the settings
+/// profile stores that map at a fixed nine entries, so a tenth would change
+/// the save record, and the game has no rebinding screen to make them need it.
+const ROLL_LEFT_BUTTON: u16 = button::SQUARE;
+const ROLL_RIGHT_BUTTON: u16 = button::R1;
 
 /// The answer to an unformatted card after the player requests Save Settings.
 #[derive(Clone, Copy, PartialEq)]
@@ -429,6 +434,38 @@ const ROW_DEMO: usize = 2;
 /// Index of the row that opens the settings panel instead of a match.
 const ROW_SETTINGS: usize = 3;
 
+/// The hint under the title menu that says where the controls page is.
+const CONTROLS_HINT: &str = "SELECT: CONTROLS";
+/// The controls page: a title and the rows of buttons and what they do.
+const CONTROLS_PAGES: [(&str, &[(&str, &str)]); 2] = [
+    (
+        "CONTROLS",
+        &[
+            ("R2 / L2", "ACCELERATE / REVERSE"),
+            ("D-PAD / STICK", "STEER"),
+            ("X", "JUMP, HOLD FOR HEIGHT"),
+            ("CIRCLE", "BOOST"),
+            ("L1", "POWERSLIDE ON THE GROUND"),
+            ("TRIANGLE", "BALL CAM"),
+            ("START", "PAUSE"),
+            ("SELECT", "THIS PAGE, FROM A MENU"),
+        ],
+    ),
+    (
+        "IN THE AIR",
+        &[
+            ("STICK", "PITCH AND TURN THE CAR"),
+            ("L1 + STICK", "FREE AIR ROLL"),
+            ("SQUARE / R1", "ROLL LEFT / RIGHT"),
+            ("X, X AGAIN", "SECOND JUMP"),
+            ("X, X + DIRECTION", "FLIP: FRONT, BACK OR SIDE"),
+            ("PULL AGAINST", "CANCEL A FLIP IN PROGRESS"),
+            ("BACK FLIP, CANCEL", "HALF FLIP: ROLL TO FACE FORWARD"),
+            ("ROLL + OTHER WAY", "STALL: FLIP IN PLACE"),
+        ],
+    ),
+];
+
 /// One entry in the in-match pause menu. Which of these are offered depends on
 /// the match: swapping sides means nothing with one pad on one screen. The
 /// presentation toggles that used to sit here directly live in the settings
@@ -491,6 +528,8 @@ struct NitroXide {
     /// closed. One field serves the title menu and the pause menu both, since
     /// only one of them can have opened it.
     settings: Option<usize>,
+    /// The controls page is open, holding which page of it is showing.
+    controls: Option<u8>,
     /// Player two takes the left half. Whoever is sitting on the left of the
     /// sofa should be looking at the left of the screen, and that is not
     /// something the pad they picked up should decide.
@@ -653,6 +692,7 @@ impl NitroXide {
             pause_row: 0,
             scoreboard_open: draw::SCOREBOARD_STEPS,
             settings: None,
+            controls: None,
             swap_seats: false,
             music: music::Music::new(),
             paints: [0, 5],
@@ -981,6 +1021,10 @@ impl NitroXide {
             // it: on the ground it breaks the back end loose, in the air it
             // rolls. One button, and which it means is decided by the wheels.
             air_roll: held(ACT_AIR_ROLL),
+            // The directional roll buttons, which roll the car whatever the
+            // stick is doing; held against a yaw they make the stall.
+            roll: if pad.buttons.bits() & ROLL_RIGHT_BUTTON != 0 { 128 } else { 0 }
+                - if pad.buttons.bits() & ROLL_LEFT_BUTTON != 0 { 128 } else { 0 },
             handbrake: held(ACT_AIR_ROLL),
         }
     }
@@ -1556,12 +1600,19 @@ impl NitroXide {
         const X: u16 = 64;
         const W: u16 = 192;
         let rows = self.pause_rows();
-        let h = 56 + rows.len() as u16 * 16;
+        let h = 72 + rows.len() as u16 * 16;
         let y = (draw::SCREEN_H as u16 - h) / 2;
 
         psx_gpu::fill_rect(X, buffer_y + y, W, h, 10, 12, 22);
         psx_gpu::fill_rect(X + 4, buffer_y + y + 4, W - 8, h - 8, 24, 28, 44);
 
+        Self::centred(
+            font,
+            X as i16 + W as i16 / 2,
+            y as i16 + h as i16 - 22,
+            CONTROLS_HINT,
+            (148, 158, 182),
+        );
         Self::shadowed(
             display,
             X as i16 + 46,
@@ -1663,6 +1714,45 @@ impl NitroXide {
         };
         credit(176, CARS_CREDIT_LINES[0]);
         credit(188, CARS_CREDIT_LINES[1]);
+    }
+
+    /// The controls page, over the title or the pause menu: what each button
+    /// does, and how to flip, cancel a flip and roll in the air. Same plate as
+    /// the settings panel, two pages, left and right to turn them.
+    fn draw_controls(&self, display: &FontAtlas, font: &FontAtlas, buffer_y: u16, page: u8) {
+        const X: u16 = 16;
+        const W: u16 = 288;
+        const ROW: i16 = 14;
+        let (title, rows) = CONTROLS_PAGES[usize::from(page).min(CONTROLS_PAGES.len() - 1)];
+        let h = 62 + rows.len() as u16 * ROW as u16;
+        let y = (draw::SCREEN_H as u16 - h) / 2;
+
+        psx_gpu::fill_rect(X, buffer_y + y, W, h, 10, 12, 22);
+        psx_gpu::fill_rect(X + 4, buffer_y + y + 4, W - 8, h - 8, 24, 28, 44);
+
+        Self::shadowed(
+            display,
+            X as i16 + (W as i16 - display.text_width(title) as i16) / 2,
+            y as i16 + 10,
+            title,
+            (255, 255, 255),
+        );
+        for (i, (keys, what)) in rows.iter().enumerate() {
+            let row_y = y as i16 + 34 + i as i16 * ROW;
+            Self::shadowed(font, X as i16 + 12, row_y, keys, (255, 210, 110));
+            Self::shadowed(font, X as i16 + 104, row_y, what, (210, 218, 235));
+        }
+        Self::centred(
+            font,
+            X as i16 + W as i16 / 2,
+            y as i16 + h as i16 - 20,
+            if usize::from(page) + 1 < CONTROLS_PAGES.len() {
+                "RIGHT: NEXT PAGE    X: BACK"
+            } else {
+                "LEFT: PREVIOUS PAGE    X: BACK"
+            },
+            (148, 158, 182),
+        );
     }
 
     /// The settings panel, over whichever menu opened it. Same plate as the
@@ -2323,6 +2413,38 @@ impl Scene for NitroXide {
                 self.scoreboard_open.saturating_sub(1)
             };
         }
+        // The controls page owns the pad while it is up, whichever menu opened
+        // it. SELECT opens it from the title and from the pause menu (the
+        // settings panel and the card question keep their own pads), so no
+        // existing row moved to make room for it.
+        if let Some(page) = self.controls {
+            self.idle = 0;
+            if ctx.just_pressed(button::LEFT) && page > 0 {
+                self.controls = Some(page - 1);
+                audio::ui(audio::Ui::Move);
+            } else if ctx.just_pressed(button::RIGHT) && usize::from(page) + 1 < CONTROLS_PAGES.len() {
+                self.controls = Some(page + 1);
+                audio::ui(audio::Ui::Move);
+            } else if ctx.just_pressed(button::CROSS)
+                || ctx.just_pressed(button::CIRCLE)
+                || ctx.just_pressed(button::START)
+                || ctx.just_pressed(button::SELECT)
+            {
+                self.controls = None;
+                audio::ui(audio::Ui::Back);
+            }
+            return;
+        }
+        let menu_open = match self.phase {
+            Phase::Title => self.settings.is_none(),
+            Phase::Play => self.paused && self.settings.is_none(),
+            _ => false,
+        };
+        if menu_open && ctx.just_pressed(button::SELECT) {
+            self.controls = Some(0);
+            audio::ui(audio::Ui::Open);
+            return;
+        }
         match self.phase {
             Phase::Intro => {
                 self.intro_t += 1;
@@ -2681,7 +2803,7 @@ impl Scene for NitroXide {
                         for car in [&sim.car, &sim.opponent] {
                             for v in [
                                 car.p.x, car.p.y, car.p.z, car.v.x, car.v.y, car.v.z,
-                                car.w_pitch as i32, car.w_yaw as i32, car.w_roll as i32,
+                                car.w.x, car.w.y, car.w.z,
                                 car.boost,
                             ] {
                                 psx_rt::tty::print_hex_u32(v as u32);
@@ -2921,6 +3043,17 @@ impl NitroXide {
                 self.draw_title(display, hud, ctx.sim_tick.as_u32());
                 if self.settings.is_some() {
                     self.draw_settings(display, hud, ctx.fb.draw_origin().1);
+                } else if self.controls.is_none() {
+                    Self::shadowed(
+                        hud,
+                        draw::SCREEN_W - 10 - hud.text_width(CONTROLS_HINT) as i16,
+                        draw::SCREEN_H - 20,
+                        CONTROLS_HINT,
+                        (148, 158, 182),
+                    );
+                }
+                if let Some(page) = self.controls {
+                    self.draw_controls(display, hud, ctx.fb.draw_origin().1, page);
                 }
             }
             Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
@@ -2944,6 +3077,8 @@ impl NitroXide {
                 if self.paused {
                     if self.settings.is_some() {
                         self.draw_settings(display, hud, ctx.fb.draw_origin().1);
+                    } else if let Some(page) = self.controls {
+                        self.draw_controls(display, hud, ctx.fb.draw_origin().1, page);
                     } else {
                         self.draw_pause_menu(display, hud, ctx.fb.draw_origin().1);
                     }

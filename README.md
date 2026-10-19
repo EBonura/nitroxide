@@ -105,12 +105,43 @@ and [the car notes](#car-models).
 | --- | --- |
 | R2 | accelerate |
 | L2 | reverse / brake |
-| X | jump / select |
+| X | jump / select (hold for a higher jump, press again in the air to flip) |
 | Circle | boost |
 | Triangle | toggle ball cam |
-| L1 | powerslide / air roll |
-| D-pad or left stick | steer |
-| Start | begin / restart |
+| L1 | powerslide on the ground, free air roll in the air |
+| Square / R1 | air roll left / right |
+| D-pad or left stick | steer on the ground, pitch and turn in the air |
+| Start | begin / restart / pause |
+| Select | the controls page, from the title or the pause menu |
+
+The same list is in the game: press Select on the title screen or in the pause
+menu. The left stick is analog, and in the air it is proportional: a quarter of
+a stick turns the car a quarter as hard.
+
+### In the air
+
+Left stick up and down pitches the car (up is nose down), left and right turns
+it. Hold L1 and the left and right of the stick roll the car instead of turning
+it, and the up and down still pitch: all three at once. Square and R1 roll left
+and right whatever the stick is doing. The car turns the way Rocket League's
+does: the stick is a torque and the car keeps turning after you let go until
+its own damping stops it, at up to 5.5 radians a second, so you catch a spin
+as much as start one.
+
+A second X press within about a second of the jump flips the car, in the
+direction the stick is held. Up is a front flip, down a back flip, left or
+right a side flip, and a diagonal gives a diagonal one. A flip kicks the car
+along the ground in that direction (a sideways or backward flip at speed kicks
+hardest) and spins it for about two thirds of a second. With the stick
+centred the second jump is a plain double jump.
+
+- Flip cancel: pull the stick against a flip while it turns, and the spin stops.
+- Half flip: back flip, cancel it, then roll the car upright facing forward
+  (Square or R1, or L1 with the stick).
+- Stall: hold a roll one way (Square or R1) and the stick the other way, then
+  flip. The car rolls and stays level instead of flipping.
+- Pitch is locked out for a moment after a flip, as in Rocket League; yaw and
+  roll are not.
 
 ## Layout
 
