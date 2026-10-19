@@ -461,7 +461,7 @@ const CONTROLS_PAGES: [(&str, &[(&str, &str)]); 2] = [
             ("X THEN X + STICK", "FLIP: FRONT BACK OR SIDE"),
             ("PULL AGAINST", "CANCEL A FLIP IN PROGRESS"),
             ("HALF FLIP", "BACK FLIP THEN CANCEL AND ROLL"),
-            ("STALL", "ROLL AGAINST THE STICK: FLIP"),
+            ("STALL", "ROLL AGAINST STICK THEN FLIP"),
         ],
     ),
 ];
