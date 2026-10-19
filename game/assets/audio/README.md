@@ -104,3 +104,8 @@ to a level with a headless dump of the attract demo (`--dump-audio`) on an
 emulator that applies the main volume as documented (the demo disc's, dddd2814
 or newer): no second of it should have more than a handful of samples at
 32,767.
+
+`diag-sound` is a console diagnostic build: a sound test on the title screen
+(L2, L1, R1, R2, Square, Triangle, Circle) that prints the SPU's own envelope,
+ended flag and current volume for the voices a sound took.
+

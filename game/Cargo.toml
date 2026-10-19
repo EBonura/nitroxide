@@ -108,6 +108,13 @@ diag-log = []
 # Dev: time the audio calls with root counter 2 and print totals on the TTY
 # every thousand frames (audio_cost.rs).
 diag-audio-cost = []
+# Console diagnostic: a sound test on the title screen. L2, L1, R1, R2, Square,
+# Triangle and Circle play the goal's sounds one at a time or together, and the
+# SPU's own registers for the voices they took (envelope, ended flag, current
+# volume) are printed on screen at 3 and 30 ticks after the key-on, so one
+# photo of a console says whether the voices started and what they were
+# playing at (audio.rs, `sound_test`). Never in a shipping build.
+diag-sound = []
 
 [[bin]]
 name = "nitroxide"

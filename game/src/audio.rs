@@ -648,6 +648,8 @@ pub fn tick() {
     };
     mixer().tick(hw(), now);
     sync_music();
+    #[cfg(feature = "diag-sound")]
+    sound_test::tick();
 }
 
 // ---- the master ---------------------------------------------------------------
@@ -1238,5 +1240,165 @@ pub fn new_match() {
     unsafe {
         LAST_FREEZE = 0;
         SEEN = SEEN_AT_REST;
+    }
+}
+
+// ---- the console sound test (`diag-sound`) ---------------------------------------
+//
+// Plays the goal's sounds on demand and prints what the SPU reports about the
+// voices they took. The registers are read straight off the chip, so a console
+// photo shows what the silicon did, which a headless run cannot.
+
+#[cfg(feature = "diag-sound")]
+pub mod sound_test {
+    use super::*;
+
+    const SPU: u32 = 0x1F80_1C00;
+    /// Voices the test follows, with their names, for one test.
+    const WATCH: usize = 5;
+    static mut VOICE: [u8; WATCH] = [0xFF; WATCH];
+    static mut NAME: [&str; WATCH] = [""; WATCH];
+    static mut AT: u32 = 0;
+    static mut LIVE: bool = false;
+    /// Samples: [sample][voice] = (envelope, ended, current left, current right).
+    static mut SEEN: [[[u16; 4]; WATCH]; 2] = [[[0; 4]; WATCH]; 2];
+    static mut KONS: u16 = 0;
+    static mut LINE: [[u8; 48]; WATCH + 2] = [[b' '; 48]; WATCH + 2];
+
+    fn rd(addr: u32) -> u16 {
+        unsafe { core::ptr::read_volatile(addr as *const u16) }
+    }
+
+    fn watch(i: usize, name: &'static str, h: Option<Handle>) {
+        unsafe {
+            VOICE[i] = h.map_or(0xFF, |h| h.voice());
+            NAME[i] = name;
+        }
+    }
+
+    /// Play one of the test sounds (`which` 0..=6), or the goal's four at once
+    /// (5). Levels are the game's own.
+    pub fn play(which: u8) {
+        unsafe {
+            VOICE = [0xFF; WATCH];
+            NAME = [""; WATCH];
+            SEEN = [[[0; 4]; WATCH]; 2];
+            KONS = KONS.wrapping_add(1);
+            AT = TICK;
+            LIVE = true;
+        }
+        match which {
+            0 => watch(0, "BOOM", flat(Snd::Goal, 0x1CC0, at_rate(Snd::Goal, 32_000))),
+            1 => watch(0, "HORN", flat(Snd::Horn, L_HORN, UNITY)),
+            2 => watch(0, "ROAR", flat(Snd::Roar, L_ROAR, UNITY)),
+            3 => watch(0, "NET", flat(Snd::Net, L_NET, UNITY)),
+            4 => watch(0, "BEEP", flat(Snd::Beep, L_BEEP, UNITY)),
+            5 => {
+                watch(0, "BOOM", flat(Snd::Goal, 0x1CC0, at_rate(Snd::Goal, 32_000)));
+                watch(1, "HORN", flat(Snd::Horn, L_HORN, UNITY));
+                watch(2, "ROAR", flat(Snd::Roar, L_ROAR, UNITY));
+                watch(3, "NET", flat(Snd::Net, L_NET, UNITY));
+                duck_now();
+            }
+            _ => watch(0, "CHEER", flat(Snd::Cheer, L_CHEER, UNITY)),
+        }
+    }
+
+    /// Once per frame: take the two samples of the voices being followed.
+    pub fn tick() {
+        unsafe {
+            if !LIVE {
+                return;
+            }
+            let dt = TICK.wrapping_sub(AT);
+            let slot = if dt == 3 {
+                0
+            } else if dt == 30 {
+                1
+            } else {
+                if dt > 60 {
+                    LIVE = false;
+                }
+                return;
+            };
+            let endx = rd(0x1F80_1E9C) as u32 | ((rd(0x1F80_1E9E) as u32) << 16);
+            for i in 0..WATCH {
+                let v = VOICE[i] as u32;
+                if v >= 24 {
+                    continue;
+                }
+                SEEN[slot][i] = [
+                    rd(SPU + v * 16 + 0xC),
+                    ((endx >> v) & 1) as u16,
+                    rd(0x1F80_1E00 + v * 4),
+                    rd(0x1F80_1E00 + v * 4 + 2),
+                ];
+            }
+        }
+    }
+
+    fn hex(line: &mut [u8; 48], at: &mut usize, v: u16, digits: usize) {
+        for d in (0..digits).rev() {
+            let n = ((v >> (d * 4)) & 0xF) as u8;
+            line[*at] = if n < 10 { b'0' + n } else { b'A' + n - 10 };
+            *at += 1;
+        }
+    }
+
+    fn text(line: &mut [u8; 48], at: &mut usize, s: &str) {
+        for b in s.bytes() {
+            if *at < line.len() {
+                line[*at] = b;
+                *at += 1;
+            }
+        }
+    }
+
+    /// The lines to print: the master state, then one per followed voice.
+    /// Each voice line reads `NAME Vnn  3: ENV ENDED CUR  30: ENV ENDED CUR`.
+    pub fn lines() -> impl Iterator<Item = &'static str> {
+        unsafe {
+            let l = &mut *(&raw mut LINE);
+            l[0] = [b' '; 48];
+            let mut at = 0;
+            text(&mut l[0], &mut at, "MUTE ");
+            hex(&mut l[0], &mut at, MUTED as u16, 1);
+            text(&mut l[0], &mut at, " CD ");
+            hex(&mut l[0], &mut at, MUSIC_LEVEL as u16, 4);
+            text(&mut l[0], &mut at, " MAIN ");
+            hex(&mut l[0], &mut at, rd(0x1F80_1DB8), 4);
+            text(&mut l[0], &mut at, " KON ");
+            hex(&mut l[0], &mut at, KONS, 2);
+            l[1] = [b' '; 48];
+            let mut at = 0;
+            text(&mut l[1], &mut at, "TICK 3 / 30: ENV END CURL");
+            for i in 0..WATCH {
+                let line = &mut l[2 + i];
+                *line = [b' '; 48];
+                let mut at = 0;
+                if VOICE[i] >= 24 {
+                    continue;
+                }
+                text(line, &mut at, NAME[i]);
+                text(line, &mut at, " V");
+                hex(line, &mut at, VOICE[i] as u16, 2);
+                for slot in 0..2 {
+                    let s = SEEN[slot][i];
+                    text(line, &mut at, " ");
+                    hex(line, &mut at, s[0], 4);
+                    text(line, &mut at, " ");
+                    hex(line, &mut at, s[1], 1);
+                    text(line, &mut at, " ");
+                    hex(line, &mut at, s[2], 4);
+                    if slot == 0 {
+                        text(line, &mut at, " /");
+                    }
+                }
+            }
+            (0..WATCH + 2).map(|i| {
+                let l = &*(&raw const LINE);
+                core::str::from_utf8(&l[i]).unwrap_or("")
+            })
+        }
     }
 }

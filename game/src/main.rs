@@ -2563,6 +2563,20 @@ impl Scene for NitroXide {
                     );
                     return;
                 }
+                #[cfg(feature = "diag-sound")]
+                for (b, which) in [
+                    (button::L2, 0),
+                    (button::L1, 1),
+                    (button::R1, 2),
+                    (button::R2, 3),
+                    (button::SQUARE, 4),
+                    (button::TRIANGLE, 5),
+                    (button::CIRCLE, 6),
+                ] {
+                    if ctx.just_pressed(b) {
+                        audio::sound_test::play(which);
+                    }
+                }
                 // Up and down walk the rows; left and right change the car on
                 // show from any row, since it is always on screen and gating
                 // that behind the garage row would only add a step.
@@ -3144,6 +3158,21 @@ impl NitroXide {
                 }
                 if let Some(page) = self.credits {
                     self.draw_credits(display, hud, ctx.fb.draw_origin().1, page);
+                }
+                #[cfg(feature = "diag-sound")]
+                {
+                    let mut y = 40;
+                    Self::shadowed(
+                        hud,
+                        6,
+                        y,
+                        "L2 BOOM L1 HORN R1 ROAR R2 NET SQ BEEP TRI GOAL O CHEER",
+                        (255, 210, 110),
+                    );
+                    for line in audio::sound_test::lines() {
+                        y += 10;
+                        Self::shadowed(hud, 6, y, line, (210, 218, 235));
+                    }
                 }
             }
             Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
