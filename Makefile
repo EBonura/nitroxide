@@ -479,3 +479,9 @@ itch:
 	@rm -rf build/itch && mkdir -p build/itch
 	cp "$(OUT)/$(GAME_NAME).bin" "$(OUT)/$(GAME_NAME).cue" release/README.txt build/itch/
 	butler push --userversion "$(V_GAME)" build/itch bonnie-studios/nitroxide:psx
+
+.PHONY: fmt fmt-check
+fmt:
+	tools/style-fmt.sh
+fmt-check:
+	tools/style-fmt.sh --check
