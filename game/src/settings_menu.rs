@@ -31,9 +31,13 @@ pub enum FormatAction {
 /// Formatting has a separate consent edge. A simultaneous cancel always
 /// leaves the card untouched, including when Cross is also newly pressed.
 pub fn format_action(cross: bool, back: bool) -> FormatAction {
-    if back { FormatAction::Cancel }
-    else if cross { FormatAction::Confirm }
-    else { FormatAction::None }
+    if back {
+        FormatAction::Cancel
+    } else if cross {
+        FormatAction::Confirm
+    } else {
+        FormatAction::None
+    }
 }
 
 /// Only a new Cross press on Save authorizes a persistent write. Closing
@@ -42,7 +46,11 @@ pub fn action(row: SettingsRow, left: bool, right: bool, cross: bool, back: bool
     if back || (row == SettingsRow::Back && cross) {
         Action::Close
     } else if row == SettingsRow::Save {
-        if cross { Action::Save } else { Action::None }
+        if cross {
+            Action::Save
+        } else {
+            Action::None
+        }
     } else if right || cross {
         Action::Adjust(1)
     } else if left {
@@ -58,16 +66,28 @@ mod tests {
 
     #[test]
     fn cancel_and_navigation_never_authorize_a_card_write() {
-        for row in [SettingsRow::Arena, SettingsRow::Sound, SettingsRow::Music,
-            SettingsRow::Track, SettingsRow::Fov, SettingsRow::Brightness, SettingsRow::ScreenX,
-            SettingsRow::ScreenY, SettingsRow::Save, SettingsRow::Back] {
+        for row in [
+            SettingsRow::Arena,
+            SettingsRow::Sound,
+            SettingsRow::Music,
+            SettingsRow::Track,
+            SettingsRow::Fov,
+            SettingsRow::Brightness,
+            SettingsRow::ScreenX,
+            SettingsRow::ScreenY,
+            SettingsRow::Save,
+            SettingsRow::Back,
+        ] {
             assert_eq!(action(row, false, false, false, true), Action::Close);
             assert_eq!(action(row, false, false, true, true), Action::Close);
             assert_ne!(action(row, true, false, false, false), Action::Save);
             assert_ne!(action(row, false, true, false, false), Action::Save);
             assert_ne!(action(row, false, false, false, false), Action::Save);
         }
-        assert_eq!(action(SettingsRow::Back, false, false, true, false), Action::Close);
+        assert_eq!(
+            action(SettingsRow::Back, false, false, true, false),
+            Action::Close
+        );
     }
 
     #[test]
@@ -80,7 +100,13 @@ mod tests {
             action(SettingsRow::Save, false, false, true, false),
             action(SettingsRow::Save, false, false, true, true),
         ];
-        assert_eq!(events.iter().filter(|event| **event == Action::Save).count(), 1);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| **event == Action::Save)
+                .count(),
+            1
+        );
         assert_eq!(events[0], Action::Adjust(1));
         assert_eq!(events[4], Action::Save);
     }
@@ -93,8 +119,21 @@ mod tests {
             format_action(false, false),
             format_action(true, false),
         ];
-        assert_eq!(answers, [FormatAction::None, FormatAction::Cancel,
-            FormatAction::None, FormatAction::Confirm]);
-        assert_eq!(answers.iter().filter(|answer| **answer == FormatAction::Confirm).count(), 1);
+        assert_eq!(
+            answers,
+            [
+                FormatAction::None,
+                FormatAction::Cancel,
+                FormatAction::None,
+                FormatAction::Confirm
+            ]
+        );
+        assert_eq!(
+            answers
+                .iter()
+                .filter(|answer| **answer == FormatAction::Confirm)
+                .count(),
+            1
+        );
     }
 }

@@ -33,7 +33,7 @@ impl Playlist {
             len,
             pos: 0,
             // xorshift32 never leaves zero.
-            rng: if seed == 0 { 0x9E37_79B9 } else { seed },
+            rng: if seed == 0 { 0x9e37_79b9 } else { seed },
         };
         list.shuffle(None);
         list
@@ -60,7 +60,11 @@ impl Playlist {
     /// Step back to the previous song of the round, wrapping to the end of
     /// it from the first. Returns the song to play.
     pub fn prev(&mut self) -> usize {
-        self.pos = if self.pos == 0 { self.len - 1 } else { self.pos - 1 };
+        self.pos = if self.pos == 0 {
+            self.len - 1
+        } else {
+            self.pos - 1
+        };
         self.current()
     }
 
@@ -97,7 +101,9 @@ mod tests {
 
     fn is_round(songs: &[usize], len: usize) -> bool {
         let mut seen = [false; MAX_SONGS];
-        songs.iter().all(|&s| s < len && !core::mem::replace(&mut seen[s], true))
+        songs
+            .iter()
+            .all(|&s| s < len && !core::mem::replace(&mut seen[s], true))
     }
 
     #[test]

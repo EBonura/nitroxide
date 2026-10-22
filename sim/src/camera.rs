@@ -36,7 +36,7 @@
 //! rather than twenty-four, and the screen's pixel angles are cached.
 
 use crate::angle::atan2_q12_fine as atan2_fine;
-use crate::{Car, Sim, V3, CAR_HALF_H, CEIL, CORNER, CORNER_JOINT_PLANES, FP, HALF_X, HALF_Z};
+use crate::{Car, Sim, CAR_HALF_H, CEIL, CORNER, CORNER_JOINT_PLANES, FP, HALF_X, HALF_Z, V3};
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
 
@@ -97,8 +97,16 @@ pub struct Screen {
 }
 
 impl Screen {
-    pub const FULL: Screen = Screen { proj_h: 260, w: 320, h: 240 };
-    pub const SPLIT: Screen = Screen { proj_h: 260, w: 320, h: 120 };
+    pub const FULL: Screen = Screen {
+        proj_h: 260,
+        w: 320,
+        h: 240,
+    };
+    pub const SPLIT: Screen = Screen {
+        proj_h: 260,
+        w: 320,
+        h: 120,
+    };
 }
 
 /// The screen's framing limits as angles, worked out once per screen shape
@@ -402,9 +410,24 @@ const N_PLANES: usize = 7;
 const PLANES: [Plane; N_PLANES] = build_planes();
 
 const fn build_planes() -> [Plane; N_PLANES] {
-    let mut out = [Plane { nx: 0, nz: 0, soft: 0, hard: 0 }; N_PLANES];
-    out[0] = Plane { nx: 4096, nz: 0, soft: HALF_X - MARGIN_SOFT, hard: HALF_X - MARGIN_HARD };
-    out[1] = Plane { nx: 0, nz: 4096, soft: HALF_Z - MARGIN_SOFT, hard: HALF_Z - MARGIN_HARD };
+    let mut out = [Plane {
+        nx: 0,
+        nz: 0,
+        soft: 0,
+        hard: 0,
+    }; N_PLANES];
+    out[0] = Plane {
+        nx: 4096,
+        nz: 0,
+        soft: HALF_X - MARGIN_SOFT,
+        hard: HALF_X - MARGIN_HARD,
+    };
+    out[1] = Plane {
+        nx: 0,
+        nz: 4096,
+        soft: HALF_Z - MARGIN_SOFT,
+        hard: HALF_Z - MARGIN_HARD,
+    };
     out[2] = Plane {
         nx: 2896,
         nz: 2896,
@@ -414,7 +437,12 @@ const fn build_planes() -> [Plane; N_PLANES] {
     let mut j = 0;
     while j < 4 {
         let (nx, nz, off) = CORNER_JOINT_PLANES[j];
-        out[3 + j] = Plane { nx, nz, soft: (off >> 2) - MARGIN_SOFT, hard: (off >> 2) - MARGIN_HARD };
+        out[3 + j] = Plane {
+            nx,
+            nz,
+            soft: (off >> 2) - MARGIN_SOFT,
+            hard: (off >> 2) - MARGIN_HARD,
+        };
         j += 1;
     }
     out
@@ -430,7 +458,10 @@ struct Fold {
 impl Fold {
     #[inline]
     fn of(x: i32, z: i32) -> Fold {
-        Fold { sx: if x < 0 { -1 } else { 1 }, sz: if z < 0 { -1 } else { 1 } }
+        Fold {
+            sx: if x < 0 { -1 } else { 1 },
+            sz: if z < 0 { -1 } else { 1 },
+        }
     }
 }
 
@@ -442,7 +473,10 @@ struct Slack {
 
 #[inline(never)]
 fn slack_at(ax: i32, az: i32) -> Slack {
-    let mut out = Slack { soft: [0; N_PLANES], hard: [0; N_PLANES] };
+    let mut out = Slack {
+        soft: [0; N_PLANES],
+        hard: [0; N_PLANES],
+    };
     let mut i = 0;
     while i < N_PLANES {
         let d = (PLANES[i].nx * ax + PLANES[i].nz * az) >> 12;
@@ -458,7 +492,14 @@ fn slack_at(ax: i32, az: i32) -> Slack {
 /// sets of slacks in one pass. A point already outside a plane that the ray
 /// leaves through reports zero.
 #[inline(never)]
-fn rays(a: &[i32; N_PLANES], a_bias: i32, b: &[i32; N_PLANES], b_bias: i32, s: i32, c: i32) -> (i32, i32) {
+fn rays(
+    a: &[i32; N_PLANES],
+    a_bias: i32,
+    b: &[i32; N_PLANES],
+    b_bias: i32,
+    s: i32,
+    c: i32,
+) -> (i32, i32) {
     let (mut ta, mut tb) = (4096, 4096);
     let mut i = 0;
     while i < N_PLANES {
@@ -627,7 +668,11 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     // A car that has moved further than it can drive in the longest gap
     // between frames was put somewhere (a kickoff): start over from it.
     let teleported = {
-        let d = (car_at.0 - st.car.0, car_at.1 - st.car.1, car_at.2 - st.car.2);
+        let d = (
+            car_at.0 - st.car.0,
+            car_at.1 - st.car.1,
+            car_at.2 - st.car.2,
+        );
         d.0.abs().max(d.1.abs()).max(d.2.abs()) > TELEPORT
     };
     let valid = st.valid && !teleported;
@@ -667,15 +712,27 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
         (if car_up.y >= 0 { 0 } else { 2048 }, None)
     } else {
         let h = isqrt_i32(car_up.x * car_up.x + car_up.z * car_up.z);
-        let az = if h >= 64 { Some(atan2_fine(car_up.x, car_up.z)) } else { None };
+        let az = if h >= 64 {
+            Some(atan2_fine(car_up.x, car_up.z))
+        } else {
+            None
+        };
         (atan2_fine(h, car_up.y) as i32, az)
     };
     if valid {
-        let step = if on_surface { TILT_STEP_SURFACE } else { TILT_STEP_AIR } * ticks;
+        let step = if on_surface {
+            TILT_STEP_SURFACE
+        } else {
+            TILT_STEP_AIR
+        } * ticks;
         st.tilt += (target_tilt - st.tilt).clamp(-step, step);
         if let Some(az) = target_az {
             // On the flat there is no wall to face: take the new one at once.
-            st.tilt_az = if st.tilt < 64 { az } else { slew_angle(st.tilt_az, az, TILT_AZ_STEP * ticks) };
+            st.tilt_az = if st.tilt < 64 {
+                az
+            } else {
+                slew_angle(st.tilt_az, az, TILT_AZ_STEP * ticks)
+            };
         }
     } else {
         st.tilt = target_tilt;
@@ -685,7 +742,11 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
         V3::new(0, 4096, 0)
     } else {
         let (ts, tc) = (sin_q12(st.tilt as u16), cos_q12(st.tilt as u16));
-        V3::new((ts * sin_q12(st.tilt_az)) >> 12, tc, (ts * cos_q12(st.tilt_az)) >> 12)
+        V3::new(
+            (ts * sin_q12(st.tilt_az)) >> 12,
+            tc,
+            (ts * cos_q12(st.tilt_az)) >> 12,
+        )
     };
     st.up = up;
     let lean = 4096 - up.y.clamp(0, 4096);
@@ -713,7 +774,11 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     let (dx, dz) = (bx - px, bz - pz);
     let line_to_ball = rq.ball_cam && dx * dx + dz * dz > MIN_SEPARATION * MIN_SEPARATION;
     st.heading = own_heading;
-    let heading = if line_to_ball { atan2_fine(dx, dz) } else { own_heading };
+    let heading = if line_to_ball {
+        atan2_fine(dx, dz)
+    } else {
+        own_heading
+    };
     let heading = ((heading as i32 + rig.yaw_bias) & 4095) as u16;
     let (hs, hc) = (sin_q12(heading), cos_q12(heading));
 
@@ -789,8 +854,16 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     // Arm state, each part limited on its own. Moving aside for a wall takes
     // the faster of two rates: the eye must be off the blocked arc before the
     // car reaches the wall, not after.
-    let swing = if target_az != want_az { ang_step * FAST_NUM / FAST_DEN } else { ang_step };
-    st.az = if valid { slew_angle(st.az, target_az, swing) } else { target_az };
+    let swing = if target_az != want_az {
+        ang_step * FAST_NUM / FAST_DEN
+    } else {
+        ang_step
+    };
+    st.az = if valid {
+        slew_angle(st.az, target_az, swing)
+    } else {
+        target_az
+    };
     let (es, ec) = (sin_q12(st.az), cos_q12(st.az));
     let (fs, fc) = (es * fold.sx, ec * fold.sz);
     // The arm is sized for the direction it is turning to, so it does not
@@ -800,7 +873,10 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
         rays(&slack.soft, 0, &slack.hard, 0, fs, fc)
     } else {
         let (ts, tc) = (sin_q12(target_az) * fold.sx, cos_q12(target_az) * fold.sz);
-        (rays(&slack.soft, 0, &slack.soft, 0, ts, tc).0, rays(&slack.hard, 0, &slack.hard, 0, fs, fc).0)
+        (
+            rays(&slack.soft, 0, &slack.soft, 0, ts, tc).0,
+            rays(&slack.hard, 0, &slack.hard, 0, fs, fc).0,
+        )
     };
     let goal_len = want_len.min(room);
     if valid {
@@ -808,7 +884,11 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
         st.len += d.clamp(-len_step * LENGTH_SHRINK_NUM / LENGTH_SHRINK_DEN, len_step);
         // Falling away from a wall or roof the eye must catch up quickly or it
         // is left looking up at the car from far below.
-        let rs = if on_surface { rise_step } else { rise_step * FAST_NUM / FAST_DEN };
+        let rs = if on_surface {
+            rise_step
+        } else {
+            rise_step * FAST_NUM / FAST_DEN
+        };
         st.rise += (want_rise - st.rise).clamp(-rs, rs);
     } else {
         st.len = goal_len;
@@ -879,7 +959,8 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
         };
         let (aim_x, aim_z) = (px + ox, pz + oz);
         yaw_want = atan2_fine(aim_x - eye.0, aim_z - eye.2) as i32;
-        let flat = isqrt_i32((aim_x - eye.0) * (aim_x - eye.0) + (aim_z - eye.2) * (aim_z - eye.2)).max(1);
+        let flat =
+            isqrt_i32((aim_x - eye.0) * (aim_x - eye.0) + (aim_z - eye.2) * (aim_z - eye.2)).max(1);
         // The SDK's octant-linear atan2, not the fine one: the chase camera's
         // approved framing (the car a little over half way down at kickoff)
         // was tuned with it, and the exact angle would nudge every shot up.
@@ -917,7 +998,15 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     st.pitch = pitch;
     st.eye = eye;
     st.car = car_at;
-    Pose { eye, yaw, pitch, desired_yaw, desired_pitch, heading, ticks }
+    Pose {
+        eye,
+        yaw,
+        pitch,
+        desired_yaw,
+        desired_pitch,
+        heading,
+        ticks,
+    }
 }
 
 /// Whether a world point (uu) is inside the arena with the least margin the
@@ -925,5 +1014,8 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
 /// swings round a wall. For tests and callers that must not place something
 /// outside.
 pub fn inside_arena(x: i32, z: i32) -> bool {
-    slack_at(x.abs(), z.abs()).hard.iter().all(|&s| s + WALL_SLACK >= 0)
+    slack_at(x.abs(), z.abs())
+        .hard
+        .iter()
+        .all(|&s| s + WALL_SLACK >= 0)
 }

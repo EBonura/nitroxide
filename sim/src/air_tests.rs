@@ -7,7 +7,7 @@
 //! in the format of the reference trace (`NX_SCEN`, `NX_SPEED` in uu/s), for
 //! diffing against it.
 
-use crate::{uu, Car, Input, Sim, V3, ANG_FP, CAR_JUMP_V};
+use crate::{uu, Car, Input, Sim, ANG_FP, CAR_JUMP_V, V3};
 
 /// uu/s to sub-units a tick.
 fn per_tick(uu_s: i32) -> i32 {
@@ -21,7 +21,11 @@ fn per_tick(uu_s: i32) -> i32 {
 fn in_the_air(speed: i32) -> Sim {
     let mut sim = Sim::new();
     sim.opponent_ai = false;
-    sim.opponent.p = V3::new(0, uu(crate::CAR_REST_Y), uu(crate::HALF_Z + crate::GOAL_DEPTH / 2));
+    sim.opponent.p = V3::new(
+        0,
+        uu(crate::CAR_REST_Y),
+        uu(crate::HALF_Z + crate::GOAL_DEPTH / 2),
+    );
     sim.car = Car {
         p: V3::new(0, uu(1000), 0),
         v: V3::new(0, CAR_JUMP_V, per_tick(speed)),
@@ -71,7 +75,8 @@ fn pose(sim: &Sim) -> Pose {
     let q = |a: i32| a as f32 / 4096.0;
     let w = sim.car.w;
     let rate = |axis: V3| {
-        (w.x as i64 * axis.x as i64 + w.y as i64 * axis.y as i64 + w.z as i64 * axis.z as i64) as f32
+        (w.x as i64 * axis.x as i64 + w.y as i64 * axis.y as i64 + w.z as i64 * axis.z as i64)
+            as f32
             / 4096.0
             / (1i64 << ANG_FP) as f32
             * 60.0
@@ -112,12 +117,46 @@ fn run(speed: i32, script: &[Step], ticks: u32) -> Vec<Pose> {
 }
 
 fn scenario(name: &str) -> (Vec<Step>, u32) {
-    let st = |from, pitch, yaw, roll, jump| Step { from, pitch, yaw, roll, jump };
+    let st = |from, pitch, yaw, roll, jump| Step {
+        from,
+        pitch,
+        yaw,
+        roll,
+        jump,
+    };
     match name {
-        "front" => (vec![st(0, 0., 0., 0., false), st(6, -1., 0., 0., true), st(7, 0., 0., 0., false)], 90),
-        "back" => (vec![st(0, 0., 0., 0., false), st(6, 1., 0., 0., true), st(7, 0., 0., 0., false)], 90),
-        "side" => (vec![st(0, 0., 0., 0., false), st(6, 0., 1., 0., true), st(7, 0., 0., 0., false)], 90),
-        "diag" => (vec![st(0, 0., 0., 0., false), st(6, -1., 1., 0., true), st(7, 0., 0., 0., false)], 90),
+        "front" => (
+            vec![
+                st(0, 0., 0., 0., false),
+                st(6, -1., 0., 0., true),
+                st(7, 0., 0., 0., false),
+            ],
+            90,
+        ),
+        "back" => (
+            vec![
+                st(0, 0., 0., 0., false),
+                st(6, 1., 0., 0., true),
+                st(7, 0., 0., 0., false),
+            ],
+            90,
+        ),
+        "side" => (
+            vec![
+                st(0, 0., 0., 0., false),
+                st(6, 0., 1., 0., true),
+                st(7, 0., 0., 0., false),
+            ],
+            90,
+        ),
+        "diag" => (
+            vec![
+                st(0, 0., 0., 0., false),
+                st(6, -1., 1., 0., true),
+                st(7, 0., 0., 0., false),
+            ],
+            90,
+        ),
         "cancel" => (
             vec![
                 st(0, 0., 0., 0., false),
@@ -127,11 +166,38 @@ fn scenario(name: &str) -> (Vec<Step>, u32) {
             ],
             90,
         ),
-        "cancel_now" => (vec![st(0, 0., 0., 0., false), st(6, -1., 0., 0., true), st(7, 1., 0., 0., false)], 90),
-        "stall" => (vec![st(0, 0., 0., 0., false), st(6, 0., -1., 1., true), st(7, 0., 0., 0., false)], 90),
-        "dj" => (vec![st(0, 0., 0., 0., false), st(6, 0., 0., 0., true), st(7, 0., 0., 0., false)], 60),
-        "pitch_release" => (vec![st(0, 1., 0., 0., false), st(30, 0., 0., 0., false)], 90),
-        "roll_release" => (vec![st(0, 0., 0., 1., false), st(30, 0., 0., 0., false)], 90),
+        "cancel_now" => (
+            vec![
+                st(0, 0., 0., 0., false),
+                st(6, -1., 0., 0., true),
+                st(7, 1., 0., 0., false),
+            ],
+            90,
+        ),
+        "stall" => (
+            vec![
+                st(0, 0., 0., 0., false),
+                st(6, 0., -1., 1., true),
+                st(7, 0., 0., 0., false),
+            ],
+            90,
+        ),
+        "dj" => (
+            vec![
+                st(0, 0., 0., 0., false),
+                st(6, 0., 0., 0., true),
+                st(7, 0., 0., 0., false),
+            ],
+            60,
+        ),
+        "pitch_release" => (
+            vec![st(0, 1., 0., 0., false), st(30, 0., 0., 0., false)],
+            90,
+        ),
+        "roll_release" => (
+            vec![st(0, 0., 0., 1., false), st(30, 0., 0., 0., false)],
+            90,
+        ),
         "pitch_half" => (vec![st(0, 0.5, 0., 0., false)], 90),
         "yaw_half" => (vec![st(0, 0., 0.5, 0., false)], 90),
         "roll_half" => (vec![st(0, 0., 0., 0.5, false)], 90),
@@ -162,16 +228,27 @@ fn scenario(name: &str) -> (Vec<Step>, u32) {
 #[ignore = "prints a trace for diffing against the reference"]
 fn trace() {
     let name = std::env::var("NX_SCEN").unwrap_or_else(|_| "front".into());
-    let speed: i32 = std::env::var("NX_SPEED").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let speed: i32 = std::env::var("NX_SPEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let (script, ticks) = scenario(&name);
     for (k, p) in run(speed, &script, ticks).iter().enumerate() {
         println!(
             "{:.4}  {:.4} {:.4} {:.4}  {:.4} {:.4} {:.4}  {:.1} {:.1} {:.1}  {:.3} {:.3} {:.3}",
             (k + 1) as f32 / 60.0,
-            p.fwd[0], p.fwd[1], p.fwd[2],
-            p.up[0], p.up[1], p.up[2],
-            p.vel[0], p.vel[1], p.vel[2],
-            p.rates[0], p.rates[1], p.rates[2],
+            p.fwd[0],
+            p.fwd[1],
+            p.fwd[2],
+            p.up[0],
+            p.up[1],
+            p.up[2],
+            p.vel[0],
+            p.vel[1],
+            p.vel[2],
+            p.rates[0],
+            p.rates[1],
+            p.rates[2],
         );
     }
 }
@@ -197,7 +274,10 @@ fn demo_goals() {
                 used[k] = car.jumps_used;
             }
         }
-        println!("demo {n}: goal tick {tick} by {:?}, {jumps} jumps, {flips} flips (was {} {:?})", sim.last_scorer, m.first_goal, m.scorer);
+        println!(
+            "demo {n}: goal tick {tick} by {:?}, {jumps} jumps, {flips} flips (was {} {:?})",
+            sim.last_scorer, m.first_goal, m.scorer
+        );
     }
 }
 
@@ -230,11 +310,20 @@ fn held(script: Step) -> [f32; 3] {
 }
 
 fn near(got: f32, want: f32, tolerance: f32, what: &str) {
-    assert!((got - want).abs() <= tolerance, "{what}: got {got:.3}, RL {want:.3}");
+    assert!(
+        (got - want).abs() <= tolerance,
+        "{what}: got {got:.3}, RL {want:.3}"
+    );
 }
 
 fn stick(pitch: f32, yaw: f32, roll: f32) -> Step {
-    Step { from: 0, pitch, yaw, roll, jump: false }
+    Step {
+        from: 0,
+        pitch,
+        yaw,
+        roll,
+        jump: false,
+    }
 }
 
 #[test]
@@ -248,7 +337,12 @@ fn air_control_matches_rocket_league() {
         ("roll", held(stick(0.0, 0.0, 1.0)), [5.50, 5.50, 5.50]),
     ] {
         for k in 0..3 {
-            near(got[k], want[k], 0.06 + want[k] * 0.02, &format!("{name} full stick, sample {k}"));
+            near(
+                got[k],
+                want[k],
+                0.06 + want[k] * 0.02,
+                &format!("{name} full stick, sample {k}"),
+            );
         }
     }
 }
@@ -265,7 +359,12 @@ fn a_half_stick_is_half_the_torque_and_a_looser_damper() {
         ("roll", held(stick(0.0, 0.0, 0.5)), [2.823, 3.653, 3.970]),
     ] {
         for k in 0..3 {
-            near(got[k], want[k], 0.06 + want[k] * 0.02, &format!("{name} half stick, sample {k}"));
+            near(
+                got[k],
+                want[k],
+                0.06 + want[k] * 0.02,
+                &format!("{name} half stick, sample {k}"),
+            );
         }
     }
 }
@@ -295,7 +394,12 @@ fn a_released_stick_coasts_down_on_the_damper() {
             }
         }
         for k in 0..3 {
-            near(got[k], want[k], 0.12, &format!("{axis} coasting, sample {k}"));
+            near(
+                got[k],
+                want[k],
+                0.12,
+                &format!("{axis} coasting, sample {k}"),
+            );
         }
     }
 }
@@ -307,11 +411,25 @@ fn all_three_sticks_at_once_stay_under_the_cap() {
     let mut sim = in_the_air(0);
     for t in 0..120 {
         sim.tick(&input_of(stick(1.0, 1.0, 1.0), false));
-        assert!(spin_rad_s(&sim) < 5.52, "tick {t}: spin {} rad/s over the cap", spin_rad_s(&sim));
+        assert!(
+            spin_rad_s(&sim) < 5.52,
+            "tick {t}: spin {} rad/s over the cap",
+            spin_rad_s(&sim)
+        );
     }
-    near(spin_rad_s(&sim), 5.5, 0.06, "the three-axis spin settles at the cap");
+    near(
+        spin_rad_s(&sim),
+        5.5,
+        0.06,
+        "the three-axis spin settles at the cap",
+    );
     let p = pose(&sim);
-    near(p.rates[0].abs(), 2.87, 0.25, "pitch share of the capped spin");
+    near(
+        p.rates[0].abs(),
+        2.87,
+        0.25,
+        "pitch share of the capped spin",
+    );
     near(p.rates[1].abs(), 2.10, 0.25, "yaw share");
     near(p.rates[2].abs(), 4.20, 0.25, "roll share");
 }
@@ -363,7 +481,11 @@ const REFERENCE: [(&str, u32, [i16; 6]); 40] = [
 ];
 
 fn degrees_between(a: [f32; 3], b: [i16; 3]) -> f32 {
-    let (b0, b1, b2) = (b[0] as f32 / 1000.0, b[1] as f32 / 1000.0, b[2] as f32 / 1000.0);
+    let (b0, b1, b2) = (
+        b[0] as f32 / 1000.0,
+        b[1] as f32 / 1000.0,
+        b[2] as f32 / 1000.0,
+    );
     let dot = (a[0] * b0 + a[1] * b1 + a[2] * b2).clamp(-1.0, 1.0);
     dot.acos().to_degrees()
 }
@@ -384,7 +506,10 @@ fn flips_turn_the_car_the_way_rocket_league_does() {
         let nose = degrees_between(p.fwd, [want[0], want[1], want[2]]);
         let roof = degrees_between(p.up, [want[3], want[4], want[5]]);
         worst = worst.max(nose).max(roof);
-        assert!(nose < 8.0 && roof < 8.0, "{name} at tick {tick}: nose {nose:.1} deg, roof {roof:.1} deg off RL");
+        assert!(
+            nose < 8.0 && roof < 8.0,
+            "{name} at tick {tick}: nose {nose:.1} deg, roof {roof:.1} deg off RL"
+        );
     }
     std::println!("worst flip attitude error {worst:.1} deg");
 }
@@ -413,8 +538,18 @@ fn a_flip_kicks_by_direction_and_speed_like_rocket_league() {
     for (name, speed, forward, right) in KICKS {
         let (script, ticks) = scenario(name);
         let p = &run(speed, &script, ticks)[17];
-        near(p.vel[0], forward, 6.0, &format!("{name} at {speed} uu/s, forward"));
-        near(p.vel[1], right, 6.0, &format!("{name} at {speed} uu/s, sideways"));
+        near(
+            p.vel[0],
+            forward,
+            6.0,
+            &format!("{name} at {speed} uu/s, forward"),
+        );
+        near(
+            p.vel[1],
+            right,
+            6.0,
+            &format!("{name} at {speed} uu/s, sideways"),
+        );
     }
 }
 
@@ -425,13 +560,20 @@ fn a_flip_adds_its_kick_on_top_of_the_throttle_top_speed() {
     // it started. The 2300 ceiling still holds.
     let (script, ticks) = scenario("front");
     let fast = run(1400, &script, ticks);
-    assert!(fast[17].vel[0] > 1850.0, "the kick was clipped: {}", fast[17].vel[0]);
+    assert!(
+        fast[17].vel[0] > 1850.0,
+        "the kick was clipped: {}",
+        fast[17].vel[0]
+    );
     let top = run(2200, &script, ticks);
     for p in &top {
         let speed = (p.vel[0] * p.vel[0] + p.vel[1] * p.vel[1] + p.vel[2] * p.vel[2]).sqrt();
         // The ceiling is applied before gravity, so a falling car can read
         // a tick or two of gravity (11 uu/s each) over it.
-        assert!(speed < 2340.0, "a flip took the car past the ceiling: {speed}");
+        assert!(
+            speed < 2340.0,
+            "a flip took the car past the ceiling: {speed}"
+        );
     }
 }
 
@@ -442,8 +584,16 @@ fn a_stall_turns_nothing_and_kicks_nothing() {
     let (script, ticks) = scenario("stall");
     let poses = run(700, &script, ticks);
     for p in &poses[10..] {
-        assert!((p.vel[0] - 700.0).abs() < 8.0, "a stall kicked the car: {}", p.vel[0]);
-        assert!(p.vel[1].abs() < 8.0, "a stall kicked the car sideways: {}", p.vel[1]);
+        assert!(
+            (p.vel[0] - 700.0).abs() < 8.0,
+            "a stall kicked the car: {}",
+            p.vel[0]
+        );
+        assert!(
+            p.vel[1].abs() < 8.0,
+            "a stall kicked the car sideways: {}",
+            p.vel[1]
+        );
         assert!(p.fwd[0] > 0.97, "a stall turned the car over: {:?}", p.fwd);
     }
 }
@@ -456,9 +606,21 @@ fn pitch_stays_locked_out_after_a_flip_for_the_time_rocket_league_says() {
     // by tick 72.
     let (script, ticks) = scenario("lock");
     let poses = run(0, &script, ticks);
-    assert!(poses[60].fwd[2].abs() < 0.03, "pitch bit during the lock: {:?}", poses[60].fwd);
-    assert!(poses[71].fwd[2].abs() > 0.06, "pitch never came back: {:?}", poses[71].fwd);
-    assert!(poses[89].fwd[2].abs() > 0.6, "and then it should be rotating hard: {:?}", poses[89].fwd);
+    assert!(
+        poses[60].fwd[2].abs() < 0.03,
+        "pitch bit during the lock: {:?}",
+        poses[60].fwd
+    );
+    assert!(
+        poses[71].fwd[2].abs() > 0.06,
+        "pitch never came back: {:?}",
+        poses[71].fwd
+    );
+    assert!(
+        poses[89].fwd[2].abs() > 0.6,
+        "and then it should be rotating hard: {:?}",
+        poses[89].fwd
+    );
 }
 
 #[test]
@@ -473,8 +635,14 @@ fn a_cancelled_flip_stops_turning() {
     let a = run(0, &full, ticks);
     let b = run(0, &cancelled, ticks);
     let turned = |p: &Pose| p.fwd[0].clamp(-1.0, 1.0).acos().to_degrees();
-    assert!(turned(&a[44]) > 80.0, "the full flip should be well over by now");
-    assert!(turned(&b[44]) < turned(&a[44]) - 40.0, "cancel did not stop the flip");
+    assert!(
+        turned(&a[44]) > 80.0,
+        "the full flip should be well over by now"
+    );
+    assert!(
+        turned(&b[44]) < turned(&a[44]) - 40.0,
+        "cancel did not stop the flip"
+    );
 }
 
 #[test]
@@ -482,21 +650,34 @@ fn directional_air_roll_rolls_the_right_side_down() {
     // Roll right: the roof tips toward the car's right, the way RL's does,
     // whether it comes from the roll button or from the free-roll stick.
     for input in [
-        Input { roll: 128, ..Input::default() },
-        Input { steer: 128, air_roll: true, ..Input::default() },
+        Input {
+            roll: 128,
+            ..Input::default()
+        },
+        Input {
+            steer: 128,
+            air_roll: true,
+            ..Input::default()
+        },
     ] {
         let mut sim = in_the_air(0);
         for _ in 0..20 {
             sim.tick(&input);
         }
         let (right, up, _) = sim.car.basis();
-        assert!(crate::dot_q12(up, V3::new(4096, 0, 0)) > 1500, "roof did not lean right: {up:?}");
+        assert!(
+            crate::dot_q12(up, V3::new(4096, 0, 0)) > 1500,
+            "roof did not lean right: {up:?}"
+        );
         assert!(right.y < -1500, "right side did not go down: {right:?}");
     }
     // And left is left.
     let mut sim = in_the_air(0);
     for _ in 0..20 {
-        sim.tick(&Input { roll: -128, ..Input::default() });
+        sim.tick(&Input {
+            roll: -128,
+            ..Input::default()
+        });
     }
     assert!(sim.car.basis().1.x < -1500);
 }
@@ -507,7 +688,12 @@ fn free_air_roll_keeps_the_pitch_axis_live() {
     // pitched and rolled at once.
     let mut sim = in_the_air(0);
     for _ in 0..20 {
-        sim.tick(&Input { steer: 128, pitch: -128, air_roll: true, ..Input::default() });
+        sim.tick(&Input {
+            steer: 128,
+            pitch: -128,
+            air_roll: true,
+            ..Input::default()
+        });
     }
     let w = sim.car.w;
     assert!(w.x != 0 || w.y != 0 || w.z != 0);
@@ -525,14 +711,28 @@ fn the_attitude_follows_the_spin_it_integrates() {
     let mut area = 0.0f32;
     let start = sim.car.yaw;
     for _ in 0..90 {
-        sim.tick(&Input { steer: 128, ..Input::default() });
+        sim.tick(&Input {
+            steer: 128,
+            ..Input::default()
+        });
         area += spin_rad_s(&sim) / 60.0;
     }
     let turned = sim.car.yaw.wrapping_sub(start) as f32 / 4096.0 * core::f32::consts::TAU;
-    let wrapped = if turned > core::f32::consts::PI { turned - core::f32::consts::TAU } else { turned };
+    let wrapped = if turned > core::f32::consts::PI {
+        turned - core::f32::consts::TAU
+    } else {
+        turned
+    };
     let total = area % core::f32::consts::TAU;
-    let want = if total > core::f32::consts::PI { total - core::f32::consts::TAU } else { total };
-    assert!((wrapped - want).abs() < 0.06, "turned {wrapped:.3} rad, integral {want:.3} rad");
+    let want = if total > core::f32::consts::PI {
+        total - core::f32::consts::TAU
+    } else {
+        total
+    };
+    assert!(
+        (wrapped - want).abs() < 0.06,
+        "turned {wrapped:.3} rad, integral {want:.3} rad"
+    );
 }
 
 #[test]
@@ -545,20 +745,30 @@ fn a_car_lands_pointing_where_its_nose_pointed() {
         sim.car.v = V3::ZERO;
         sim.car.yaw = 1024; // east
         for _ in 0..burst {
-            sim.tick(&Input { pitch, ..Input::default() });
+            sim.tick(&Input {
+                pitch,
+                ..Input::default()
+            });
         }
         // The spin carries on after the stick is let go: the car is well
         // tipped by the time the damper has stopped it.
         for _ in 0..40 {
             sim.tick(&Input::default());
         }
-        assert!(sim.car.up.y < 3600, "a burst of {burst} should have tipped the car: {:?}", sim.car.up);
+        assert!(
+            sim.car.up.y < 3600,
+            "a burst of {burst} should have tipped the car: {:?}",
+            sim.car.up
+        );
         for _ in 0..300 {
             sim.tick(&Input::default());
         }
         assert!(sim.car.grounded, "pitch {pitch} for {burst}: never landed");
         let (_, _, f) = sim.car.basis();
-        assert!(f.x > 3700 && f.z.abs() < 1000, "pitch {pitch} for {burst}: landed facing {f:?}, not east");
+        assert!(
+            f.x > 3700 && f.z.abs() < 1000,
+            "pitch {pitch} for {burst}: landed facing {f:?}, not east"
+        );
     }
 }
 
@@ -574,11 +784,34 @@ fn an_aerial_replays_to_the_same_state() {
         let mut mid = Car::default();
         for t in 0..320u32 {
             let input = match t {
-                0..=59 => Input { throttle: 128, boost: true, ..Input::default() },
-                60..=89 => Input { throttle: 128, boost: true, jump_pressed: t == 60, jump_held: true, ..Input::default() },
-                90..=119 => Input { throttle: 128, boost: true, pitch: -128, ..Input::default() },
-                120..=125 => Input { pitch: 128, jump_pressed: t == 120, ..Input::default() },
-                126..=170 => Input { roll: 128, steer: -40, ..Input::default() },
+                0..=59 => Input {
+                    throttle: 128,
+                    boost: true,
+                    ..Input::default()
+                },
+                60..=89 => Input {
+                    throttle: 128,
+                    boost: true,
+                    jump_pressed: t == 60,
+                    jump_held: true,
+                    ..Input::default()
+                },
+                90..=119 => Input {
+                    throttle: 128,
+                    boost: true,
+                    pitch: -128,
+                    ..Input::default()
+                },
+                120..=125 => Input {
+                    pitch: 128,
+                    jump_pressed: t == 120,
+                    ..Input::default()
+                },
+                126..=170 => Input {
+                    roll: 128,
+                    steer: -40,
+                    ..Input::default()
+                },
                 _ => Input::default(),
             };
             sim.tick(&input);
@@ -604,5 +837,8 @@ fn an_aerial_replays_to_the_same_state() {
         ),
         "the air game's physics changed: re-pin this only with a reason"
     );
-    assert_eq!((end.p, end.yaw, end.grounded), (V3::new(21690, 1792, 87725), 2770, true));
+    assert_eq!(
+        (end.p, end.yaw, end.grounded),
+        (V3::new(21690, 1792, 87725), 2770, true)
+    );
 }

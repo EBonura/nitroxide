@@ -950,7 +950,10 @@ fn weld_seams(blob: &mut Vec<u8>, components: &[u8]) -> Result<(u16, u16, Vec<u8
     ];
     let detail: Vec<bool> = part_colours
         .iter()
-        .map(|cs| cs.iter().all(|c| detail_colours.contains(&(c[0], c[1], c[2]))))
+        .map(|cs| {
+            cs.iter()
+                .all(|c| detail_colours.contains(&(c[0], c[1], c[2])))
+        })
         .collect();
     let tolerance = |a: usize, b: usize| {
         if detail[a] || detail[b] {

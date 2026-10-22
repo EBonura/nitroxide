@@ -9,8 +9,8 @@
 use core::ptr::{read_volatile, write_volatile};
 use psx_rt::tty;
 
-const T2_COUNTER: *const u32 = 0x1F80_1120 as *const u32;
-const T2_MODE: *mut u32 = 0x1F80_1124 as *mut u32;
+const T2_COUNTER: *const u32 = 0x1f80_1120 as *const u32;
+const T2_MODE: *mut u32 = 0x1f80_1124 as *mut u32;
 /// Clock source: system clock over eight.
 const T2_SYSCLK_DIV8: u32 = 1 << 9;
 
@@ -32,14 +32,14 @@ pub fn init() {
 
 fn now() -> u32 {
     // SAFETY: a read of root counter 2's current value.
-    unsafe { read_volatile(T2_COUNTER) & 0xFFFF }
+    unsafe { read_volatile(T2_COUNTER) & 0xffff }
 }
 
 /// Run `f`, charge its cycles to `slot`.
 pub fn measure<R>(slot: usize, f: impl FnOnce() -> R) -> R {
     let start = now();
     let out = f();
-    let cycles = (now().wrapping_sub(start) & 0xFFFF) * 8;
+    let cycles = (now().wrapping_sub(start) & 0xffff) * 8;
     unsafe {
         COUNT[slot] += 1;
         SUM[slot] = SUM[slot].wrapping_add(cycles);

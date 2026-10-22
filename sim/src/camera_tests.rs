@@ -33,7 +33,10 @@ fn project(pose: &Pose, screen: Screen, p: (i32, i32, i32)) -> Option<(i32, i32)
     if z <= 20 {
         return None;
     }
-    Some((screen.w / 2 + x * screen.proj_h / z, screen.h / 2 + y * screen.proj_h / z))
+    Some((
+        screen.w / 2 + x * screen.proj_h / z,
+        screen.h / 2 + y * screen.proj_h / z,
+    ))
 }
 
 fn on_screen(p: Option<(i32, i32)>, screen: Screen) -> bool {
@@ -81,7 +84,12 @@ struct Scenario {
 }
 
 impl Scenario {
-    fn new(name: &'static str, ticks: u32, setup: fn(&mut Sim), input: fn(u32, &Sim) -> Input) -> Self {
+    fn new(
+        name: &'static str,
+        ticks: u32,
+        setup: fn(&mut Sim),
+        input: fn(u32, &Sim) -> Input,
+    ) -> Self {
         Scenario {
             name,
             ball_cam: false,
@@ -130,11 +138,24 @@ fn run(sc: &Scenario) -> Stats {
     if sc.settled {
         s.kickoff_ticks = 255;
     }
-    let mut screen = if sc.split { Screen::SPLIT } else { Screen::FULL };
+    let mut screen = if sc.split {
+        Screen::SPLIT
+    } else {
+        Screen::FULL
+    };
     screen.proj_h = sc.proj_h;
     let rig = Rig::DEFAULT;
-    let mut rq = Request { rig: &rig, screen, ball_cam: sc.ball_cam, hold_car: true, split: sc.split };
-    let print: u32 = std::env::var("PRINT").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let mut rq = Request {
+        rig: &rig,
+        screen,
+        ball_cam: sc.ball_cam,
+        hold_car: true,
+        split: sc.split,
+    };
+    let print: u32 = std::env::var("PRINT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
     if print > 0 {
         println!(
             "\n=== {} (ball_cam={} split={} every {} proj {}) ===",
@@ -215,10 +236,17 @@ fn run(sc: &Scenario) -> Stats {
 // ---- inputs and set-ups ---------------------------------------------------
 
 fn throttle() -> Input {
-    Input { throttle: 128, ..Input::default() }
+    Input {
+        throttle: 128,
+        ..Input::default()
+    }
 }
 fn boost() -> Input {
-    Input { throttle: 128, boost: true, ..Input::default() }
+    Input {
+        throttle: 128,
+        boost: true,
+        ..Input::default()
+    }
 }
 fn always_boost(_: u32, _: &Sim) -> Input {
     boost()
@@ -241,7 +269,11 @@ fn arc_setup(s: &mut Sim) {
 }
 
 fn arc_input(_: u32, _: &Sim) -> Input {
-    Input { throttle: 128, steer: 50, ..Input::default() }
+    Input {
+        throttle: 128,
+        steer: 50,
+        ..Input::default()
+    }
 }
 
 fn turn_setup(s: &mut Sim) {
@@ -255,7 +287,12 @@ fn turn_input(t: u32, _: &Sim) -> Input {
     if t < 60 {
         throttle()
     } else {
-        Input { throttle: 128, steer: 128, boost: true, ..Input::default() }
+        Input {
+            throttle: 128,
+            steer: 128,
+            boost: true,
+            ..Input::default()
+        }
     }
 }
 
@@ -274,7 +311,12 @@ fn backing_input(t: u32, _: &Sim) -> Input {
     if t < 30 {
         throttle()
     } else if t < 100 {
-        Input { throttle: 128, steer: 128, handbrake: true, ..Input::default() }
+        Input {
+            throttle: 128,
+            steer: 128,
+            handbrake: true,
+            ..Input::default()
+        }
     } else {
         throttle()
     }
@@ -341,9 +383,23 @@ fn flip_setup(s: &mut Sim) {
 fn flip_input(t: u32, _: &Sim) -> Input {
     match t {
         0..=29 => boost(),
-        30 => Input { throttle: 128, jump_pressed: true, jump_held: true, ..Input::default() },
-        31..=40 => Input { throttle: 128, jump_held: true, ..Input::default() },
-        41 => Input { throttle: 128, jump_pressed: true, pitch: -128, ..Input::default() },
+        30 => Input {
+            throttle: 128,
+            jump_pressed: true,
+            jump_held: true,
+            ..Input::default()
+        },
+        31..=40 => Input {
+            throttle: 128,
+            jump_held: true,
+            ..Input::default()
+        },
+        41 => Input {
+            throttle: 128,
+            jump_pressed: true,
+            pitch: -128,
+            ..Input::default()
+        },
         _ => throttle(),
     }
 }
@@ -432,32 +488,104 @@ fn all() -> Vec<Scenario> {
         for every in [1, 2] {
             v.push(kickoff(ball, every));
             v.push(
-                c(Scenario::new("full steer turn after kickoff", 420, turn_setup, turn_input))
-                    .every(every)
-                    .fresh(),
+                c(Scenario::new(
+                    "full steer turn after kickoff",
+                    420,
+                    turn_setup,
+                    turn_input,
+                ))
+                .every(every)
+                .fresh(),
             );
-            v.push(c(Scenario::new("steady gentle arc on open floor", 360, arc_setup, arc_input)).every(every));
+            v.push(
+                c(Scenario::new(
+                    "steady gentle arc on open floor",
+                    360,
+                    arc_setup,
+                    arc_input,
+                ))
+                .every(every),
+            );
         }
-        v.push(c(Scenario::new("defender turns round near the back wall", 240, backing_setup, backing_input)));
-        v.push(c(Scenario::new("side wall, up it and over the roof", 420, side_wall_setup, always_boost)));
-        v.push(c(Scenario::new("end wall and up it", 420, end_wall_setup, always_boost)));
-        v.push(c(Scenario::new("jump, pitch back, air roll", 300, air_setup, air_input)));
-        v.push(c(Scenario::new("front flip off the floor", 200, flip_setup, flip_input)));
-        v.push(c(Scenario::new("drive past the ball", 240, past_setup, always_boost)));
-        v.push(c(Scenario::new("car drives into the goal", 240, net_setup, always_boost)));
-        v.push(c(Scenario::new("lofted ball, car drives under it", 160, lob_setup, always_boost)));
+        v.push(c(Scenario::new(
+            "defender turns round near the back wall",
+            240,
+            backing_setup,
+            backing_input,
+        )));
+        v.push(c(Scenario::new(
+            "side wall, up it and over the roof",
+            420,
+            side_wall_setup,
+            always_boost,
+        )));
+        v.push(c(Scenario::new(
+            "end wall and up it",
+            420,
+            end_wall_setup,
+            always_boost,
+        )));
+        v.push(c(Scenario::new(
+            "jump, pitch back, air roll",
+            300,
+            air_setup,
+            air_input,
+        )));
+        v.push(c(Scenario::new(
+            "front flip off the floor",
+            200,
+            flip_setup,
+            flip_input,
+        )));
+        v.push(c(Scenario::new(
+            "drive past the ball",
+            240,
+            past_setup,
+            always_boost,
+        )));
+        v.push(c(Scenario::new(
+            "car drives into the goal",
+            240,
+            net_setup,
+            always_boost,
+        )));
+        v.push(c(Scenario::new(
+            "lofted ball, car drives under it",
+            160,
+            lob_setup,
+            always_boost,
+        )));
         // The same climbs and tumbles in a split half, where the view is 120 high.
         v.push(
-            c(Scenario::new("side wall, up it and over the roof", 420, side_wall_setup, always_boost))
-                .split()
-                .every(2),
+            c(Scenario::new(
+                "side wall, up it and over the roof",
+                420,
+                side_wall_setup,
+                always_boost,
+            ))
+            .split()
+            .every(2),
         );
-        v.push(c(Scenario::new("jump, pitch back, air roll", 300, air_setup, air_input)).split().every(2));
+        v.push(
+            c(Scenario::new(
+                "jump, pitch back, air roll",
+                300,
+                air_setup,
+                air_input,
+            ))
+            .split()
+            .every(2),
+        );
         for spot in 0..5 {
             for seat in 0..2 {
-                let mut s = c(Scenario::new("kickoff spot", 240, spot_setup(spot), always_boost))
-                    .every(2)
-                    .fresh();
+                let mut s = c(Scenario::new(
+                    "kickoff spot",
+                    240,
+                    spot_setup(spot),
+                    always_boost,
+                ))
+                .every(2)
+                .fresh();
                 s.seat = seat;
                 v.push(s.clone());
                 v.push(s.split());
@@ -465,11 +593,46 @@ fn all() -> Vec<Scenario> {
         }
     }
     // Ball cam switched on and off under the player's thumb, every second and a half.
-    v.push(Scenario::new("ball cam toggled while turning", 420, turn_setup, turn_input).toggling(90).fresh());
-    v.push(Scenario::new("ball cam toggled over the walls", 420, side_wall_setup, always_boost).toggling(75));
-    v.push(Scenario::new("ball cam toggled in a split half", 300, air_setup, air_input).toggling(60).split().every(2));
+    v.push(
+        Scenario::new(
+            "ball cam toggled while turning",
+            420,
+            turn_setup,
+            turn_input,
+        )
+        .toggling(90)
+        .fresh(),
+    );
+    v.push(
+        Scenario::new(
+            "ball cam toggled over the walls",
+            420,
+            side_wall_setup,
+            always_boost,
+        )
+        .toggling(75),
+    );
+    v.push(
+        Scenario::new(
+            "ball cam toggled in a split half",
+            300,
+            air_setup,
+            air_input,
+        )
+        .toggling(60)
+        .split()
+        .every(2),
+    );
     v.push(Scenario::new("ball behind a driving car", 240, behind_setup, always_boost).ball());
-    v.push(Scenario::new("ball cam, ball high over the car", 120, high_ball_setup, always_throttle).ball());
+    v.push(
+        Scenario::new(
+            "ball cam, ball high over the car",
+            120,
+            high_ball_setup,
+            always_throttle,
+        )
+        .ball(),
+    );
     v
 }
 
@@ -516,7 +679,11 @@ fn the_car_stays_on_screen_with_a_wider_field_too() {
                 bad.push(describe(&sc, &s));
             }
         }
-        assert!(bad.is_empty(), "proj {proj}: car off screen:\n{}", bad.join("\n"));
+        assert!(
+            bad.is_empty(),
+            "proj {proj}: car off screen:\n{}",
+            bad.join("\n")
+        );
     }
 }
 
@@ -552,12 +719,22 @@ fn air_rolls_and_flips_do_not_swing_the_camera() {
         let mut sc = Scenario::new("jump, pitch back, air roll", 300, air_setup, air_input);
         sc.ball_cam = ball;
         let s = run(&sc);
-        assert!(s.min_arm >= 800 && s.max_arm <= 900, "ball {ball}: arm {}..{}", s.min_arm, s.max_arm);
+        assert!(
+            s.min_arm >= 800 && s.max_arm <= 900,
+            "ball {ball}: arm {}..{}",
+            s.min_arm,
+            s.max_arm
+        );
         assert_eq!(s.car_off, 0);
         let mut f = Scenario::new("front flip", 200, flip_setup, flip_input);
         f.ball_cam = ball;
         let s = run(&f);
-        assert!(s.min_arm >= 800 && s.max_arm <= 900, "ball {ball}: flip arm {}..{}", s.min_arm, s.max_arm);
+        assert!(
+            s.min_arm >= 800 && s.max_arm <= 900,
+            "ball {ball}: flip arm {}..{}",
+            s.min_arm,
+            s.max_arm
+        );
     }
 }
 
@@ -565,14 +742,25 @@ fn air_rolls_and_flips_do_not_swing_the_camera() {
 fn the_camera_levels_off_in_the_air_and_follows_the_roof() {
     // After the roof ride the car falls; the smoothed up must be back to
     // world up before the car lands.
-    let sc = Scenario::new("side wall, up it and over the roof", 420, side_wall_setup, always_boost);
+    let sc = Scenario::new(
+        "side wall, up it and over the roof",
+        420,
+        side_wall_setup,
+        always_boost,
+    );
     let mut st = CameraState::EMPTY;
     let mut s = Sim::new();
     s.opponent_ai = false;
     (sc.setup)(&mut s);
     s.kickoff_ticks = 255;
     let rig = Rig::DEFAULT;
-    let rq = Request { rig: &rig, screen: Screen::FULL, ball_cam: false, hold_car: true, split: false };
+    let rq = Request {
+        rig: &rig,
+        screen: Screen::FULL,
+        ball_cam: false,
+        hold_car: true,
+        split: false,
+    };
     let (mut max_tilt, mut airborne_ticks) = (0, 0);
     for t in 0..sc.ticks {
         s.tick(&boost());
@@ -581,7 +769,11 @@ fn the_camera_levels_off_in_the_air_and_follows_the_roof() {
         if !s.car.grounded {
             airborne_ticks += 1;
             if airborne_ticks > 30 {
-                assert_eq!(st.tilt, 0, "tick {t}: still tilted {} after {} airborne ticks", st.tilt, airborne_ticks);
+                assert_eq!(
+                    st.tilt, 0,
+                    "tick {t}: still tilted {} after {} airborne ticks",
+                    st.tilt, airborne_ticks
+                );
             }
         } else {
             airborne_ticks = 0;
@@ -595,7 +787,12 @@ fn open_floor_driving_is_steady_and_does_not_reverse() {
     for every in [1, 2] {
         let s = run(&Scenario::new("arc", 360, arc_setup, arc_input).every(every));
         assert_eq!(s.yaw_reversals, 0, "every {every}");
-        assert!(s.min_arm >= 860 && s.max_arm <= 870, "every {every}: arm {}..{}", s.min_arm, s.max_arm);
+        assert!(
+            s.min_arm >= 860 && s.max_arm <= 870,
+            "every {every}: arm {}..{}",
+            s.min_arm,
+            s.max_arm
+        );
         assert_eq!(s.car_y, (154, 154), "car stays put on screen");
     }
 }
@@ -724,7 +921,11 @@ fn the_camera_holds_through_whole_demo_matches() {
                     let cs = project(&pose, screen, car);
                     assert!(on_screen(cs, screen), "{who}: car at {cs:?}");
                 }
-                assert!(inside_arena(pose.eye.0, pose.eye.2), "{who}: eye {:?} outside", pose.eye);
+                assert!(
+                    inside_arena(pose.eye.0, pose.eye.2),
+                    "{who}: eye {:?} outside",
+                    pose.eye
+                );
                 let arm = (pose.eye.0 - car.0, pose.eye.1 - car.1, pose.eye.2 - car.2);
                 assert!(
                     isqrt_i32(arm.0 * arm.0 + arm.1 * arm.1 + arm.2 * arm.2) >= 300,
@@ -736,7 +937,11 @@ fn the_camera_holds_through_whole_demo_matches() {
                     let dt = (t - pt).max(1) as i32;
                     let moved = (car.0 - prev_car.0).abs().max((car.2 - prev_car.2).abs()) / dt;
                     if moved <= 100 {
-                        let d = (pose.eye.0 - prev.0, pose.eye.1 - prev.1, pose.eye.2 - prev.2);
+                        let d = (
+                            pose.eye.0 - prev.0,
+                            pose.eye.1 - prev.1,
+                            pose.eye.2 - prev.2,
+                        );
                         let j = isqrt_i32(d.0 * d.0 + d.1 * d.1 + d.2 * d.2) / dt;
                         worst_jump = worst_jump.max(j);
                         assert!(j <= MAX_EYE_JUMP_PER_TICK, "{who}: eye moved {j} uu a tick");
@@ -754,8 +959,19 @@ fn the_camera_holds_through_whole_demo_matches() {
 #[ignore = "diagnostic: one demo match, one seat, a window of ticks (DEMO=match,ball,split,seat,from,to)"]
 fn print_demo_window() {
     use crate::{Sim, DEMO_MATCHES};
-    let spec: Vec<i32> = std::env::var("DEMO").unwrap_or_default().split(',').filter_map(|v| v.parse().ok()).collect();
-    let (n, ball, split, seat, from, to) = (spec[0] as usize, spec[1] != 0, spec[2] != 0, spec[3], spec[4] as u32, spec[5] as u32);
+    let spec: Vec<i32> = std::env::var("DEMO")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|v| v.parse().ok())
+        .collect();
+    let (n, ball, split, seat, from, to) = (
+        spec[0] as usize,
+        spec[1] != 0,
+        spec[2] != 0,
+        spec[3],
+        spec[4] as u32,
+        spec[5] as u32,
+    );
     let rig = Rig::DEFAULT;
     let mut s = Sim::demo(&DEMO_MATCHES[n]);
     let mut st = CameraState::EMPTY;
@@ -769,7 +985,13 @@ fn print_demo_window() {
         if s.kickoff_ticks() == 0 {
             st = CameraState::EMPTY;
         }
-        let rq = Request { rig: &rig, screen, ball_cam: ball || celebrating, hold_car: !celebrating, split };
+        let rq = Request {
+            rig: &rig,
+            screen,
+            ball_cam: ball || celebrating,
+            hold_car: !celebrating,
+            split,
+        };
         let subject = if seat == 0 { s.car } else { s.opponent };
         let pose = update(&mut st, &s, &subject, &rq, t);
         if t >= from {
@@ -797,7 +1019,13 @@ fn kickoff_keeps_the_eye_straight_behind_the_car_at_every_spot() {
             s.kickoff_spot = spot;
             s.kickoff();
             let mut st = CameraState::EMPTY;
-            let rq = Request { rig: &rig, screen: Screen::FULL, ball_cam: false, hold_car: true, split: false };
+            let rq = Request {
+                rig: &rig,
+                screen: Screen::FULL,
+                ball_cam: false,
+                hold_car: true,
+                split: false,
+            };
             // The window is 240 ticks; the last frame belongs to the swing aside.
             for t in 0..236u32 {
                 s.tick(&boost());
@@ -805,7 +1033,10 @@ fn kickoff_keeps_the_eye_straight_behind_the_car_at_every_spot() {
                 let pose = update(&mut st, &s, &subject, &rq, t);
                 let behind = (pose.heading as i32 + 2048) & 4095;
                 let off = (((st.az as i32 - behind + 2048) & 4095) - 2048).abs();
-                assert!(off <= 24, "spot {spot} seat {seat} tick {t}: eye {off} Q12 off straight behind");
+                assert!(
+                    off <= 24,
+                    "spot {spot} seat {seat} tick {t}: eye {off} Q12 off straight behind"
+                );
             }
         }
     }
@@ -818,21 +1049,35 @@ fn the_fov_table_is_the_horizontal_field_of_view_it_says() {
         // Float is only the reference, on the host.
         let want = 160.0 / (fov_degrees(step) as f64 / 2.0).to_radians().tan();
         let got = FOV_PLANE[step] as f64;
-        assert!((got - want).abs() <= 0.51, "{} degrees: plane {got}, exact {want:.2}", fov_degrees(step));
+        assert!(
+            (got - want).abs() <= 0.51,
+            "{} degrees: plane {got}, exact {want:.2}",
+            fov_degrees(step)
+        );
     }
     assert_eq!(fov_degrees(0), 60);
     assert_eq!(fov_degrees(FOV_STEPS - 1), 110);
-    assert_eq!(FOV_PLANE[crate::camera::FOV_RL_STEP], 160, "Rocket League's 90 is a plane of half the width");
+    assert_eq!(
+        FOV_PLANE[crate::camera::FOV_RL_STEP],
+        160,
+        "Rocket League's 90 is a plane of half the width"
+    );
     assert_eq!(fov_degrees(crate::camera::FOV_RL_STEP), 90);
     assert_eq!(fov_degrees(crate::camera::FOV_DEFAULT_STEP), 60);
-    assert!(FOV_PLANE.windows(2).all(|w| w[0] > w[1]), "wider is a shorter plane");
+    assert!(
+        FOV_PLANE.windows(2).all(|w| w[0] > w[1]),
+        "wider is a shorter plane"
+    );
 }
 
 #[test]
 fn the_fov_game_byte_round_trips_and_an_empty_one_is_the_default() {
     use crate::camera::{fov_step_from_save, fov_step_to_save, FOV_DEFAULT_STEP, FOV_STEPS};
     for step in 0..FOV_STEPS {
-        assert_eq!(fov_step_from_save(fov_step_to_save(step), FOV_DEFAULT_STEP), step);
+        assert_eq!(
+            fov_step_from_save(fov_step_to_save(step), FOV_DEFAULT_STEP),
+            step
+        );
         // A saved choice is never the empty byte, even step 0.
         assert_ne!(fov_step_to_save(step), 0);
     }
@@ -867,7 +1112,7 @@ fn version_two_record(difficulty: u8) -> Vec<u8> {
     out[14] = difficulty;
     out[18..20].copy_from_slice(&0x0040u16.to_le_bytes());
     out[22..24].copy_from_slice(&0x0800u16.to_le_bytes());
-    let mut sum = 0xA7u8;
+    let mut sum = 0xa7u8;
     for byte in out[..15].iter().chain(&out[18..]) {
         sum = sum.rotate_left(1) ^ byte;
     }
@@ -881,16 +1126,25 @@ fn drive_map() -> psx_pad::ActionMap<2> {
 
 #[test]
 fn a_fov_saved_in_the_difficulty_byte_moves_to_the_game_byte_and_difficulty_resets() {
-    use crate::camera::{fov_step_from_save, migrate_legacy_fov, FOV_DEFAULT_STEP, FOV_GAME_BYTE, FOV_STEPS};
+    use crate::camera::{
+        fov_step_from_save, migrate_legacy_fov, FOV_DEFAULT_STEP, FOV_GAME_BYTE, FOV_STEPS,
+    };
     use psx_settings::Profile;
     let default_difficulty = Profile::<2, 0>::new(drive_map()).difficulty;
     for step in 0..FOV_STEPS {
         // A real version 2 card record, as the previous build saved it.
         let record = version_two_record(0x40 + step as u8);
         let mut profile = Profile::<2, 0>::decode(&record).unwrap();
-        assert_eq!(profile.difficulty, 0x40 + step as u8, "the old record decodes untouched");
+        assert_eq!(
+            profile.difficulty,
+            0x40 + step as u8,
+            "the old record decodes untouched"
+        );
         assert!(migrate_legacy_fov(&mut profile));
-        assert_eq!(fov_step_from_save(profile.game_bytes[FOV_GAME_BYTE], FOV_DEFAULT_STEP), step);
+        assert_eq!(
+            fov_step_from_save(profile.game_bytes[FOV_GAME_BYTE], FOV_DEFAULT_STEP),
+            step
+        );
         assert_eq!(profile.difficulty, default_difficulty);
         // Everything else the record held is still there, and the next save
         // keeps the result.
@@ -916,7 +1170,10 @@ fn migration_leaves_a_record_without_a_legacy_fov_alone() {
     for difficulty in (0..0x40u8).chain((0x40 + FOV_STEPS as u8)..=0xff) {
         let mut profile = Profile::<2, 0>::decode(&version_two_record(difficulty)).unwrap();
         let before = profile;
-        assert!(!migrate_legacy_fov(&mut profile), "difficulty {difficulty:#x}");
+        assert!(
+            !migrate_legacy_fov(&mut profile),
+            "difficulty {difficulty:#x}"
+        );
         assert_eq!(profile, before);
         assert_eq!(profile.game_bytes, [0; psx_settings::GAME_BYTES_LEN]);
     }

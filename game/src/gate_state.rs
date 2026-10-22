@@ -32,8 +32,14 @@ pub struct SettingsState {
 #[used]
 #[no_mangle]
 pub static mut NITRO_SETTINGS_STATE: SettingsState = SettingsState {
-    magic: u32::from_le_bytes(*b"NSET"), version: 1, size_bytes: 36,
-    panel_row: 0, row_count: 0, dirty: 0, card_prompt: 0, save_status: 0,
+    magic: u32::from_le_bytes(*b"NSET"),
+    version: 1,
+    size_bytes: 36,
+    panel_row: 0,
+    row_count: 0,
+    dirty: 0,
+    card_prompt: 0,
+    save_status: 0,
     sfx_volume: 0,
 };
 
@@ -104,17 +110,25 @@ pub static mut NITRO_GATE_STATE: GateState = GateState {
 
 pub fn publish(game: &NitroXide, completed_tick: u32) {
     let settings = SettingsState {
-        magic: u32::from_le_bytes(*b"NSET"), version: 1, size_bytes: 36,
+        magic: u32::from_le_bytes(*b"NSET"),
+        version: 1,
+        size_bytes: 36,
         panel_row: game.settings.map_or(0, |row| row as u32 + 1),
         row_count: game.settings_rows().len() as u32,
         dirty: u32::from(game.settings_dirty),
         card_prompt: match game.card_ask {
-            CardAsk::Idle => 0, CardAsk::Asking => 1,
-            CardAsk::Formatting => 2, CardAsk::Declined => 3,
+            CardAsk::Idle => 0,
+            CardAsk::Asking => 1,
+            CardAsk::Formatting => 2,
+            CardAsk::Declined => 3,
         },
         save_status: match game.settings_save_status {
-            "SAVED" => 1, "FAILED" => 2, "NO CARD" => 3,
-            "CANCELED" => 4, "SAVING" => 5, _ => 0,
+            "SAVED" => 1,
+            "FAILED" => 2,
+            "NO CARD" => 3,
+            "CANCELED" => 4,
+            "SAVING" => 5,
+            _ => 0,
         },
         sfx_volume: game.profile.sfx_volume as u32,
     };

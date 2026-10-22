@@ -3,7 +3,8 @@
 
 use image::GenericImageView;
 use psx_asset::Texture;
-use psxed_format::{texture::TextureHeader, AssetHeader};
+use psxed_format::texture::TextureHeader;
+use psxed_format::AssetHeader;
 use psxed_tex::{encode_indexed_psxt_with_clut_rows, quantize_rgb, PsxtDepth};
 use std::path::Path;
 
@@ -58,7 +59,10 @@ const BALL_U0: usize = 0;
 /// the row just past the tile (draw.rs `BALL_V0`), and the ball's first row
 /// there drew a dotted line along the lower edge of each halo.
 const BALL_V0: usize = GLOW_V0 + GLOW_W + 1;
-const _: () = assert!(BALL_V0 > GLOW_V0 + GLOW_W, "a guard row must separate the glow tile from the ball");
+const _: () = assert!(
+    BALL_V0 > GLOW_V0 + GLOW_W,
+    "a guard row must separate the glow tile from the ball"
+);
 const BALL_TEX_W: usize = 128;
 const BALL_TEX_H: usize = 64;
 const BALL_LON: usize = 16;
@@ -179,7 +183,10 @@ fn ring_palette() -> Vec<[u8; 3]> {
 }
 
 fn glow_index(px: usize, py: usize) -> u8 {
-    let (dx, dy) = (px as i32 * 2 + 1 - GLOW_W as i32, py as i32 * 2 + 1 - GLOW_W as i32);
+    let (dx, dy) = (
+        px as i32 * 2 + 1 - GLOW_W as i32,
+        py as i32 * 2 + 1 - GLOW_W as i32,
+    );
     let r2 = dx * dx + dy * dy;
     let rim = GLOW_W as i32;
     if r2 >= rim * rim {
@@ -367,9 +374,10 @@ fn crowd_index(px: usize, py: usize) -> u8 {
     let (tier, sub) = (py / 4, py % 4);
     let seat = px / 2;
     let hash = |salt: usize| {
-        let mut h = (seat as u32 ^ (tier as u32) << 8 ^ (salt as u32) << 16).wrapping_mul(0x9E37_79B9);
+        let mut h =
+            (seat as u32 ^ (tier as u32) << 8 ^ (salt as u32) << 16).wrapping_mul(0x9e37_79b9);
         h ^= h >> 15;
-        h = h.wrapping_mul(0x85EB_CA6B);
+        h = h.wrapping_mul(0x85eb_ca6b);
         (h ^ (h >> 13)) % 100
     };
     let empty = hash(1) < 12;
@@ -445,12 +453,21 @@ fn bary(p0: [f64; 2], p1: [f64; 2], p2: [f64; 2], q: [f64; 2]) -> [f64; 3] {
 fn ball_texel_direction(u: f64, v: f64) -> [f64; 3] {
     let cell = (BALL_TEX_W / BALL_LON) as f64;
     let i = ((u / cell) as usize).min(BALL_LON - 1);
-    let j = (0..BALL_LAT).rev().find(|&j| v >= BALL_ROW_V[j]).unwrap_or(0);
+    let j = (0..BALL_LAT)
+        .rev()
+        .find(|&j| v >= BALL_ROW_V[j])
+        .unwrap_or(0);
     let (u0, u1) = (i as f64 * cell, (i + 1) as f64 * cell);
     let corner = |di: usize, dj: usize| {
         let row = j + dj;
         let pole = row == 0 || row == BALL_LAT;
-        let cu = if pole { (u0 + u1) / 2.0 } else if di == 0 { u0 } else { u1 };
+        let cu = if pole {
+            (u0 + u1) / 2.0
+        } else if di == 0 {
+            u0
+        } else {
+            u1
+        };
         ([cu, BALL_ROW_V[row]], ball_vertex((i + di) % BALL_LON, row))
     };
     let (a, b, c, d) = (corner(0, 0), corner(1, 0), corner(0, 1), corner(1, 1));
@@ -494,7 +511,12 @@ fn ball_faces() -> Vec<BallFace> {
     const H_HEX: f64 = 2.267_283_942;
     let mut faces: Vec<BallFace> = v
         .iter()
-        .map(|&p| BallFace { n: unit(p), h: H_PENT, pentagon: true, tone: 1 })
+        .map(|&p| BallFace {
+            n: unit(p),
+            h: H_PENT,
+            pentagon: true,
+            tone: 1,
+        })
         .collect();
     let edge = |p: &[f64; 3], q: &[f64; 3]| {
         let d = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2);
@@ -505,7 +527,12 @@ fn ball_faces() -> Vec<BallFace> {
             for k in j + 1..12 {
                 if edge(&v[i], &v[j]) && edge(&v[j], &v[k]) && edge(&v[i], &v[k]) {
                     let n = unit([0, 1, 2].map(|c| v[i][c] + v[j][c] + v[k][c]));
-                    faces.push(BallFace { n, h: H_HEX, pentagon: false, tone: 0 });
+                    faces.push(BallFace {
+                        n,
+                        h: H_HEX,
+                        pentagon: false,
+                        tone: 0,
+                    });
                 }
             }
         }
@@ -519,7 +546,10 @@ fn ball_faces() -> Vec<BallFace> {
             .filter(|&g| dot3(faces[f].n, faces[g].n) > 0.6)
             .map(|g| faces[g].tone)
             .collect();
-        faces[f].tone = *TONES.iter().find(|t| !used.contains(t)).unwrap_or(&TONES[0]);
+        faces[f].tone = *TONES
+            .iter()
+            .find(|t| !used.contains(t))
+            .unwrap_or(&TONES[0]);
     }
     faces
 }
@@ -731,7 +761,10 @@ mod tests {
     /// of each polar cell outside its one triangle.
     fn ball_texel_drawn(u: f64, v: f64) -> bool {
         let cell = (BALL_TEX_W / BALL_LON) as f64;
-        let (u0, um) = ((u / cell).floor() * cell, (u / cell).floor() * cell + cell / 2.0);
+        let (u0, um) = (
+            (u / cell).floor() * cell,
+            (u / cell).floor() * cell + cell / 2.0,
+        );
         let polar = if v < BALL_ROW_V[1] {
             Some((BALL_ROW_V[0], BALL_ROW_V[1]))
         } else if v >= BALL_ROW_V[BALL_LAT - 1] {
@@ -800,9 +833,14 @@ mod tests {
             u += step;
         }
         let total: f64 = area.iter().sum();
-        assert!((total - 4.0 * std::f64::consts::PI).abs() < 0.5, "sphere area {total}");
+        assert!(
+            (total - 4.0 * std::f64::consts::PI).abs() < 0.5,
+            "sphere area {total}"
+        );
         let hex: Vec<f64> = area[12..].to_vec();
-        let (lo, hi) = hex.iter().fold((f64::MAX, 0f64), |(a, b), &x| (a.min(x), b.max(x)));
+        let (lo, hi) = hex
+            .iter()
+            .fold((f64::MAX, 0f64), |(a, b), &x| (a.min(x), b.max(x)));
         assert!(hi / lo < 1.35, "hexagon areas range {lo}..{hi}");
         let map = ball_texture();
         assert!(map.contains(&14) && map.contains(&9) && map.contains(&12));

@@ -24,11 +24,13 @@
 
 use nitroxide_sim as sim;
 use psx_asset::{Mesh, Texture};
-use psx_engine::{ActorTransform, CameraDepth, DepthRange, DepthSlot, GpuPacket, OtFrame, Vec3World};
+use psx_engine::{
+    ActorTransform, CameraDepth, DepthRange, DepthSlot, GpuPacket, OtFrame, Vec3World,
+};
+use psx_font::FontAtlas;
 use psx_gpu::frame::PrimitiveArena;
 use psx_gpu::material::{BlendMode, TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
-use psx_font::FontAtlas;
 use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedGouraud, QuadTexturedMaterial, TriGouraud};
 use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
@@ -79,7 +81,10 @@ pub const FOV_DEFAULT: usize = match option_env!("NITRO_FOV") {
         let mut degrees = 0;
         let mut i = 0;
         while i < b.len() {
-            assert!(b[i].is_ascii_digit(), "NITRO_FOV must be a number of degrees");
+            assert!(
+                b[i].is_ascii_digit(),
+                "NITRO_FOV must be a number of degrees"
+            );
             degrees = degrees * 10 + (b[i] - b'0') as i32;
             i += 1;
         }
@@ -293,7 +298,12 @@ fn project_quad(c: &[(i32, i32, i32); 4]) -> Option<([(i16, i16); 4], i32)> {
         return None;
     }
     Some((
-        [(t[0].sx, t[0].sy), (t[1].sx, t[1].sy), (t[2].sx, t[2].sy), (d.sx, d.sy)],
+        [
+            (t[0].sx, t[0].sy),
+            (t[1].sx, t[1].sy),
+            (t[2].sx, t[2].sy),
+            (d.sx, d.sy),
+        ],
         t[0].sz as i32 + t[1].sz as i32 + t[2].sz as i32 + d.sz as i32,
     ))
 }
@@ -1342,10 +1352,7 @@ fn build_stands() {
         let dot = (n1.0 * n2.0 + n1.1 * n2.1) >> 12;
         let den = 4096 + dot;
         let v = verts[i];
-        (
-            v.0 + (n1.0 + n2.0) * o / den,
-            v.1 + (n1.1 + n2.1) * o / den,
-        )
+        (v.0 + (n1.0 + n2.0) * o / den, v.1 + (n1.1 + n2.1) * o / den)
     };
     let lerp = |a: (i32, i32), b: (i32, i32), t: i32, den: i32| {
         (a.0 + (b.0 - a.0) * t / den, a.1 + (b.1 - a.1) * t / den)
@@ -1404,12 +1411,12 @@ fn build_stands() {
             unsafe {
                 STANDS[k] = Stand {
                     grid,
-                    centre: ((x0 + x1) / 2, -(STAND_Y_IN + STAND_Y_OUT) / 2, (z0 + z1) / 2),
-                    half: (
-                        (x1 - x0) / 2,
-                        (STAND_Y_OUT - STAND_Y_IN) / 2,
-                        (z1 - z0) / 2,
+                    centre: (
+                        (x0 + x1) / 2,
+                        -(STAND_Y_IN + STAND_Y_OUT) / 2,
+                        (z0 + z1) / 2,
                     ),
+                    half: ((x1 - x0) / 2, (STAND_Y_OUT - STAND_Y_IN) / 2, (z1 - z0) / 2),
                     u,
                     team: ((z0 + z1) > 0) as u8,
                     edge: e as u8,
@@ -1479,7 +1486,11 @@ static mut ROOF_BASE: [[Rgb; ROOF_ROWS + 1]; ROOF_COLS + 1] =
 /// roof edge, as the patch walk always did).
 const fn roof_corner_x(ix: usize) -> i32 {
     let x = -ROOF_HALF_X + ix as i32 * ROOF_STEP_X;
-    if x < ROOF_HALF_X { x } else { ROOF_HALF_X }
+    if x < ROOF_HALF_X {
+        x
+    } else {
+        ROOF_HALF_X
+    }
 }
 /// Cover texels across each roof column, for its patches' U range.
 const ROOF_PATCH_W: [u8; ROOF_COLS] = {
@@ -1754,15 +1765,26 @@ fn build_spans() {
     let straight = |a: (i32, i32), b: (i32, i32), n: (i32, i32)| {
         let mut s = [(b.0, b.1, n.0, n.1); SLOTS];
         for (k, &t) in SLOT_TWELFTHS.iter().enumerate() {
-            s[k] = (a.0 + (b.0 - a.0) * t / 12, a.1 + (b.1 - a.1) * t / 12, n.0, n.1);
+            s[k] = (
+                a.0 + (b.0 - a.0) * t / 12,
+                a.1 + (b.1 - a.1) * t / 12,
+                n.0,
+                n.1,
+            );
         }
         s
     };
     for k in 0..WALL_SEGS {
         let z0 = -SIDE_WALL_Z + 2 * SIDE_WALL_Z * k / WALL_SEGS;
         let z1 = -SIDE_WALL_Z + 2 * SIDE_WALL_Z * (k + 1) / WALL_SEGS;
-        put(straight((-sim::HALF_X, z0), (-sim::HALF_X, z1), (4096, 0)), STRAIGHT_LODS);
-        put(straight((sim::HALF_X, z0), (sim::HALF_X, z1), (-4096, 0)), STRAIGHT_LODS);
+        put(
+            straight((-sim::HALF_X, z0), (-sim::HALF_X, z1), (4096, 0)),
+            STRAIGHT_LODS,
+        );
+        put(
+            straight((sim::HALF_X, z0), (sim::HALF_X, z1), (-4096, 0)),
+            STRAIGHT_LODS,
+        );
     }
     for &sx in &[-1i32, 1] {
         for &sz in &[-1i32, 1] {
@@ -1773,8 +1795,14 @@ fn build_spans() {
     for &sz in &[-1i32, 1] {
         let z = sz * sim::HALF_Z;
         let gw = sim::GOAL_HALF_W;
-        put(straight((-END_WALL_X, z), (-gw, z), (0, -sz * 4096)), STRAIGHT_LODS);
-        put(straight((gw, z), (END_WALL_X, z), (0, -sz * 4096)), STRAIGHT_LODS);
+        put(
+            straight((-END_WALL_X, z), (-gw, z), (0, -sz * 4096)),
+            STRAIGHT_LODS,
+        );
+        put(
+            straight((gw, z), (END_WALL_X, z), (0, -sz * 4096)),
+            STRAIGHT_LODS,
+        );
     }
 }
 
@@ -2115,7 +2143,9 @@ fn paint_goal_pools() {
                 let lit = if e < 256 {
                     let f = (256 - e) * (256 - e) >> 8; // 0..256
                     let hue = if cz < 0 { blue } else { orange };
-                    let add = |b: u8, h: u8| (b as i32 + h as i32 * f * GOAL_POOL_GAIN / (256 * 16)).min(255) as u8;
+                    let add = |b: u8, h: u8| {
+                        (b as i32 + h as i32 * f * GOAL_POOL_GAIN / (256 * 16)).min(255) as u8
+                    };
                     (add(base.0, hue.0), add(base.1, hue.1), add(base.2, hue.2))
                 } else {
                     base
@@ -2245,7 +2275,11 @@ fn build_lines() {
     // cut every LINE_STEP and at its far end.
     let straight = |from: (i32, i32), to: (i32, i32)| {
         let along_x = from.1 == to.1;
-        let (s0, s1) = if along_x { (from.0, to.0) } else { (from.1, to.1) };
+        let (s0, s1) = if along_x {
+            (from.0, to.0)
+        } else {
+            (from.1, to.1)
+        };
         let dir = if s1 >= s0 { 1 } else { -1 };
         let len = (s1 - s0).abs();
         let cuts = (len + LINE_STEP - 1) / LINE_STEP;
@@ -2272,7 +2306,16 @@ fn build_lines() {
     let x_end = sim::HALF_X - RAMP_R - HALFWAY_INSET;
     strip(&mut straight((-x_end, 0), (x_end, 0)), false);
     strip(
-        &mut ring(0, 0, 1, CIRCLE_R, CIRCLE_HALF_W, 0, 4096 / CIRCLE_SEGS, CIRCLE_SEGS),
+        &mut ring(
+            0,
+            0,
+            1,
+            CIRCLE_R,
+            CIRCLE_HALF_W,
+            0,
+            4096 / CIRCLE_SEGS,
+            CIRCLE_SEGS,
+        ),
         true,
     );
     // The D's centre line meets the big box's front line's centre line where
@@ -2287,9 +2330,15 @@ fn build_lines() {
         let z = |d: i32| end * (sim::HALF_Z - d);
         // The side lines start where the flat pitch does, an end-wall ramp
         // radius in.
-        for (half_w, depth) in [(GOAL_BOX_HALF_W, GOAL_BOX_DEPTH), (BIG_BOX_HALF_W, BIG_BOX_DEPTH)] {
+        for (half_w, depth) in [
+            (GOAL_BOX_HALF_W, GOAL_BOX_DEPTH),
+            (BIG_BOX_HALF_W, BIG_BOX_DEPTH),
+        ] {
             for side in [-half_w, half_w] {
-                strip(&mut straight((side, z(sim::END_RAMP_R)), (side, z(depth + LINE_HALF_W))), false);
+                strip(
+                    &mut straight((side, z(sim::END_RAMP_R)), (side, z(depth + LINE_HALF_W))),
+                    false,
+                );
             }
             let reach = half_w + LINE_HALF_W;
             strip(&mut straight((-reach, z(depth)), (reach, z(depth))), false);
@@ -2333,7 +2382,11 @@ fn chalk_at(x: i32, z: i32) -> Rgb {
     // Weights total 2 * 256 * 256.
     tinted(
         CHALK,
-        ((sum[0] >> 17) as u8, (sum[1] >> 17) as u8, (sum[2] >> 17) as u8),
+        (
+            (sum[0] >> 17) as u8,
+            (sum[1] >> 17) as u8,
+            (sum[2] >> 17) as u8,
+        ),
     )
 }
 
@@ -2395,23 +2448,43 @@ fn thin_quad(from: &(Pv, Pv), to: &(Pv, Pv), scale: &ThinScale) -> ([(i16, i16);
     let across_x = (m1.0 - m0.0).abs() >= (m1.1 - m0.1).abs();
     let (px, fade) = if !across_x {
         // Running up the screen, the width is the cut's own.
-        let w = ((from.1.sx as i32 - from.0.sx as i32).abs() + (to.1.sx as i32 - to.0.sx as i32).abs() + 1) >> 1;
+        let w = ((from.1.sx as i32 - from.0.sx as i32).abs()
+            + (to.1.sx as i32 - to.0.sx as i32).abs()
+            + 1)
+            >> 1;
         (w.max(1), 16)
     } else if z2 >= scale.dim_z2 {
         (1, THIN_FADE_MIN)
     } else {
         let width = scale.k / z2.max(1);
         let px = ((width + 8) >> 4).max(1);
-        (px, if px == 1 { width.clamp(THIN_FADE_MIN, 16) } else { 16 })
+        (
+            px,
+            if px == 1 {
+                width.clamp(THIN_FADE_MIN, 16)
+            } else {
+                16
+            },
+        )
     };
     // The near side of a middle `px` thick: half a pixel is 1 in halves.
     let lo = |m: i32| ((m - px + 1) >> 1) as i16;
     let hi = |m: i32| ((m + 1) >> 1) as i16;
     let p = px as i16;
     let quad = if across_x {
-        [(hi(m0.0), lo(m0.1)), (hi(m0.0), lo(m0.1) + p), (hi(m1.0), lo(m1.1)), (hi(m1.0), lo(m1.1) + p)]
+        [
+            (hi(m0.0), lo(m0.1)),
+            (hi(m0.0), lo(m0.1) + p),
+            (hi(m1.0), lo(m1.1)),
+            (hi(m1.0), lo(m1.1) + p),
+        ]
     } else {
-        [(lo(m0.0), hi(m0.1)), (lo(m0.0) + p, hi(m0.1)), (lo(m1.0), hi(m1.1)), (lo(m1.0) + p, hi(m1.1))]
+        [
+            (lo(m0.0), hi(m0.1)),
+            (lo(m0.0) + p, hi(m0.1)),
+            (lo(m1.0), hi(m1.1)),
+            (lo(m1.0) + p, hi(m1.1)),
+        ]
     };
     (quad, fade)
 }
@@ -2551,9 +2624,9 @@ pub fn upload_arena_texture(blob: &[u8]) -> bool {
         GLOW_CLUT,
         RING_CLUT,
     ]
-        .iter()
-        .copied()
-        .enumerate()
+    .iter()
+    .copied()
+    .enumerate()
     {
         let start = row * 16 * 2;
         upload_bytes(
@@ -2621,14 +2694,17 @@ const AREA_WORDS: u8 = 2;
 impl AreaPacket {
     const EMPTY: Self = Self {
         tag: 0,
-        top_left: 0xE300_0000,
-        bottom_right: 0xE400_0000,
+        top_left: 0xe300_0000,
+        bottom_right: 0xe400_0000,
     };
     fn set(&mut self, vp: Viewport, buffer_y: u16) {
         let (x0, y0) = (vp.x as u32, buffer_y as u32 + vp.y as u32);
-        let (x1, y1) = ((vp.x + vp.w) as u32 - 1, buffer_y as u32 + (vp.y + vp.h) as u32 - 1);
-        self.top_left = 0xE300_0000 | (x0 & 0x3FF) | ((y0 & 0x1FF) << 10);
-        self.bottom_right = 0xE400_0000 | (x1 & 0x3FF) | ((y1 & 0x1FF) << 10);
+        let (x1, y1) = (
+            (vp.x + vp.w) as u32 - 1,
+            buffer_y as u32 + (vp.y + vp.h) as u32 - 1,
+        );
+        self.top_left = 0xe300_0000 | (x0 & 0x3ff) | ((y0 & 0x1ff) << 10);
+        self.bottom_right = 0xe400_0000 | (x1 & 0x3ff) | ((y1 & 0x1ff) << 10);
     }
 }
 /// Per set: the scissor its view is drawn with, first in its table, and for
@@ -2661,7 +2737,8 @@ const QUADS_INIT: [QuadGouraud; MAX_QUADS] =
 // Keep another thirty-two packets of headroom for a near-plane split rather
 // than allowing a high aerial to lose random cells from the enclosure.
 const MAX_TEX_QUADS: usize = 704;
-static mut TEX_QUADS_SETS: [[QuadTexturedGouraud; MAX_TEX_QUADS]; SET_COUNT] = [TEX_INIT; SET_COUNT];
+static mut TEX_QUADS_SETS: [[QuadTexturedGouraud; MAX_TEX_QUADS]; SET_COUNT] =
+    [TEX_INIT; SET_COUNT];
 const TEX_INIT: [QuadTexturedGouraud; MAX_TEX_QUADS] =
     [const { QuadTexturedGouraud::EMPTY }; MAX_TEX_QUADS];
 
@@ -2732,7 +2809,8 @@ static mut BANNER: Option<Banner> = None;
 /// The draw mode the banner's glyphs are drawn in: the font's own, which has
 /// no dither. Written to the GPU ahead of them so the grain the arena's
 /// textured packets draw with does not land on the lettering.
-static mut BANNER_MODE: [ModePacket; SET_COUNT] = [const { ModePacket { tag: 0, word: 0 } }; SET_COUNT];
+static mut BANNER_MODE: [ModePacket; SET_COUNT] =
+    [const { ModePacket { tag: 0, word: 0 } }; SET_COUNT];
 /// What each set's glyph packets were last built from, and how many there
 /// are: a banner that has finished growing is the same sixty quads every frame.
 type BannerKey = (i16, u16, [(i16, &'static str, (u8, u8, u8)); 2]);
@@ -2762,7 +2840,7 @@ const CLUT_LOAD_WORDS: u8 = 12;
 impl ClutLoad {
     const EMPTY: Self = Self {
         tag: 0,
-        cmd: 0xA000_0000,
+        cmd: 0xa000_0000,
         xy: 0,
         wh: (1 << 16) | 16,
         data: [0; 8],
@@ -3104,7 +3182,11 @@ fn camera(
         screen: sim::camera::Screen {
             proj_h: proj_h(),
             w: SCREEN_W as i32,
-            h: if split { SCREEN_H as i32 / 2 } else { SCREEN_H as i32 },
+            h: if split {
+                SCREEN_H as i32 / 2
+            } else {
+                SCREEN_H as i32
+            },
         },
         ball_cam,
         hold_car,
@@ -3480,13 +3562,13 @@ const LIGHTS: LightRig = LightRig::new(
     [
         // Key: high, and a little toward the blue end.
         Light {
-            direction: Vec3I16::new(0x0400, -0x0E00, -0x0500),
-            colour: (0x1200, 0x1100, 0x0F00),
+            direction: Vec3I16::new(0x0400, -0x0e00, -0x0500),
+            colour: (0x1200, 0x1100, 0x0f00),
         },
         // Fill: cool, from the opposite side, keeps unlit flanks readable.
         Light {
-            direction: Vec3I16::new(-0x0A00, -0x0600, 0x0400),
-            colour: (0x0700, 0x0800, 0x0B00),
+            direction: Vec3I16::new(-0x0a00, -0x0600, 0x0400),
+            colour: (0x0700, 0x0800, 0x0b00),
         },
         Light::OFF,
     ],
@@ -3500,7 +3582,7 @@ const LIGHTS: LightRig = LightRig::new(
 /// The key light's direction in render space (Y down), for the ball, which is
 /// procedural and shades itself rather than going through the GTE rig. Mirrors
 /// `LIGHTS`' first entry with Y flipped, so the two agree on where the sun is.
-const BALL_LIGHT: (i32, i32, i32) = (0x0400, -0x0E00, -0x0500);
+const BALL_LIGHT: (i32, i32, i32) = (0x0400, -0x0e00, -0x0500);
 /// The ball's vertex tint where the light is full on it: 1.56 times the
 /// texture's own colour (128 is 1.0), so the mid-grey plates come up bright
 /// on the lit side.
@@ -3689,7 +3771,8 @@ static mut CAR_VERT_COUNT: [u16; CAR_SLOTS] = [0; CAR_SLOTS];
 /// rebuilds three `u16` from six `lbu` behind a stride branch, once per face
 /// per car per view. Two words a face, `a | b << 16` and `c`: three halfword
 /// loads were three main-RAM stalls, this is two.
-static mut CAR_FACES: [[[u32; 2]; CAR_SLOT_FACES]; CAR_SLOTS] = [[[0; 2]; CAR_SLOT_FACES]; CAR_SLOTS];
+static mut CAR_FACES: [[[u32; 2]; CAR_SLOT_FACES]; CAR_SLOTS] =
+    [[[0; 2]; CAR_SLOT_FACES]; CAR_SLOTS];
 /// Depth-sorted face keys for one car draw (`submit_car_faces`).
 static mut CAR_SORT_KEYS: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
 static mut CAR_SORT_SPARE: [u32; CAR_FACE_CAP] = [0; CAR_FACE_CAP];
@@ -4034,12 +4117,11 @@ fn submit_car_faces<'a>(
     // boot, and `draw_cars` passes no faces if fewer vertices were
     // projected. Checking all three again on every face of every frame was
     // nine instructions of the loop that runs most.
-    debug_assert!(faces
-        .iter()
-        .take(CAR_FACE_CAP)
-        .all(|f| {
-            [f[0] & 0xffff, f[0] >> 16, f[1]].iter().all(|&i| (i as usize) < projected.len())
-        }));
+    debug_assert!(faces.iter().take(CAR_FACE_CAP).all(|f| {
+        [f[0] & 0xffff, f[0] >> 16, f[1]]
+            .iter()
+            .all(|&i| (i as usize) < projected.len())
+    }));
     for face in faces.iter().take(CAR_FACE_CAP) {
         let (a, b, c) = unsafe {
             (
@@ -4153,7 +4235,11 @@ fn rtpt_ncct(p: [u32; 6], n: [u32; 6], rgbc: u32) -> ([u32; 3], [u32; 3], [u32; 
             options(nostack, nomem, preserves_flags),
         );
     }
-    ([s0, s1, s2], [z1 & 0xffff, z2 & 0xffff, z3 & 0xffff], [c0, c1, c2])
+    (
+        [s0, s1, s2],
+        [z1 & 0xffff, z2 & 0xffff, z3 & 0xffff],
+        [c0, c1, c2],
+    )
 }
 
 /// Project and light one car mesh into `CAR_PROJ`, returning how many vertices
@@ -4194,8 +4280,11 @@ fn project_car_animated(which: usize, materials: &[u32; CAR_MAX_VERTS], slots: &
         let (ma, mb, mc) = (materials[vi], materials[vi + 1], materials[vi + 2]);
         #[cfg(target_arch = "mips")]
         if ma == mb && mb == mc {
-            let (sxy, sz, rgb) =
-                rtpt_ncct([a.0, a.1, b.0, b.1, c.0, c.1], [a.2, a.3, b.2, b.3, c.2, c.3], ma);
+            let (sxy, sz, rgb) = rtpt_ncct(
+                [a.0, a.1, b.0, b.1, c.0, c.1],
+                [a.2, a.3, b.2, b.3, c.2, c.3],
+                ma,
+            );
             for k in 0..3 {
                 proj[vi + k] = CarLit {
                     xy: sxy[k],
@@ -4326,7 +4415,11 @@ fn build_meshes() {
             }
         }
     }
-    for (step, table) in unsafe { (*core::ptr::addr_of_mut!(BALL_FACET)).iter_mut().enumerate() } {
+    for (step, table) in unsafe {
+        (*core::ptr::addr_of_mut!(BALL_FACET))
+            .iter_mut()
+            .enumerate()
+    } {
         let lon_step = step + 1;
         for j in 0..BALL_LAT {
             for i in (0..BALL_LON).step_by(lon_step) {
@@ -4441,7 +4534,10 @@ impl Builder<'_> {
     /// Emit a projected quad of one colour. See [`MAX_FLAT_QUADS`].
     fn emit_flat(&mut self, sp: [(i16, i16); 4], depth: i32, color: Rgb) {
         let slot = depth_slot(depth);
-        if let Some(q) = self.flats.push(QuadFlat::new(sp, color.0, color.1, color.2)) {
+        if let Some(q) = self
+            .flats
+            .push(QuadFlat::new(sp, color.0, color.1, color.2))
+        {
             self.ot.add_packet_slot(slot, q);
         } else {
             count_overflow!();
@@ -4698,7 +4794,9 @@ impl Builder<'_> {
         // that stops short of the ramp's foot shows sky, where one that runs
         // a little under the ramp is drawn over.
         const CHORD_ENDS: [(usize, usize); 4] = [(0, 1), (1, 2), (3, 4), (4, 5)];
-        if x.abs() > sim::CORNER_JOINT_PTS[5].0 - RAMP_R && z.abs() > sim::CORNER_JOINT_PTS[0].1 - RAMP_R {
+        if x.abs() > sim::CORNER_JOINT_PTS[5].0 - RAMP_R
+            && z.abs() > sim::CORNER_JOINT_PTS[0].1 - RAMP_R
+        {
             for (&(nx, nz, off), &(a, b)) in sim::CORNER_JOINT_PLANES.iter().zip(&CHORD_ENDS) {
                 let pts = sim::CORNER_JOINT_PTS;
                 let foot = sim::ramp_radius(pts[a].0).min(sim::ramp_radius(pts[b].0));
@@ -5106,7 +5204,12 @@ impl Builder<'_> {
                 cols.z[c] + ((cols.nz[c] * pk.0) >> 12),
             )
         };
-        [point(col, lo), point(col + 1, lo), point(col, hi), point(col + 1, hi)]
+        [
+            point(col, lo),
+            point(col + 1, lo),
+            point(col, hi),
+            point(col + 1, hi),
+        ]
     }
 
     /// The queued wall quads as world corners, then into
@@ -5404,7 +5507,12 @@ impl Builder<'_> {
         }
         // Wholly past one side, or wholly behind the near plane: nothing
         // shows. (Behind the near plane is every z at or under it.)
-        if all != 0 || (pool[0][2] <= near && pool[1][2] <= near && pool[2][2] <= near && pool[3][2] <= near) {
+        if all != 0
+            || (pool[0][2] <= near
+                && pool[1][2] <= near
+                && pool[2][2] <= near
+                && pool[3][2] <= near)
+        {
             return;
         }
         let mut used = 4;
@@ -5420,7 +5528,10 @@ impl Builder<'_> {
         }
         // To the screen, unbounded by the GTE's eleven bits.
         let (vx0, vx1, vy0, vy1) = view_bounds();
-        let (ox, oy) = ((vx0 as i32 + vx1 as i32) >> 1, (vy0 as i32 + vy1 as i32) >> 1);
+        let (ox, oy) = (
+            (vx0 as i32 + vx1 as i32) >> 1,
+            (vy0 as i32 + vy1 as i32) >> 1,
+        );
         let mut far = 0;
         for i in 0..n {
             let c = &mut pool[cur[i] as usize];
@@ -5558,19 +5669,22 @@ impl Builder<'_> {
         // place of nine multiplies. The same integers `Cull::visible_box`
         // computes, so the same tiles. (The centre `(x0 + x1) / 2` is exact
         // because the steps are even.)
-        const _: () = assert!(
-            (sim::HALF_X * 2 / TILES_X) % 2 == 0 && (sim::HALF_Z * 2 / TILES_Z) % 2 == 0
-        );
+        const _: () =
+            assert!((sim::HALF_X * 2 / TILES_X) % 2 == 0 && (sim::HALF_Z * 2 / TILES_Z) % 2 == 0);
         let d0 = (
             -sim::HALF_X + step_x / 2 - cull.pos.0,
             -cull.pos.1,
             -sim::HALF_Z + step_z / 2 - cull.pos.2,
         );
         let raw = |n: [i16; 3]| (n[0] as i32) * d0.0 + (n[1] as i32) * d0.1 + (n[2] as i32) * d0.2;
-        let (mut f_row, mut r_row, mut v_row) = (raw(cull.fwd), raw(cull.right), raw(cull.vertical));
+        let (mut f_row, mut r_row, mut v_row) =
+            (raw(cull.fwd), raw(cull.right), raw(cull.vertical));
         let (f_dx, f_dz) = (cull.fwd[0] as i32 * step_x, cull.fwd[2] as i32 * step_z);
         let (r_dx, r_dz) = (cull.right[0] as i32 * step_x, cull.right[2] as i32 * step_z);
-        let (v_dx, v_dz) = (cull.vertical[0] as i32 * step_x, cull.vertical[2] as i32 * step_z);
+        let (v_dx, v_dz) = (
+            cull.vertical[0] as i32 * step_x,
+            cull.vertical[2] as i32 * step_z,
+        );
         let (proj, half_w, half_h) = (proj_h(), cull_half_w(), view_half_h());
         for ix in 0..TILES_X {
             let (mut f, mut r, mut v) = (f_row, r_row, v_row);
@@ -5767,7 +5881,11 @@ impl Builder<'_> {
         // every cut out to a couple of thousand uu, where a sixteen-gon
         // circle stops showing its corners, and never pass two: an
         // eight-gon shows them at any range.
-        let (near, mid) = if split_view() { (400, 900) } else { (500, 1800) };
+        let (near, mid) = if split_view() {
+            (400, 900)
+        } else {
+            (500, 1800)
+        };
         let curve_near = if split_view() { 900 } else { 2200 };
         let view = {
             let (x0, x1, y0, y1) = view_bounds();
@@ -5794,7 +5912,11 @@ impl Builder<'_> {
         let scale = if exact_thin {
             ThinScale::new(-cull.pos.1)
         } else {
-            ThinScale { k: 0, dim_z2: 0, wide_z2: 0 }
+            ThinScale {
+                k: 0,
+                dim_z2: 0,
+                wide_z2: 0,
+            }
         };
         // A cut that comes out under three pixels across is a marking far off
         // (or edge-on), and the integer corners the GTE gives are then too
@@ -5944,19 +6066,18 @@ impl Builder<'_> {
                 // Five corners through two RTPTs (the second repeats its
                 // last): the same per-vertex projection, fewer GTE round trips.
                 let v = |x: i32, z: i32| Vec3I16::new(x as i16, -4, z as i16);
-                let [c, o0, o1] = scene::project_triangle_scheduled(
-                    v(px, pz),
-                    v(px - g, pz),
-                    v(px, pz - g),
-                );
-                let [o2, o3, _] = scene::project_triangle_scheduled(
-                    v(px, pz + g),
-                    v(px + g, pz),
-                    v(px + g, pz),
-                );
+                let [c, o0, o1] =
+                    scene::project_triangle_scheduled(v(px, pz), v(px - g, pz), v(px, pz - g));
+                let [o2, o3, _] =
+                    scene::project_triangle_scheduled(v(px, pz + g), v(px + g, pz), v(px + g, pz));
                 let o = [o0, o1, o2, o3];
                 if c.sz != 0 && o.iter().all(|p| p.sz != 0) {
-                    let sp = [(o[0].sx, o[0].sy), (o[1].sx, o[1].sy), (o[2].sx, o[2].sy), (o[3].sx, o[3].sy)];
+                    let sp = [
+                        (o[0].sx, o[0].sy),
+                        (o[1].sx, o[1].sy),
+                        (o[2].sx, o[2].sy),
+                        (o[3].sx, o[3].sy),
+                    ];
                     if quad_overlaps_view(&sp) {
                         let depth = o.iter().map(|p| p.sz as i32).sum::<i32>() / 4;
                         self.emit_flat(sp, depth + PAD_BIAS + 20, (52, 56, 70));
@@ -5980,7 +6101,13 @@ impl Builder<'_> {
             // colour between the lit tips and the dim sides: a sixth of the
             // GPU time of two shaded ones.
             let sides: [(i32, i32); 2] = if far > if split_view() { 1200 } else { 2500 } {
-                [(r * cull.right[0] as i32 >> 12, r * cull.right[2] as i32 >> 12), (0, 0)]
+                [
+                    (
+                        r * cull.right[0] as i32 >> 12,
+                        r * cull.right[2] as i32 >> 12,
+                    ),
+                    (0, 0),
+                ]
             } else {
                 // Two diamonds in perpendicular vertical planes.
                 [(r, 0), (0, r)]
@@ -6009,7 +6136,10 @@ impl Builder<'_> {
                 );
                 (r0, l1, r1)
             };
-            for (l, rr) in [(l0, r0), (l1, r1)].into_iter().take(if flat { 1 } else { 2 }) {
+            for (l, rr) in [(l0, r0), (l1, r1)]
+                .into_iter()
+                .take(if flat { 1 } else { 2 })
+            {
                 if l.sz == 0 || rr.sz == 0 {
                     continue;
                 }
@@ -6198,7 +6328,10 @@ impl Builder<'_> {
         // this function, so every other span runs the code it always did.
         if !SPLIT && !NET && distance < NEAR_COVER {
             let slots = unsafe { &SPAN_SLOT[si] };
-            if slots.iter().any(|p| cull.flat_distance(p.0, p.1) < NEAR_COVER_COLUMN) {
+            if slots
+                .iter()
+                .any(|p| cull.flat_distance(p.0, p.1) < NEAR_COVER_COLUMN)
+            {
                 return self.wall_span::<false, true>(si, cull);
             }
         }
@@ -6284,8 +6417,8 @@ impl Builder<'_> {
         // same floor curve, so its inward offset is one pair of multiplies a
         // ring, not a pair a vertex. A corner span's columns turn, and round
         // the end joints their floor curve shrinks to the end walls'.
-        let uniform = (1..columns)
-            .all(|k| cnx[k] == cnx[0] && cnz[k] == cnz[0] && ramp[k] == ramp[0]);
+        let uniform =
+            (1..columns).all(|k| cnx[k] == cnx[0] && cnz[k] == cnz[0] && ramp[k] == ramp[0]);
         // Which columns lie near enough for a quad of theirs to straddle the
         // lens visibly, and how high the camera is: see `NEAR_COVER_COLUMN`.
         let mut near_cols = [false; SLOTS];
@@ -6299,14 +6432,22 @@ impl Builder<'_> {
             let top = rings[row] as usize;
             let (lower, upper) = {
                 let (a, b) = ring_buf.split_at_mut(1);
-                if row & 1 == 0 { (&a[0], &mut b[0]) } else { (&b[0], &mut a[0]) }
+                if row & 1 == 0 {
+                    (&a[0], &mut b[0])
+                } else {
+                    (&b[0], &mut a[0])
+                }
             };
             let curve = top <= CURVE_SEGS;
             let p = profile[top];
             // Only a uniform span reads these: a corner's columns each take
             // their own point below.
             let shared = if uniform {
-                let p0 = if curve { ramp_point(p, ramp[0] as i32) } else { p };
+                let p0 = if curve {
+                    ramp_point(p, ramp[0] as i32)
+                } else {
+                    p
+                };
                 ((cnx[0] * p0.0) >> 12, (cnz[0] * p0.0) >> 12, p0.1)
             } else {
                 (0, 0, 0)
@@ -6327,7 +6468,11 @@ impl Builder<'_> {
                     };
                     ((nx * pk.0) >> 12, (nz * pk.0) >> 12, pk.1)
                 };
-                let v = project(Vec3I16::new((x0 + ox) as i16, -height as i16, (z0 + oz) as i16));
+                let v = project(Vec3I16::new(
+                    (x0 + ox) as i16,
+                    -height as i16,
+                    (z0 + oz) as i16,
+                ));
                 upper[k] = if v.sz as i32 > near_z {
                     Some((v.sx, v.sy, v.sz as i32))
                 } else {
@@ -6454,10 +6599,10 @@ impl Builder<'_> {
     }
 
     fn apron_quad(&mut self, sp: [(i16, i16); 4]) {
-        if let Some(q) = self
-            .arena
-            .push(QuadGouraud::new(sp, [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM]))
-        {
+        if let Some(q) = self.arena.push(QuadGouraud::new(
+            sp,
+            [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM],
+        )) {
             self.ot.add_packet(STAND_SLOT, q);
         } else {
             count_overflow!();
@@ -6470,7 +6615,11 @@ impl Builder<'_> {
     /// crowd does not swim; a far one is a single quad on the grid corners.
     fn stands(&mut self, cull: &Cull) {
         // Front row on the tile's last row, the fascia; back on its first.
-        const V: [u8; 3] = [CROWD_V0 + CROWD_H - 1, CROWD_V0 + (CROWD_H - 1) / 2, CROWD_V0];
+        const V: [u8; 3] = [
+            CROWD_V0 + CROWD_H - 1,
+            CROWD_V0 + (CROWD_H - 1) / 2,
+            CROWD_V0,
+        ];
         const TINT: [Rgb; 3] = [
             STAND_TINT_IN,
             (
@@ -6493,7 +6642,11 @@ impl Builder<'_> {
             let depth = |p: Vec3I16| {
                 Cull::dot(
                     cull.fwd,
-                    (p.x as i32 - cull.pos.0, p.y as i32 - cull.pos.1, p.z as i32 - cull.pos.2),
+                    (
+                        p.x as i32 - cull.pos.0,
+                        p.y as i32 - cull.pos.1,
+                        p.z as i32 - cull.pos.2,
+                    ),
                 )
             };
             let d = [depth(pts[0]), depth(pts[1]), depth(pts[2]), depth(pts[3])];
@@ -6535,8 +6688,11 @@ impl Builder<'_> {
                 continue;
             }
             let near = Self::floor_split(cull.flat_distance(st.centre.0, st.centre.2)) > 2;
-            let (cols, rows): (&[usize], &[usize]) =
-                if near { (&[0, 1, 2, 3], &[0, 1, 2]) } else { (&[0, 3], &[0, 2]) };
+            let (cols, rows): (&[usize], &[usize]) = if near {
+                (&[0, 1, 2, 3], &[0, 1, 2])
+            } else {
+                (&[0, 3], &[0, 2])
+            };
             let packet = CROWD_PACKETS[st.team as usize];
             let mut g = [[None; 4]; 3];
             // A row's first three columns through one RTPT, any fourth through
@@ -6572,7 +6728,12 @@ impl Builder<'_> {
                     let (u0, u1) = (st.u[i0], st.u[i1]);
                     let prim = QuadTexturedGouraud::with_packet_material_packed_uv_words(
                         sp,
-                        [uvw(u0, V[j0]), uvw(u1, V[j0]), uvw(u0, V[j1]), uvw(u1, V[j1])],
+                        [
+                            uvw(u0, V[j0]),
+                            uvw(u1, V[j0]),
+                            uvw(u0, V[j1]),
+                            uvw(u1, V[j1]),
+                        ],
                         [TINT[j0], TINT[j0], TINT[j1], TINT[j1]],
                         packet,
                     );
@@ -6681,10 +6842,17 @@ impl Builder<'_> {
             // Behind the view or off to a side of it, the cover's every band
             // would be thrown away after its corners were projected.
             let (reach_lo, reach_hi, reach_top) = unsafe { GOAL_COVER_REACH };
-            let cover_box =
-                cull.extents((gw, (reach_top - sim::GOAL_H) / 2 + 1, (reach_hi - reach_lo) / 2 + 1));
+            let cover_box = cull.extents((
+                gw,
+                (reach_top - sim::GOAL_H) / 2 + 1,
+                (reach_hi - reach_lo) / 2 + 1,
+            ));
             if !cull.visible_box(
-                (0, -(sim::GOAL_H + reach_top) / 2, z - sz * (reach_lo + reach_hi) / 2),
+                (
+                    0,
+                    -(sim::GOAL_H + reach_top) / 2,
+                    z - sz * (reach_lo + reach_hi) / 2,
+                ),
                 cover_box,
             ) {
                 continue;
@@ -6835,8 +7003,12 @@ impl Builder<'_> {
                 as u8;
             for ix in 0..ROOF_COLS {
                 count_offered!();
-                let (Some((ax, ay, az)), Some((bx, by, bz)), Some((cx, cy, cz)), Some((dx, dy, dz))) =
-                    (below[ix], below[ix + 1], above[ix], above[ix + 1])
+                let (
+                    Some((ax, ay, az)),
+                    Some((bx, by, bz)),
+                    Some((cx, cy, cz)),
+                    Some((dx, dy, dz)),
+                ) = (below[ix], below[ix + 1], above[ix], above[ix + 1])
                 else {
                     continue;
                 };
@@ -7267,7 +7439,6 @@ impl Builder<'_> {
                     COVER_PACKET,
                     true,
                 );
-
             }
 
             // Hot posts and crossbar, each inside a halo of the team's
@@ -7670,7 +7841,9 @@ impl Builder<'_> {
                 // Facing away: behind the front of the ball, always. Tested
                 // before the lighting and the packet, so a culled facet costs
                 // one dot product and nothing else.
-                if local.0 * to_cam_local.0 + local.1 * to_cam_local.1 + local.2 * to_cam_local.2 <= 0 {
+                if local.0 * to_cam_local.0 + local.1 * to_cam_local.1 + local.2 * to_cam_local.2
+                    <= 0
+                {
                     continue;
                 }
                 // The texture is baked through these exact coordinates (see
@@ -7683,7 +7856,11 @@ impl Builder<'_> {
                 let (u_a, u_b) = (BALL_U0 + 8 * i as u8, BALL_U0 + 8 * (i + lon_step) as u8);
                 let u_mid = (u_a + u_b) / 2;
                 let (ua, ub) = if j == 0 { (u_mid, u_mid) } else { (u_a, u_b) };
-                let (uc, ud) = if j + 1 == BALL_LAT { (u_mid, u_mid) } else { (u_a, u_b) };
+                let (uc, ud) = if j + 1 == BALL_LAT {
+                    (u_mid, u_mid)
+                } else {
+                    (u_a, u_b)
+                };
                 self.quad_tex_words(
                     [sp[lo][i], sp[lo][i2], sp[hi][i], sp[hi][i2]],
                     sz[lo][i] + sz[lo][i2] + sz[hi][i] + sz[hi][i2],
@@ -8541,11 +8718,7 @@ fn build_view(
                         load.data = crowd_clut(seat, CAMERA_TICK);
                         CROWD_CLUT_KEY[SET][seat] = key;
                     }
-                    b.ot.add_raw(
-                        SKY_SLOT,
-                        core::ptr::from_mut(load).cast(),
-                        CLUT_LOAD_WORDS,
-                    );
+                    b.ot.add_raw(SKY_SLOT, core::ptr::from_mut(load).cast(), CLUT_LOAD_WORDS);
                 }
             }
 
@@ -8684,7 +8857,6 @@ fn build_view(
         QUADS_KEPT = 0;
     }
 }
-
 
 /// Kick a whole-screen table and return while the walk runs.
 ///
@@ -8922,7 +9094,11 @@ pub fn track_tick(s: &Sim) {
         // On the floor and in play, before anything is worked out: most
         // ticks most cars are not sliding.
         let on_floor = car.grounded && !car.wrecked() && car.up.y > 3900;
-        let (fx, fz) = if on_floor { sim::heading(car.yaw) } else { (0, 0) };
+        let (fx, fz) = if on_floor {
+            sim::heading(car.yaw)
+        } else {
+            (0, 0)
+        };
         // Right of the nose, on the floor.
         let (rx, rz) = (fz, -fx);
         // Heading change since this car was last looked at, which is two ticks
@@ -9012,13 +9188,24 @@ fn track_tint(age: u16, sz: u16) -> Rgb {
 /// [`Cull::visible_vertically`] in one pass, with the box flat on the pitch
 /// so its height terms drop out.
 fn track_box_visible(cull: &TrackView, b: (i16, i16, i16, i16)) -> bool {
-    let (cx, cz) = ((b.0 as i32 + b.2 as i32) >> 1, (b.1 as i32 + b.3 as i32) >> 1);
-    let (hx, hz) = ((b.2 as i32 - b.0 as i32) >> 1, (b.3 as i32 - b.1 as i32) >> 1);
+    let (cx, cz) = (
+        (b.0 as i32 + b.2 as i32) >> 1,
+        (b.1 as i32 + b.3 as i32) >> 1,
+    );
+    let (hx, hz) = (
+        (b.2 as i32 - b.0 as i32) >> 1,
+        (b.3 as i32 - b.1 as i32) >> 1,
+    );
     let (dx, dz) = (cx - cull.pos.0, cz - cull.pos.1);
     // Each axis is `Cull::dot` over `(dx, -eye height, dz)` with the height
     // term folded in once per frame, and the extent is the same support
     // function over absolute components: the same integers either way.
-    let at = |n: &TrackAxis| ((n.x * dx + n.z * dz + n.y_term) >> 12, (n.ax * hx + n.az * hz) >> 12);
+    let at = |n: &TrackAxis| {
+        (
+            (n.x * dx + n.z * dz + n.y_term) >> 12,
+            (n.ax * hx + n.az * hz) >> 12,
+        )
+    };
     let (z, ef) = at(&cull.fwd);
     if z + ef <= 0 || z - ef > TRACK_FAR {
         return false;
@@ -9152,7 +9339,12 @@ impl Builder<'_> {
             if t[0].sz == 0 || t[1].sz == 0 || t[2].sz == 0 || e.sz == 0 {
                 continue;
             }
-            let sp = [(t[0].sx, t[0].sy), (t[1].sx, t[1].sy), (t[2].sx, t[2].sy), (e.sx, e.sy)];
+            let sp = [
+                (t[0].sx, t[0].sy),
+                (t[1].sx, t[1].sy),
+                (t[2].sx, t[2].sy),
+                (e.sx, e.sy),
+            ];
             let c = track_tint(0, e.sz);
             if c == (0, 0, 0) || !quad_overlaps_view(&sp) {
                 continue;
@@ -9237,7 +9429,9 @@ impl Builder<'_> {
         let t1 = scene::project_triangle_scheduled(v(p1.r), v(p2.l), v(p2.r));
         let t2 = scene::project_triangle_scheduled(v(p3.l), v(p3.r), v(p4.l));
         let t3 = project(v(p4.r));
-        let all = [t0[0], t0[1], t0[2], t1[0], t1[1], t1[2], t2[0], t2[1], t2[2], t3];
+        let all = [
+            t0[0], t0[1], t0[2], t1[0], t1[1], t1[2], t2[0], t2[1], t2[2], t3,
+        ];
         let head = ring.head as usize;
         // One shade for the chunk, from its newest point and its middle
         // depth: four segments laid within a few ticks of each other fade
@@ -9367,19 +9561,31 @@ const fn fx_spark_life(i: i32) -> i32 {
 fn build_burst() {
     let b = unsafe { &mut *core::ptr::addr_of_mut!(BURST) };
     for (v, half) in [false, true].into_iter().enumerate() {
-        let puffs = if half { FX_SMOKE_COUNT / 2 + 1 } else { FX_SMOKE_COUNT };
+        let puffs = if half {
+            FX_SMOKE_COUNT / 2 + 1
+        } else {
+            FX_SMOKE_COUNT
+        };
         for i in 0..puffs {
             let yaw = ((4096 * i / puffs) + 700) as u16;
             b.smoke[v][i as usize] = (sin_q12(yaw), cos_q12(yaw));
         }
-        let balls = if half { FX_FIRE_COUNT / 2 } else { FX_FIRE_COUNT };
+        let balls = if half {
+            FX_FIRE_COUNT / 2
+        } else {
+            FX_FIRE_COUNT
+        };
         for i in 0..balls {
             let yaw = ((4096 * i / balls) + ((i * 997) & 511)) as u16;
             let elev = (300 + ((i * 331) & 511)) as u16;
             let (ce, se) = (cos_q12(elev), sin_q12(elev));
             b.fire[v][i as usize] = ((sin_q12(yaw) * ce) >> 12, (cos_q12(yaw) * ce) >> 12, se);
         }
-        let sparks = if half { FX_SPARK_COUNT / 2 } else { FX_SPARK_COUNT };
+        let sparks = if half {
+            FX_SPARK_COUNT / 2
+        } else {
+            FX_SPARK_COUNT
+        };
         for i in 0..sparks {
             let yaw = ((4096 * i / sparks) + ((i * 1013) & 255)) as u16;
             let elev = (((i * 577) & 1023) + 96) as u16;
@@ -9467,7 +9673,11 @@ impl Builder<'_> {
         let (hx, hy) = (h.sx as i32 + ex, h.sy as i32 + ey);
         let (tx, ty) = (h.sx as i32 - dx - ex, h.sy as i32 - dy - ey);
         let (px, py) = (-dy * half / len, dx * half / len);
-        let (px, py) = if px == 0 && py == 0 { (half, 0) } else { (px, py) };
+        let (px, py) = if px == 0 && py == 0 {
+            (half, 0)
+        } else {
+            (px, py)
+        };
         let sp = [
             ((hx + px) as i16, (hy + py) as i16),
             ((hx - px) as i16, (hy - py) as i16),
@@ -9499,7 +9709,11 @@ impl Builder<'_> {
         // fill, and the GPU missed the frame; from FX_NEAR out nothing
         // changes.
         let near = (FX_NEAR * scale) >> 12;
-        let o = project(Vec3I16::new(origin.0 as i16, origin.1 as i16, origin.2 as i16));
+        let o = project(Vec3I16::new(
+            origin.0 as i16,
+            origin.1 as i16,
+            origin.2 as i16,
+        ));
         let scale = if o.sz != 0 && (o.sz as i32) < near {
             (scale >> 4) * o.sz as i32 / (near >> 4).max(1)
         } else {
@@ -9509,7 +9723,11 @@ impl Builder<'_> {
 
         // Smoke first in code, last on screen: it sorts a little behind the
         // fire so the fire burns in front of it.
-        let puffs = if half_detail { FX_SMOKE_COUNT / 2 + 1 } else { FX_SMOKE_COUNT };
+        let puffs = if half_detail {
+            FX_SMOKE_COUNT / 2 + 1
+        } else {
+            FX_SMOKE_COUNT
+        };
         for i in 0..puffs {
             let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = 4 + i * 3;
@@ -9526,13 +9744,19 @@ impl Builder<'_> {
             );
             let radius = s(40 + 100 * t / FX_SMOKE_LIFE);
             // In over six ticks, out over the last two thirds.
-            let k = (t * 4096 / 6).min(4096).min((FX_SMOKE_LIFE - t) * 4096 * 3 / (FX_SMOKE_LIFE * 2));
+            let k = (t * 4096 / 6)
+                .min(4096)
+                .min((FX_SMOKE_LIFE - t) * 4096 * 3 / (FX_SMOKE_LIFE * 2));
             let tint = shade((40, 42, 46), k, 4096);
             self.fx_sprite(p, radius, cap, tint, FX_SMOKE_PACKET, 40);
         }
 
         // Fireballs: swell, drift out and up, and cool.
-        let balls = if half_detail { FX_FIRE_COUNT / 2 } else { FX_FIRE_COUNT };
+        let balls = if half_detail {
+            FX_FIRE_COUNT / 2
+        } else {
+            FX_FIRE_COUNT
+        };
         for i in 0..balls {
             let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = i % 3;
@@ -9557,13 +9781,21 @@ impl Builder<'_> {
             } else if q < 8 {
                 mix(mix(FX_FLAME, colour, 5), FX_FLAME, 16 - (q - 3) * 3)
             } else {
-                shade_life(mix(FX_FLAME, colour, 6), (life - t) * 2, tab.fire_inv[i as usize])
+                shade_life(
+                    mix(FX_FLAME, colour, 6),
+                    (life - t) * 2,
+                    tab.fire_inv[i as usize],
+                )
             };
             self.fx_sprite(p, radius, cap, shade(tint, 3, 4), GLOW_PACKET, -10);
         }
 
         // Sparks: fast, eased out, pulled down hard.
-        let sparks = if half_detail { FX_SPARK_COUNT / 2 } else { FX_SPARK_COUNT };
+        let sparks = if half_detail {
+            FX_SPARK_COUNT / 2
+        } else {
+            FX_SPARK_COUNT
+        };
         for i in 0..sparks {
             let tab = unsafe { &*core::ptr::addr_of!(BURST) };
             let born = (i * 3) % 4;
@@ -9597,7 +9829,11 @@ impl Builder<'_> {
             let k = age * 4096 / FX_RING_LIFE;
             let ease = 4096 - (((4096 - k) * (4096 - k)) >> 12);
             let radius = s(30) + ((s(210) * ease) >> 12);
-            let tint = shade(mix(FX_HOT, colour, 7), (FX_RING_LIFE - age) * 3, FX_RING_LIFE * 5);
+            let tint = shade(
+                mix(FX_HOT, colour, 7),
+                (FX_RING_LIFE - age) * 3,
+                FX_RING_LIFE * 5,
+            );
             self.fx_sprite(origin, radius, cap, tint, FX_RING_PACKET, -30);
         }
 
@@ -9659,8 +9895,8 @@ fn banner_glyph(font: &FontAtlas, ch: char) -> Option<(u8, u8, u16, u16, i16, i1
         uv_clut as u8,
         (uv_clut >> 8) as u8,
         (uv_clut >> 16) as u16,
-        (mode & 0x1FF) as u16,
-        (size & 0xFFFF) as i16,
+        (mode & 0x1ff) as u16,
+        (size & 0xffff) as i16,
         (size >> 16) as i16,
         mode,
     ))
@@ -9698,7 +9934,10 @@ impl Builder<'_> {
                 let ((dx, dy), tint) = match BANNER_OUTLINE.get(pass) {
                     Some(&d) => (d, (0, 0, 0)),
                     // Half strength, as `NitroXide::ink` has it.
-                    None => ((0, 0), (ink.0.div_ceil(2), ink.1.div_ceil(2), ink.2.div_ceil(2))),
+                    None => (
+                        (0, 0),
+                        (ink.0.div_ceil(2), ink.1.div_ceil(2), ink.2.div_ceil(2)),
+                    ),
                 };
                 let mut cursor = i32::from(x) << 8;
                 for (ch, glyph) in glyphs.iter().flatten() {
@@ -9731,7 +9970,8 @@ impl Builder<'_> {
             // Last in, so first drawn: the font's draw mode ahead of the glyphs.
             unsafe {
                 BANNER_MODE[SET].word = mode;
-                self.ot.add_raw(0, core::ptr::from_mut(&mut BANNER_MODE[SET]).cast(), 1);
+                self.ot
+                    .add_raw(0, core::ptr::from_mut(&mut BANNER_MODE[SET]).cast(), 1);
             }
         }
     }

@@ -15,18 +15,16 @@
 
 extern crate psx_rt;
 
+use psx_display::Label;
 use psx_engine::{
     button, ActionBinding, ActionMap, App, Config, Ctx, Deadzone, PadState, Scene, VisualPacing,
 };
-use psx_font::{
-    fonts::{KENNEY_PIXEL, KENNEY_ROCKET},
-    FontAtlas,
-};
-use psx_math::fmt::{u32_dec, U32_DEC_MAX};
-use psx_math::sincos::{cos_q12, sin_q12};
-use psx_display::Label;
+use psx_font::fonts::{KENNEY_PIXEL, KENNEY_ROCKET};
+use psx_font::FontAtlas;
 use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
 use psx_gpu::Gpu;
+use psx_math::fmt::{u32_dec, U32_DEC_MAX};
+use psx_math::sincos::{cos_q12, sin_q12};
 use psx_settings::Profile;
 use psx_vram::{Clut, TexDepth, Tpage};
 
@@ -91,7 +89,9 @@ const CARD_JOB_FRAMES: usize =
 /// The settings save, run a card transaction at a time (see `pump_card`).
 static mut CARD_JOB: psx_mc::CardJob<CARD_JOB_FRAMES> = psx_mc::CardJob::new();
 /// The field-of-view row's values, a step at a time: horizontal degrees.
-const FOV_LABELS: [&str; draw::FOV_STEPS] = ["60", "65", "70", "75", "80", "85", "90", "95", "100", "105", "110"];
+const FOV_LABELS: [&str; draw::FOV_STEPS] = [
+    "60", "65", "70", "75", "80", "85", "90", "95", "100", "105", "110",
+];
 const ACT_LEFT: usize = 0;
 const ACT_RIGHT: usize = 1;
 const ACT_UP: usize = 2;
@@ -179,7 +179,10 @@ struct DemoShow {
     cars: [usize; 2],
     paints: [usize; 2],
 }
-#[cfg_attr(any(feature = "boot-split-stress", feature = "boot-demo-picks"), allow(dead_code))]
+#[cfg_attr(
+    any(feature = "boot-split-stress", feature = "boot-demo-picks"),
+    allow(dead_code)
+)]
 const DEMO_SHOWS: [DemoShow; DEMO_MATCHES.len()] = [
     DemoShow {
         split: false,
@@ -252,7 +255,12 @@ static PICKS: Picks = parse_picks(match option_env!("NITRO_DEMO_PICKS") {
 });
 #[cfg(feature = "boot-demo-picks")]
 const fn parse_picks(text: &str) -> Picks {
-    const NONE_MATCH: DemoMatch = DemoMatch { spot: 0, seed: 0, first_goal: 0, scorer: Team::Blue };
+    const NONE_MATCH: DemoMatch = DemoMatch {
+        spot: 0,
+        seed: 0,
+        first_goal: 0,
+        scorer: Team::Blue,
+    };
     const NONE_SHOW: DemoShow = DemoShow {
         split: false,
         ball_cam: [false; 2],
@@ -261,7 +269,11 @@ const fn parse_picks(text: &str) -> Picks {
         paints: [0, 5],
     };
     let b = text.as_bytes();
-    let mut out = Picks { matches: [NONE_MATCH; 8], shows: [NONE_SHOW; 8], len: 0 };
+    let mut out = Picks {
+        matches: [NONE_MATCH; 8],
+        shows: [NONE_SHOW; 8],
+        len: 0,
+    };
     let (mut i, mut field, mut n) = (0, 0, [0usize; 3]);
     let (mut scorer, mut mode) = (b'B', b's');
     while i <= b.len() && out.len < 8 {
@@ -272,7 +284,11 @@ const fn parse_picks(text: &str) -> Picks {
                     spot: n[0],
                     seed: n[1] as u32,
                     first_goal: n[2] as u32,
-                    scorer: if scorer == b'B' { Team::Blue } else { Team::Orange },
+                    scorer: if scorer == b'B' {
+                        Team::Blue
+                    } else {
+                        Team::Orange
+                    },
                 };
                 out.matches[out.len] = m;
                 out.shows[out.len] = match mode {
@@ -334,15 +350,49 @@ const ROUTE_SHOWS: &[DemoShow] = &STRESS_SHOWS;
 /// down the arena in both halves, and both cars close together under the
 /// chase cameras. The same seeds as the demo, shown the costly way.
 #[cfg(feature = "boot-split-stress")]
-const STRESS_MATCHES: [DemoMatch; 4] = [DEMO_MATCHES[1], DEMO_STRESS_CLOSE, DEMO_STRESS_CLOSE, DEMO_MATCHES[1]];
+const STRESS_MATCHES: [DemoMatch; 4] = [
+    DEMO_MATCHES[1],
+    DEMO_STRESS_CLOSE,
+    DEMO_STRESS_CLOSE,
+    DEMO_MATCHES[1],
+];
 #[cfg(feature = "boot-split-stress")]
-const DEMO_STRESS_CLOSE: DemoMatch = DemoMatch { spot: 1, seed: 10, first_goal: 1399, scorer: Team::Blue };
+const DEMO_STRESS_CLOSE: DemoMatch = DemoMatch {
+    spot: 1,
+    seed: 10,
+    first_goal: 1399,
+    scorer: Team::Blue,
+};
 #[cfg(feature = "boot-split-stress")]
 const STRESS_SHOWS: [DemoShow; 4] = [
-    DemoShow { split: true, ball_cam: [true, true], arena: draw::ArenaTime::Day, cars: [1, 2], paints: [1, 4] },
-    DemoShow { split: true, ball_cam: [true, true], arena: draw::ArenaTime::Night, cars: [0, 2], paints: [7, 5] },
-    DemoShow { split: true, ball_cam: [false, false], arena: draw::ArenaTime::Night, cars: [0, 2], paints: [7, 5] },
-    DemoShow { split: true, ball_cam: [true, false], arena: draw::ArenaTime::Day, cars: [1, 2], paints: [1, 4] },
+    DemoShow {
+        split: true,
+        ball_cam: [true, true],
+        arena: draw::ArenaTime::Day,
+        cars: [1, 2],
+        paints: [1, 4],
+    },
+    DemoShow {
+        split: true,
+        ball_cam: [true, true],
+        arena: draw::ArenaTime::Night,
+        cars: [0, 2],
+        paints: [7, 5],
+    },
+    DemoShow {
+        split: true,
+        ball_cam: [false, false],
+        arena: draw::ArenaTime::Night,
+        cars: [0, 2],
+        paints: [7, 5],
+    },
+    DemoShow {
+        split: true,
+        ball_cam: [true, false],
+        arena: draw::ArenaTime::Day,
+        cars: [1, 2],
+        paints: [1, 4],
+    },
 ];
 
 /// Where the demo is, and what it borrowed from the player's own setup to
@@ -936,7 +986,10 @@ impl NitroXide {
                 audio::ui(audio::Ui::Close);
                 return;
             }
-            SettingsAction::Save => { self.save_settings(); return; }
+            SettingsAction::Save => {
+                self.save_settings();
+                return;
+            }
             SettingsAction::Adjust(step) => step as i32,
             SettingsAction::None => return,
         };
@@ -944,7 +997,10 @@ impl NitroXide {
         let lr = right as i8 - left as i8;
         let picture_row = matches!(
             rows[row],
-            SettingsRow::Fov | SettingsRow::Brightness | SettingsRow::ScreenX | SettingsRow::ScreenY
+            SettingsRow::Fov
+                | SettingsRow::Brightness
+                | SettingsRow::ScreenX
+                | SettingsRow::ScreenY
         );
         if lr == 0 && picture_row {
             return;
@@ -974,7 +1030,8 @@ impl NitroXide {
             // The picture rows are steppers that clamp at both ends, so X
             // (which steps the toggles forward) leaves them alone.
             SettingsRow::Fov => {
-                let step = (draw::fov() as i32 + lr as i32).clamp(0, draw::FOV_STEPS as i32 - 1) as usize;
+                let step =
+                    (draw::fov() as i32 + lr as i32).clamp(0, draw::FOV_STEPS as i32 - 1) as usize;
                 draw::set_fov(step);
                 self.profile.game_bytes[nitroxide_sim::camera::FOV_GAME_BYTE] =
                     nitroxide_sim::camera::fov_step_to_save(step);
@@ -1062,8 +1119,15 @@ impl NitroXide {
             air_roll: held(ACT_AIR_ROLL),
             // The directional roll buttons, which roll the car whatever the
             // stick is doing; held against a yaw they make the stall.
-            roll: if pad.buttons.bits() & ROLL_RIGHT_BUTTON != 0 { 128 } else { 0 }
-                - if pad.buttons.bits() & ROLL_LEFT_BUTTON != 0 { 128 } else { 0 },
+            roll: if pad.buttons.bits() & ROLL_RIGHT_BUTTON != 0 {
+                128
+            } else {
+                0
+            } - if pad.buttons.bits() & ROLL_LEFT_BUTTON != 0 {
+                128
+            } else {
+                0
+            },
             handbrake: held(ACT_AIR_ROLL),
         }
     }
@@ -1151,7 +1215,11 @@ impl NitroXide {
     fn card_job_failed(&mut self, formatting: bool, probing: bool) {
         self.card_saving = false;
         self.settings_dirty = true;
-        self.settings_save_status = if probing && !formatting { "NO CARD" } else { "FAILED" };
+        self.settings_save_status = if probing && !formatting {
+            "NO CARD"
+        } else {
+            "FAILED"
+        };
         audio::ui(audio::Ui::Deny);
         if formatting {
             self.card_ask = CardAsk::Declined;
@@ -1166,8 +1234,10 @@ impl NitroXide {
         if self.card_ask == CardAsk::Formatting {
             return;
         }
-        match settings_menu::format_action(ctx.just_pressed(button::CROSS),
-            ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START)) {
+        match settings_menu::format_action(
+            ctx.just_pressed(button::CROSS),
+            ctx.just_pressed(button::CIRCLE) || ctx.just_pressed(button::START),
+        ) {
             settings_menu::FormatAction::Cancel => {
                 self.card_ask = CardAsk::Declined;
                 self.settings_save_status = "CANCELED";
@@ -1246,7 +1316,7 @@ impl NitroXide {
     fn stage_cars(&mut self, tick: u32, pair: bool) {
         // Three-quarter view that drifts rather than spins, so the flank and
         // the nose are both readable at rest.
-        let spin = (1500 + ((tick * 3) & 0xFFF) / 5) as u16;
+        let spin = (1500 + ((tick * 3) & 0xfff) / 5) as u16;
         for seat in 0..2 {
             let car = if seat == 0 {
                 &mut self.sim.car
@@ -1508,10 +1578,7 @@ impl NitroXide {
             // announcing.
             y: 34,
             q8: grow,
-            parts: [
-                (x, text, color),
-                (after, " SCORED", (240, 240, 220)),
-            ],
+            parts: [(x, text, color), (after, " SCORED", (240, 240, 220))],
         }
     }
 
@@ -1579,7 +1646,7 @@ impl NitroXide {
         // this font is proportional, so stepping a fixed advance leaves gaps
         // after narrow glyphs like I, which is what the first attempt did.
         // Cycling the gradient gets the movement without touching layout.
-        let phase = ((tick / 2) & 0x3F) as i32;
+        let phase = ((tick / 2) & 0x3f) as i32;
         // Triangle wave, so the colour breathes rather than snapping at the
         // wrap. The gradient variants only take integer scale, and this face
         // wants 1.375x, so the animation lives in the colour instead.
@@ -1867,10 +1934,14 @@ impl NitroXide {
                 SettingsRow::Brightness => ("BRIGHTNESS: ", brightness.as_str()),
                 SettingsRow::ScreenX => ("SCREEN X: ", screen_x.as_str()),
                 SettingsRow::ScreenY => ("SCREEN Y: ", screen_y.as_str()),
-                SettingsRow::Save => ("SAVE SETTINGS: ",
+                SettingsRow::Save => (
+                    "SAVE SETTINGS: ",
                     if self.settings_save_status.is_empty() && self.settings_dirty {
                         "UNSAVED"
-                    } else { self.settings_save_status }),
+                    } else {
+                        self.settings_save_status
+                    },
+                ),
                 SettingsRow::Back => ("BACK", ""),
             };
             let lit = i == sel;
@@ -2274,7 +2345,10 @@ impl Scene for NitroXide {
                     next().min(draw::CAR_COUNT - 1),
                     next().min(draw::CAR_COUNT - 1),
                 ];
-                self.paints = [next().min(draw::PAINT_COUNT - 1), next().min(draw::PAINT_COUNT - 1)];
+                self.paints = [
+                    next().min(draw::PAINT_COUNT - 1),
+                    next().min(draw::PAINT_COUNT - 1),
+                ];
             }
         }
         #[cfg(feature = "boot-hatch")]
@@ -2488,7 +2562,9 @@ impl Scene for NitroXide {
             if ctx.just_pressed(button::LEFT) && page > 0 {
                 self.controls = Some(page - 1);
                 audio::ui(audio::Ui::Move);
-            } else if ctx.just_pressed(button::RIGHT) && usize::from(page) + 1 < CONTROLS_PAGES.len() {
+            } else if ctx.just_pressed(button::RIGHT)
+                && usize::from(page) + 1 < CONTROLS_PAGES.len()
+            {
                 self.controls = Some(page + 1);
                 audio::ui(audio::Ui::Move);
             } else if ctx.just_pressed(button::CROSS)
@@ -2507,7 +2583,8 @@ impl Scene for NitroXide {
             if ctx.just_pressed(button::LEFT) && page > 0 {
                 self.credits = Some(page - 1);
                 audio::ui(audio::Ui::Move);
-            } else if ctx.just_pressed(button::RIGHT) && usize::from(page) + 1 < CREDITS_PAGES.len() {
+            } else if ctx.just_pressed(button::RIGHT) && usize::from(page) + 1 < CREDITS_PAGES.len()
+            {
                 self.credits = Some(page + 1);
                 audio::ui(audio::Ui::Move);
             } else if ctx.just_pressed(button::CROSS)
@@ -2871,7 +2948,9 @@ impl Scene for NitroXide {
                     ];
                 }
                 #[cfg(feature = "diag-audio-cost")]
-                audio_cost::measure(audio_cost::UPDATE, || audio::update(&self.sim, self.two_player));
+                audio_cost::measure(audio_cost::UPDATE, || {
+                    audio::update(&self.sim, self.two_player)
+                });
                 #[cfg(not(feature = "diag-audio-cost"))]
                 audio::update(&self.sim, self.two_player);
                 #[cfg(any(feature = "boot-goal", feature = "boot-goal-ai"))]
@@ -2903,9 +2982,8 @@ impl Scene for NitroXide {
                         psx_rt::tty::println("");
                         for car in [&sim.car, &sim.opponent] {
                             for v in [
-                                car.p.x, car.p.y, car.p.z, car.v.x, car.v.y, car.v.z,
-                                car.w.x, car.w.y, car.w.z,
-                                car.boost,
+                                car.p.x, car.p.y, car.p.z, car.v.x, car.v.y, car.v.z, car.w.x,
+                                car.w.y, car.w.z, car.boost,
                             ] {
                                 psx_rt::tty::print_hex_u32(v as u32);
                                 psx_rt::tty::print(" ");
@@ -2949,7 +3027,9 @@ impl Scene for NitroXide {
                 self.sim.tick(&Input::default());
                 draw::track_tick(&self.sim);
                 #[cfg(feature = "diag-audio-cost")]
-                audio_cost::measure(audio_cost::UPDATE, || audio::update(&self.sim, self.two_player));
+                audio_cost::measure(audio_cost::UPDATE, || {
+                    audio::update(&self.sim, self.two_player)
+                });
                 #[cfg(not(feature = "diag-audio-cost"))]
                 audio::update(&self.sim, self.two_player);
                 self.demo.t += 1;
@@ -2992,7 +3072,9 @@ impl Scene for NitroXide {
         // The goal banner rides in a single view's table; split screen draws
         // it over the finished frame (see `draw_goal_banner`).
         let banner = match (self.phase, self.display.as_ref()) {
-            (Phase::Play | Phase::Demo, Some(font)) if self.sim.goal_freeze > 0 && !self.two_player => {
+            (Phase::Play | Phase::Demo, Some(font))
+                if self.sim.goal_freeze > 0 && !self.two_player =>
+            {
                 Some(self.goal_banner(font))
             }
             (Phase::Play, Some(font)) if self.sim.kickoff_hold > 0 && !self.two_player => {
@@ -3121,14 +3203,44 @@ impl NitroXide {
         Self::centred(display, cx, y + 12, "MEMORY CARD", (255, 255, 255));
         if busy {
             Self::centred(font, cx, y + 44, "FORMATTING THE CARD.", (230, 232, 240));
-            Self::centred(font, cx, y + 60, "THIS TAKES A FEW SECONDS.", (230, 232, 240));
+            Self::centred(
+                font,
+                cx,
+                y + 60,
+                "THIS TAKES A FEW SECONDS.",
+                (230, 232, 240),
+            );
             Self::centred(font, cx, y + 76, "DO NOT REMOVE THE CARD.", (255, 190, 110));
             return;
         }
-        Self::centred(font, cx, y + 36, "THE CARD IN SLOT 1 IS NOT FORMATTED.", (230, 232, 240));
-        Self::centred(font, cx, y + 50, "FORMAT IT TO SAVE YOUR SETTINGS?", (230, 232, 240));
-        Self::centred(font, cx, y + 64, "FORMATTING ERASES EVERYTHING ON IT.", (255, 190, 110));
-        Self::centred(font, cx, y + 88, "X  FORMAT        O  NOT NOW", (146, 202, 255));
+        Self::centred(
+            font,
+            cx,
+            y + 36,
+            "THE CARD IN SLOT 1 IS NOT FORMATTED.",
+            (230, 232, 240),
+        );
+        Self::centred(
+            font,
+            cx,
+            y + 50,
+            "FORMAT IT TO SAVE YOUR SETTINGS?",
+            (230, 232, 240),
+        );
+        Self::centred(
+            font,
+            cx,
+            y + 64,
+            "FORMATTING ERASES EVERYTHING ON IT.",
+            (255, 190, 110),
+        );
+        Self::centred(
+            font,
+            cx,
+            y + 88,
+            "X  FORMAT        O  NOT NOW",
+            (146, 202, 255),
+        );
     }
 
     /// Text and panels over the frame, drawn immediate once the frame's

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Locate the versioned gate block in the exact PS-X EXE that will be packed.
 
-use std::{env, fs, io::Write, path::Path};
+use std::io::Write;
+use std::path::Path;
+use std::{env, fs};
 
 const HEADER_LEN: usize = 0x800;
 const MAGIC: &[u8; 4] = b"NITR";
@@ -21,7 +23,13 @@ fn symbol_address(path: &Path) -> Result<u32, String> {
     block_address(path, MAGIC, VERSION, BLOCK_LEN, "NITRO_GATE_STATE")
 }
 
-fn block_address(path: &Path, magic: &[u8; 4], version: u32, block_len: usize, name: &str) -> Result<u32, String> {
+fn block_address(
+    path: &Path,
+    magic: &[u8; 4],
+    version: u32,
+    block_len: usize,
+    name: &str,
+) -> Result<u32, String> {
     let bytes = fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     if bytes.get(..8) != Some(b"PS-X EXE") {
         return Err("input is not a PS-X EXE".into());
@@ -65,8 +73,14 @@ fn main() {
         Ok(addr) => {
             writeln!(std::io::stdout(), "{addr:#010x} NITRO_GATE_STATE").expect("write address");
             match block_address(Path::new(&exe), b"NSET", 1, 36, "NITRO_SETTINGS_STATE") {
-                Ok(settings) => writeln!(std::io::stdout(), "{settings:#010x} NITRO_SETTINGS_STATE").expect("write settings address"),
-                Err(error) => { eprintln!("gate-symbols: {error}"); std::process::exit(1); }
+                Ok(settings) => {
+                    writeln!(std::io::stdout(), "{settings:#010x} NITRO_SETTINGS_STATE")
+                        .expect("write settings address")
+                }
+                Err(error) => {
+                    eprintln!("gate-symbols: {error}");
+                    std::process::exit(1);
+                }
             }
         }
         Err(error) => {
@@ -145,7 +159,10 @@ mod tests {
         block[8..12].copy_from_slice(&36u32.to_le_bytes());
         let path = env::temp_dir().join(format!("settings-symbol-{}", std::process::id()));
         fs::write(&path, &bytes).unwrap();
-        assert_eq!(block_address(&path, b"NSET", 1, 36, "NITRO_SETTINGS_STATE").unwrap(), 0x8001_0180);
+        assert_eq!(
+            block_address(&path, b"NSET", 1, 36, "NITRO_SETTINGS_STATE").unwrap(),
+            0x8001_0180
+        );
         assert!(block_address(&path, b"NSET", 2, 36, "NITRO_SETTINGS_STATE").is_err());
         assert!(block_address(&path, b"NSET", 1, 40, "NITRO_SETTINGS_STATE").is_err());
         fs::remove_file(path).unwrap();

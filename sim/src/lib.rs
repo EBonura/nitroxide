@@ -30,13 +30,13 @@
 
 #![cfg_attr(not(test), no_std)]
 
-pub mod angle;
-pub mod camera;
-pub mod playlist;
-#[cfg(test)]
-mod camera_tests;
 #[cfg(test)]
 mod air_tests;
+pub mod angle;
+pub mod camera;
+#[cfg(test)]
+mod camera_tests;
+pub mod playlist;
 
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
@@ -712,10 +712,30 @@ pub struct DemoMatch {
 
 /// The attract demo's matches, in the order it plays them.
 pub const DEMO_MATCHES: [DemoMatch; 4] = [
-    DemoMatch { spot: 0, seed: 1, first_goal: 1395, scorer: Team::Blue },
-    DemoMatch { spot: 3, seed: 18, first_goal: 1606, scorer: Team::Orange },
-    DemoMatch { spot: 2, seed: 8, first_goal: 953, scorer: Team::Blue },
-    DemoMatch { spot: 4, seed: 16, first_goal: 1482, scorer: Team::Orange },
+    DemoMatch {
+        spot: 0,
+        seed: 1,
+        first_goal: 1395,
+        scorer: Team::Blue,
+    },
+    DemoMatch {
+        spot: 3,
+        seed: 18,
+        first_goal: 1606,
+        scorer: Team::Orange,
+    },
+    DemoMatch {
+        spot: 2,
+        seed: 8,
+        first_goal: 953,
+        scorer: Team::Blue,
+    },
+    DemoMatch {
+        spot: 4,
+        seed: 16,
+        first_goal: 1482,
+        scorer: Team::Orange,
+    },
 ];
 
 /// The demo bots' flair (see `Sim::flair`), in uu relative to the car: how
@@ -1259,7 +1279,7 @@ fn plane_axes(up: V3) -> (V3, V3) {
 /// path to world-up. That axis need not be perpendicular to the nose, so this
 /// less frequent path retains the parallel term.
 fn rotate_any_about(v: V3, axis: V3, angle_q12: i32) -> V3 {
-    let a = (angle_q12 & 0xFFF) as u16;
+    let a = (angle_q12 & 0xfff) as u16;
     let (s, c) = (sin_q12(a), cos_q12(a));
     let k = cross_q12(axis, v);
     let parallel = dot_q12(axis, v);
@@ -1542,14 +1562,14 @@ impl Sim {
             ai_target: AiTarget::None,
             ai_target_ticks: 0,
             // Any non-zero constant; xorshift sticks at zero.
-            ai_rng: 0x5EED_1234,
+            ai_rng: 0x5eed_1234,
             gravity_phase: 0,
             ai_escape: 0,
             blue_ai: false,
             blue_bot: BotMemory {
                 target: AiTarget::None,
                 target_ticks: 0,
-                rng: 0xB1E0_5EED,
+                rng: 0xb1e0_5eed,
                 escape: 0,
             },
             bot_flair: false,
@@ -1787,7 +1807,7 @@ impl Sim {
     /// to stay deterministic for the headless replays and the tests, so the
     /// randomness comes from a seeded xorshift rather than the host clock.
     fn ai_point_in_circle(&mut self, cx: i32, cz: i32, radius: i32) -> (i32, i32) {
-        let angle = (self.ai_rand() & 0xFFF) as u16;
+        let angle = (self.ai_rand() & 0xfff) as u16;
         let reach = (self.ai_rand() % radius.max(1) as u32) as i32;
         let x = cx + uu((cos_q12(angle) as i32 * reach) >> 12);
         let z = cz + uu((sin_q12(angle) as i32 * reach) >> 12);
@@ -1932,7 +1952,10 @@ impl Sim {
     fn flair(&self, input: &mut Input) {
         let car = &self.opponent;
         let (sn, cs) = heading(car.yaw);
-        let (dx, dz) = ((self.ball.p.x - car.p.x) >> FP, (self.ball.p.z - car.p.z) >> FP);
+        let (dx, dz) = (
+            (self.ball.p.x - car.p.x) >> FP,
+            (self.ball.p.z - car.p.z) >> FP,
+        );
         let ahead = (dx * sn + dz * cs) >> 12;
         let side = ((dx * cs - dz * sn) >> 12).abs();
         let high = (self.ball.p.y - car.p.y) >> FP;
@@ -1987,7 +2010,10 @@ impl Sim {
         sim.bot_flair = true;
         sim.kickoff_spot = m.spot;
         sim.kickoff();
-        sim.seed_ai(m.seed.wrapping_mul(0x9E37_79B9), m.seed.wrapping_mul(0x85EB_CA6B));
+        sim.seed_ai(
+            m.seed.wrapping_mul(0x9e37_79b9),
+            m.seed.wrapping_mul(0x85eb_ca6b),
+        );
         sim
     }
 
@@ -2347,7 +2373,11 @@ impl Sim {
         } else {
             (kx >= 0) != (along >= 0)
         };
-        let fscale = if backward { DODGE_BACK_SCALE } else { DODGE_FWD_SCALE };
+        let fscale = if backward {
+            DODGE_BACK_SCALE
+        } else {
+            DODGE_FWD_SCALE
+        };
         let mut x = rz(kx * DODGE_IMPULSE, 12);
         x = rz(x * (4096 + (fscale - 4096) * ratio / 4096), 12);
         if backward {
@@ -2414,7 +2444,10 @@ impl Sim {
             // Pitch and yaw damping relax as the stick is pushed, so a held
             // stick runs to the cap; roll's never does.
             a_pitch += pitch_in * AIR_TORQUE_PITCH / 128
-                - rz(w_pitch * (AIR_DAMP_PITCH * (128 - pitch_in.abs()) / 128), 16);
+                - rz(
+                    w_pitch * (AIR_DAMP_PITCH * (128 - pitch_in.abs()) / 128),
+                    16,
+                );
             a_yaw += yaw_in * AIR_TORQUE_YAW / 128
                 - rz(w_yaw * (AIR_DAMP_YAW * (128 - yaw_in.abs()) / 128), 16);
             a_roll += roll_in * AIR_TORQUE_ROLL / 128 - rz(w_roll * AIR_DAMP_ROLL, 16);
@@ -4074,7 +4107,13 @@ mod tests {
         let mut last = END_RAMP_R;
         for ax in end..=side {
             let r = ramp_radius(ax);
-            assert!(r >= last && r - last <= 1, "stepped at |x| {}: {} -> {}", ax, last, r);
+            assert!(
+                r >= last && r - last <= 1,
+                "stepped at |x| {}: {} -> {}",
+                ax,
+                last,
+                r
+            );
             last = r;
         }
         // The ball still fits inside the smaller sweep.
@@ -4104,7 +4143,12 @@ mod tests {
                         to_uu(gap)
                     );
                 }
-                assert!(in_bounds(sim.ball.p, BALL_R), "end {}: left the arena: {:?}", end, sim.ball.p);
+                assert!(
+                    in_bounds(sim.ball.p, BALL_R),
+                    "end {}: left the arena: {:?}",
+                    end,
+                    sim.ball.p
+                );
             }
             assert!(
                 highest > uu(BALL_R + 40),
@@ -4142,7 +4186,11 @@ mod tests {
     fn a_car_can_climb_either_end_wall() {
         for end in [-1, 1] {
             let mut sim = solo();
-            sim.car.p = V3::new(uu(1800), uu(CAR_REST_Y), end * uu(HALF_Z - END_RAMP_R - 300));
+            sim.car.p = V3::new(
+                uu(1800),
+                uu(CAR_REST_Y),
+                end * uu(HALF_Z - END_RAMP_R - 300),
+            );
             sim.car.yaw = if end > 0 { 0 } else { 2048 };
             sim.car.v = V3::new(0, 0, end * 1500);
             let input = Input {
@@ -4176,7 +4224,12 @@ mod tests {
                 end,
                 sim.car.up
             );
-            assert!(in_bounds(sim.car.p, CAR_R), "end {}: escaped: {:?}", end, sim.car.p);
+            assert!(
+                in_bounds(sim.car.p, CAR_R),
+                "end {}: escaped: {:?}",
+                end,
+                sim.car.p
+            );
         }
     }
 
@@ -4278,7 +4331,12 @@ mod tests {
         let orange = sim.drive_ai();
         assert_eq!(
             (blue.throttle, blue.steer, blue.boost, blue.handbrake),
-            (orange.throttle, orange.steer, orange.boost, orange.handbrake)
+            (
+                orange.throttle,
+                orange.steer,
+                orange.boost,
+                orange.handbrake
+            )
         );
         // And the turned view puts blue exactly where orange stands.
         let t = turned_car(&sim.car);
@@ -4293,7 +4351,12 @@ mod tests {
         a.blue_ai = true;
         let mut b = a;
         a.tick(&Input::default());
-        b.tick(&Input { throttle: -128, steer: 128, boost: true, ..Input::default() });
+        b.tick(&Input {
+            throttle: -128,
+            steer: 128,
+            boost: true,
+            ..Input::default()
+        });
         assert_eq!((a.car.p, a.car.v), (b.car.p, b.car.v), "blue read the pad");
         assert_eq!(a.ai_target, b.ai_target);
     }
@@ -4337,9 +4400,23 @@ mod tests {
             let in_z = loose_ball_path(x, -z, vx, -vz);
             for k in 0..a.len() {
                 let (ex, ez) = ((a[k].0 + in_x[k].0).abs(), (a[k].1 - in_x[k].1).abs());
-                assert!(ex.max(ez) <= 3, "start {:?}: x-mirror off by {} {} at {} s", (x, z, vx, vz), ex, ez, k + 1);
+                assert!(
+                    ex.max(ez) <= 3,
+                    "start {:?}: x-mirror off by {} {} at {} s",
+                    (x, z, vx, vz),
+                    ex,
+                    ez,
+                    k + 1
+                );
                 let (fx, fz) = ((a[k].0 - in_z[k].0).abs(), (a[k].1 + in_z[k].1).abs());
-                assert!(fx.max(fz) <= 3, "start {:?}: z-mirror off by {} {} at {} s", (x, z, vx, vz), fx, fz, k + 1);
+                assert!(
+                    fx.max(fz) <= 3,
+                    "start {:?}: z-mirror off by {} {} at {} s",
+                    (x, z, vx, vz),
+                    fx,
+                    fz,
+                    k + 1
+                );
             }
         }
     }
@@ -4355,7 +4432,13 @@ mod tests {
                 assert!(tick <= 60 * 60, "demo {}: no goal in a minute", n);
                 sim.tick(&Input::default());
                 let ball = sim.ball.p;
-                assert!(in_bounds(ball, BALL_R), "demo {} tick {}: ball {:?}", n, tick, ball);
+                assert!(
+                    in_bounds(ball, BALL_R),
+                    "demo {} tick {}: ball {:?}",
+                    n,
+                    tick,
+                    ball
+                );
                 for (k, car) in [&sim.car, &sim.opponent].into_iter().enumerate() {
                     if car.jumps_used > used[k] {
                         jumps += 1;
@@ -4364,15 +4447,29 @@ mod tests {
                 }
             }
             let scorer = sim.last_scorer;
-            std::println!("demo {}: goal on tick {} by {:?}, {} jumps", n, tick, scorer, jumps);
-            assert_eq!((tick, sim.last_scorer), (m.first_goal, m.scorer), "demo {}", n);
+            std::println!(
+                "demo {}: goal on tick {} by {:?}, {} jumps",
+                n,
+                tick,
+                scorer,
+                jumps
+            );
+            assert_eq!(
+                (tick, sim.last_scorer),
+                (m.first_goal, m.scorer),
+                "demo {}",
+                n
+            );
             assert!(jumps > 0, "demo {}: nobody left the ground", n);
         }
         // And nothing changes in the default kickoff: spot 0 is where an
         // ordinary match has always started.
         let plain = Sim::new();
         let spot = V3::new(0, uu(CAR_REST_Y), -uu(4608));
-        assert_eq!((plain.car.p, plain.car.yaw, plain.opponent.yaw), (spot, 0, 2048));
+        assert_eq!(
+            (plain.car.p, plain.car.yaw, plain.opponent.yaw),
+            (spot, 0, 2048)
+        );
     }
 
     #[test]
@@ -4384,11 +4481,23 @@ mod tests {
             for tick in 0..3600 {
                 sim.tick(&Input::default());
                 let ball = sim.ball.p;
-                assert!(in_bounds(ball, BALL_R), "seed {} tick {}: ball {:?}", seed, tick, ball);
+                assert!(
+                    in_bounds(ball, BALL_R),
+                    "seed {} tick {}: ball {:?}",
+                    seed,
+                    tick,
+                    ball
+                );
                 for car in [&sim.car, &sim.opponent] {
                     if !car.wrecked() {
                         let p = car.p;
-                        assert!(in_bounds(p, CAR_R), "seed {} tick {}: car {:?}", seed, tick, p);
+                        assert!(
+                            in_bounds(p, CAR_R),
+                            "seed {} tick {}: car {:?}",
+                            seed,
+                            tick,
+                            p
+                        );
                     }
                 }
             }
@@ -4401,8 +4510,14 @@ mod tests {
     #[test]
     #[ignore]
     fn bot_match_survey() {
-        let ticks: i32 = std::env::var("TICKS").ok().and_then(|v| v.parse().ok()).unwrap_or(2400);
-        let seeds: u32 = std::env::var("SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
+        let ticks: i32 = std::env::var("TICKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2400);
+        let seeds: u32 = std::env::var("SEEDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12);
         for spot in 0..KICKOFF_SPOTS.len() {
             for seed in 1u32..=seeds {
                 let mut sim = Sim::new();
@@ -4410,7 +4525,10 @@ mod tests {
                 sim.bot_flair = true;
                 sim.kickoff_spot = spot;
                 sim.kickoff();
-                sim.seed_ai(seed.wrapping_mul(0x9E37_79B9), seed.wrapping_mul(0x85EB_CA6B));
+                sim.seed_ai(
+                    seed.wrapping_mul(0x9e37_79b9),
+                    seed.wrapping_mul(0x85eb_ca6b),
+                );
                 let mut goals = std::vec::Vec::new();
                 let (mut was, mut jumps, mut dodges, mut high, mut saves) = (0, 0, 0, 0, 0);
                 let mut used = [0u8; 2];
@@ -4418,7 +4536,14 @@ mod tests {
                 for tick in 0..ticks {
                     sim.tick(&Input::default());
                     if sim.goal_freeze == GOAL_FREEZE_TICKS && was != GOAL_FREEZE_TICKS {
-                        goals.push((tick, if sim.last_scorer == Team::Blue { 'B' } else { 'O' }));
+                        goals.push((
+                            tick,
+                            if sim.last_scorer == Team::Blue {
+                                'B'
+                            } else {
+                                'O'
+                            },
+                        ));
                     }
                     was = sim.goal_freeze;
                     for (k, car) in [&sim.car, &sim.opponent].into_iter().enumerate() {
@@ -4444,7 +4569,13 @@ mod tests {
                 }
                 std::println!(
                     "spot {} seed {:2}: goals {:?} jumps {} dodges {} high {} saves {}",
-                    spot, seed, goals, jumps, dodges, high, saves
+                    spot,
+                    seed,
+                    goals,
+                    jumps,
+                    dodges,
+                    high,
+                    saves
                 );
             }
         }
@@ -4456,18 +4587,41 @@ mod tests {
         // ball and both cars reach the end walls and corners often in a
         // minute of play, and none of them may leave the arena doing it.
         for input in [
-            Input { throttle: 128, boost: true, ..Input::default() },
-            Input { throttle: 128, steer: 60, ..Input::default() },
-            Input { throttle: 128, steer: -60, boost: true, ..Input::default() },
+            Input {
+                throttle: 128,
+                boost: true,
+                ..Input::default()
+            },
+            Input {
+                throttle: 128,
+                steer: 60,
+                ..Input::default()
+            },
+            Input {
+                throttle: 128,
+                steer: -60,
+                boost: true,
+                ..Input::default()
+            },
         ] {
             let mut sim = Sim::new();
             sim.kickoff();
             for tick in 0..3600 {
                 sim.tick(&input);
-                assert!(in_bounds(sim.ball.p, BALL_R), "tick {}: ball left: {:?}", tick, sim.ball.p);
+                assert!(
+                    in_bounds(sim.ball.p, BALL_R),
+                    "tick {}: ball left: {:?}",
+                    tick,
+                    sim.ball.p
+                );
                 for car in [&sim.car, &sim.opponent] {
                     if !car.wrecked() {
-                        assert!(in_bounds(car.p, CAR_R), "tick {}: car left: {:?}", tick, car.p);
+                        assert!(
+                            in_bounds(car.p, CAR_R),
+                            "tick {}: car left: {:?}",
+                            tick,
+                            car.p
+                        );
                     }
                 }
             }
@@ -4588,7 +4742,11 @@ mod tests {
         );
         assert_eq!(sim.ai_target, AiTarget::None, "{what}: orange bot's plan");
         assert_eq!(sim.ai_escape, 0, "{what}: orange bot's escape");
-        assert_eq!(sim.blue_bot.target, AiTarget::None, "{what}: blue bot's plan");
+        assert_eq!(
+            sim.blue_bot.target,
+            AiTarget::None,
+            "{what}: blue bot's plan"
+        );
         assert_eq!(sim.blue_bot.escape, 0, "{what}: blue bot's escape");
         assert_eq!(sim.kickoff_ticks(), 0, "{what}: live ticks since placement");
     }
@@ -4686,7 +4844,10 @@ mod tests {
         // Released: both cars are live from this tick on.
         sim.tick(&full);
         assert!(sim.car.v != V3::ZERO, "the player's car should be away");
-        assert!(sim.opponent.v != V3::ZERO, "the opponent's car should be away");
+        assert!(
+            sim.opponent.v != V3::ZERO,
+            "the opponent's car should be away"
+        );
         assert_eq!(sim.clock, clock - 1);
     }
 
@@ -4710,7 +4871,10 @@ mod tests {
         }
         assert_kickoff_state(&sim, "versus, countdown over");
         sim.tick_versus(&drive, &drive);
-        assert!(sim.car.v.z > 0 && sim.opponent.v.z < 0, "both away, toward each other");
+        assert!(
+            sim.car.v.z > 0 && sim.opponent.v.z < 0,
+            "both away, toward each other"
+        );
     }
 
     #[test]
@@ -4722,7 +4886,10 @@ mod tests {
                 sim.bot_flair = true;
                 sim.kickoff_spot = spot;
                 sim.kickoff();
-                sim.seed_ai(seed.wrapping_mul(0x9E37_79B9), seed.wrapping_mul(0x85EB_CA6B));
+                sim.seed_ai(
+                    seed.wrapping_mul(0x9e37_79b9),
+                    seed.wrapping_mul(0x85eb_ca6b),
+                );
                 let mut ticks = 0;
                 while sim.goal_freeze == 0 && ticks < 5000 {
                     sim.tick(&Input::default());
@@ -4753,7 +4920,11 @@ mod tests {
         }
         through_the_goal(&mut sim, &Input::default(), None);
         assert_eq!(sim.score_blue, 1);
-        assert_eq!(sim.pad_timers, [0; PADS.len()], "pads should respawn at kickoff");
+        assert_eq!(
+            sim.pad_timers,
+            [0; PADS.len()],
+            "pads should respawn at kickoff"
+        );
     }
 
     #[test]
@@ -7306,15 +7477,17 @@ mod tests {
         assert_eq!((c.jump_bonus_rem, c.jump_sticky_rem), (0, 0));
         assert_eq!(c.jump_normal, V3::ZERO);
         assert_eq!(
-            (c.dodge_window, c.dodge_timer, c.flip_lock, c.flip_dx, c.flip_dy),
+            (
+                c.dodge_window,
+                c.dodge_timer,
+                c.flip_lock,
+                c.flip_dx,
+                c.flip_dy
+            ),
             (0, 0, 0, 0, 0),
             "no dodge should survive a restart"
         );
-        assert_eq!(
-            c.w,
-            V3::ZERO,
-            "and the car should not still be turning"
-        );
+        assert_eq!(c.w, V3::ZERO, "and the car should not still be turning");
         assert!(!c.boosting);
         assert_eq!((c.boost_ticks, c.boost_rem, c.air_throttle_rem), (0, 0, 0));
     }

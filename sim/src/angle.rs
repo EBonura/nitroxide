@@ -47,7 +47,7 @@ pub fn atan2_q12_fine(y: i32, x: i32) -> u16 {
         (false, false) => 2048 + q,
         (true, false) => 4096 - q,
     };
-    (angle & 0xFFF) as u16
+    (angle & 0xfff) as u16
 }
 
 #[cfg(test)]
@@ -89,7 +89,10 @@ mod tests {
                     (t.cos() * radius as f64).round() as i32,
                 );
                 let got = atan2_q12_fine(y, x);
-                assert!(gap(got, turn as u16).abs() <= 2, "radius {radius} turn {turn} got {got}");
+                assert!(
+                    gap(got, turn as u16).abs() <= 2,
+                    "radius {radius} turn {turn} got {got}"
+                );
             }
         }
     }

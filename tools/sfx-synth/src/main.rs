@@ -143,7 +143,8 @@ fn ui_select(r: u32) -> Vec<f64> {
             let t = i as f64 / r as f64;
             let a = pluck(t, 0.002, 0.04) * partials(t, 880.0, &[(1.0, 1.0), (2.0, 0.22)]);
             let t2 = t - 0.055;
-            let b = pluck(t2, 0.002, 0.05) * partials(t2.max(0.0), 1320.0, &[(1.0, 1.0), (2.0, 0.22)]);
+            let b =
+                pluck(t2, 0.002, 0.05) * partials(t2.max(0.0), 1320.0, &[(1.0, 1.0), (2.0, 0.22)]);
             0.8 * a + b
         })
         .collect()
@@ -155,7 +156,8 @@ fn ui_back(r: u32) -> Vec<f64> {
             let t = i as f64 / r as f64;
             let a = pluck(t, 0.002, 0.035) * partials(t, 1100.0, &[(1.0, 1.0), (2.0, 0.2)]);
             let t2 = t - 0.05;
-            let b = pluck(t2, 0.002, 0.045) * partials(t2.max(0.0), 740.0, &[(1.0, 1.0), (2.0, 0.2)]);
+            let b =
+                pluck(t2, 0.002, 0.045) * partials(t2.max(0.0), 740.0, &[(1.0, 1.0), (2.0, 0.2)]);
             0.8 * a + b
         })
         .collect()
@@ -178,15 +180,16 @@ fn bell(t: f64, f: f64, tau: f64) -> f64 {
     if t < 0.0 {
         return 0.0;
     }
-    pluck(t, 0.002, tau)
-        * partials(t, f, &[(1.0, 1.0), (2.76, 0.18), (5.4, 0.06)])
+    pluck(t, 0.002, tau) * partials(t, f, &[(1.0, 1.0), (2.76, 0.18), (5.4, 0.06)])
 }
 
 fn ui_chime(r: u32) -> Vec<f64> {
     (0..n(r, 0.42))
         .map(|i| {
             let t = i as f64 / r as f64;
-            bell(t, 1046.5, 0.09) + bell(t - 0.06, 1318.5, 0.09) + 1.1 * bell(t - 0.12, 1568.0, 0.13)
+            bell(t, 1046.5, 0.09)
+                + bell(t - 0.06, 1318.5, 0.09)
+                + 1.1 * bell(t - 0.12, 1568.0, 0.13)
         })
         .collect()
 }
@@ -238,7 +241,8 @@ fn go(r: u32) -> Vec<f64> {
     (0..n(r, 0.46))
         .map(|i| {
             let t = i as f64 / r as f64;
-            trap(t, 0.004, 0.46, 0.17) * partials(t, 1760.0, &[(1.0, 1.0), (3.0, 0.16), (5.0, 0.06)])
+            trap(t, 0.004, 0.46, 0.17)
+                * partials(t, 1760.0, &[(1.0, 1.0), (3.0, 0.16), (5.0, 0.06)])
         })
         .collect()
 }
@@ -437,7 +441,8 @@ fn land(r: u32) -> Vec<f64> {
             let thud = pluck(t, 0.002, 0.05) * ph.sin();
             let crunch = pluck(t, 0.001, 0.012) * lp.run(rng.next(), 1100.0, r);
             // The second bump: the suspension coming back up.
-            let again = pluck(t - 0.07, 0.003, 0.04) * (2.0 * PI * 62.0 * (t - 0.07).max(0.0)).sin();
+            let again =
+                pluck(t - 0.07, 0.003, 0.04) * (2.0 * PI * 62.0 * (t - 0.07).max(0.0)).sin();
             thud + 0.6 * crunch + 0.35 * again
         })
         .collect()
@@ -510,7 +515,10 @@ fn pad_big(r: u32) -> Vec<f64> {
         .map(|i| {
             let t = i as f64 / r as f64;
             let sub = pluck(t, 0.004, 0.18) * partials(t, 165.0, &[(1.0, 1.0)]);
-            sub * 0.8 + bell(t, 660.0, 0.12) + 0.9 * bell(t - 0.07, 990.0, 0.14) + 0.8 * bell(t - 0.14, 1320.0, 0.2)
+            sub * 0.8
+                + bell(t, 660.0, 0.12)
+                + 0.9 * bell(t - 0.07, 990.0, 0.14)
+                + 0.8 * bell(t - 0.14, 1320.0, 0.2)
         })
         .collect()
 }
@@ -542,10 +550,22 @@ struct Def {
 }
 
 const fn d(name: &'static str, rate: u32, gen: fn(u32) -> Vec<f64>) -> Def {
-    Def { name, rate, looped: false, gen, variant: None }
+    Def {
+        name,
+        rate,
+        looped: false,
+        gen,
+        variant: None,
+    }
 }
 const fn dl(name: &'static str, rate: u32, gen: fn(u32) -> Vec<f64>) -> Def {
-    Def { name, rate, looped: true, gen, variant: None }
+    Def {
+        name,
+        rate,
+        looped: true,
+        gen,
+        variant: None,
+    }
 }
 
 fn defs() -> Vec<Def> {
@@ -605,7 +625,12 @@ fn render(def: &Def) -> Rendered {
     }
     let mut pcm = (def.gen)(def.rate);
     if def.looped {
-        assert_eq!(pcm.len() % BLOCK, 0, "{} loop is not whole blocks", def.name);
+        assert_eq!(
+            pcm.len() % BLOCK,
+            0,
+            "{} loop is not whole blocks",
+            def.name
+        );
     }
     // Scale into 16-bit range; the cook normalises to its target peak.
     for v in pcm.iter_mut() {
@@ -646,12 +671,17 @@ fn render(def: &Def) -> Rendered {
 /// the play volume in the game need not move, and backed off only as far as
 /// the rail demands.
 fn render_variant(name: &str, v: char) -> Rendered {
-    let (_, rate, looped) = *variants::SOUNDS.iter().find(|s| s.0 == name).expect("a sound with variants");
+    let (_, rate, looped) = *variants::SOUNDS
+        .iter()
+        .find(|s| s.0 == name)
+        .expect("a sound with variants");
     let mut pcm = variants::render(name, v, rate).expect("a known variant");
     if looped {
         assert_eq!(pcm.len() % BLOCK, 0, "{name}-{v} loop is not whole blocks");
     }
-    let rms = (pcm.iter().map(|x| x * x).sum::<f64>() / pcm.len() as f64).sqrt().max(1e-9);
+    let rms = (pcm.iter().map(|x| x * x).sum::<f64>() / pcm.len() as f64)
+        .sqrt()
+        .max(1e-9);
     let mut gain = 10f64.powf(variants::target_rms_db(name) / 20.0) * 32768.0 / rms;
     let mut opts = CookOptions::one_shot(rate);
     opts.normalize_peak = None;
@@ -685,7 +715,9 @@ fn render_variant(name: &str, v: char) -> Rendered {
 /// WAV, `<sound>-a.wav` and so on, with a table of what each costs.
 fn variants_cmd(dir: &std::path::Path) {
     fs::create_dir_all(dir).unwrap();
-    println!("| sound | variant | rate | samples | ADPCM bytes | peak dBFS | RMS dBFS | target RMS |");
+    println!(
+        "| sound | variant | rate | samples | ADPCM bytes | peak dBFS | RMS dBFS | target RMS |"
+    );
     println!("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |");
     for (name, rate, _) in variants::SOUNDS {
         for v in ['a', 'b', 'c'] {
@@ -697,14 +729,23 @@ fn variants_cmd(dir: &std::path::Path) {
                 r.adpcm_len,
                 variants::target_rms_db(name)
             );
-            fs::write(dir.join(format!("{name}-{v}.wav")), wav::write_mono16(rate, &r.decoded)).unwrap();
+            fs::write(
+                dir.join(format!("{name}-{v}.wav")),
+                wav::write_mono16(rate, &r.decoded),
+            )
+            .unwrap();
         }
     }
 }
 
 fn levels(dec: &[i16]) -> (f64, f64) {
     let peak = dec.iter().map(|v| (*v as f64).abs()).fold(0.0, f64::max) / 32768.0;
-    let rms = (dec.iter().map(|v| (*v as f64 / 32768.0).powi(2)).sum::<f64>() / dec.len() as f64).sqrt();
+    let rms = (dec
+        .iter()
+        .map(|v| (*v as f64 / 32768.0).powi(2))
+        .sum::<f64>()
+        / dec.len() as f64)
+        .sqrt();
     (db(peak), db(rms))
 }
 
@@ -718,17 +759,27 @@ fn main() {
         }
         Some("import") => {
             let p = std::path::Path::new;
-            import::run(p(&argv[2]), p(&argv[3]), p(&argv[4]), argv.get(5).map(|s| p(s)));
+            import::run(
+                p(&argv[2]),
+                p(&argv[3]),
+                p(&argv[4]),
+                argv.get(5).map(|s| p(s)),
+            );
             return;
         }
         _ => {}
     }
     if argv.get(1).map(String::as_str) == Some("variants") {
-        variants_cmd(std::path::Path::new(argv.get(2).expect("usage: sfx-synth variants <dir>")));
+        variants_cmd(std::path::Path::new(
+            argv.get(2).expect("usage: sfx-synth variants <dir>"),
+        ));
         return;
     }
     let mut args = std::env::args().skip(1);
-    let out: PathBuf = args.next().expect("usage: sfx-synth <out dir> [preview dir]").into();
+    let out: PathBuf = args
+        .next()
+        .expect("usage: sfx-synth <out dir> [preview dir]")
+        .into();
     let preview: Option<PathBuf> = args.next().map(Into::into);
     fs::create_dir_all(&out).unwrap();
     if let Some(p) = &preview {
@@ -752,7 +803,11 @@ fn main() {
         total += r.adpcm_len + 16;
         fs::write(out.join(format!("{}.psau", def.name)), &r.psau).unwrap();
         if let Some(p) = &preview {
-            fs::write(p.join(format!("{}.wav", def.name)), wav::write_mono16(def.rate, &r.decoded)).unwrap();
+            fs::write(
+                p.join(format!("{}.wav", def.name)),
+                wav::write_mono16(def.rate, &r.decoded),
+            )
+            .unwrap();
         }
     }
     // Context for levelling: the same figures for the recorded samples already in
@@ -761,7 +816,13 @@ fn main() {
         let bytes = fs::read(out.join(format!("{name}.psau"))).unwrap();
         let dec = adpcm::decode(&bytes[32..]);
         let (peak, rms) = levels(&dec);
-        println!("| (existing) {name} | 44100 | {} | {} | {:.1} | {:.1} |", dec.len(), bytes.len() - 32, peak, rms);
+        println!(
+            "| (existing) {name} | 44100 | {} | {} | {:.1} | {:.1} |",
+            dec.len(),
+            bytes.len() - 32,
+            peak,
+            rms
+        );
     }
     println!();
     println!("new samples: {total} bytes of SPU RAM including one parking block each");
@@ -780,7 +841,11 @@ mod tests {
             let r = render(&def);
             let on_disk = fs::read(dir.join(format!("{}.psau", def.name)))
                 .unwrap_or_else(|e| panic!("{}.psau: {e}", def.name));
-            assert!(on_disk == r.psau, "{}.psau is stale: run `make sfx`", def.name);
+            assert!(
+                on_disk == r.psau,
+                "{}.psau is stale: run `make sfx`",
+                def.name
+            );
         }
     }
 
@@ -792,7 +857,11 @@ mod tests {
             let r = render(&def);
             let (peak, rms) = levels(&r.decoded);
             assert!(peak <= -0.05, "{} clips ({peak:.2} dBFS)", def.name);
-            assert!(rms > -30.0, "{} is nearly silent ({rms:.1} dBFS RMS)", def.name);
+            assert!(
+                rms > -30.0,
+                "{} is nearly silent ({rms:.1} dBFS RMS)",
+                def.name
+            );
             // ADPCM block flags live in byte 1 of each 16-byte block: bit 0 END,
             // bit 1 REPEAT, bit 2 LOOP START.
             let adpcm = &r.psau[32..];
@@ -806,7 +875,12 @@ mod tests {
                     def.name
                 );
             } else {
-                assert_eq!(flags_last & 3, 1, "{} one-shot must end without repeating", def.name);
+                assert_eq!(
+                    flags_last & 3,
+                    1,
+                    "{} one-shot must end without repeating",
+                    def.name
+                );
             }
         }
     }
@@ -825,7 +899,10 @@ mod tests {
                 let seam = step(d[0], d[d.len() - 1]);
                 let max_step = d.windows(2).map(|w| step(w[1], w[0])).fold(0.0, f64::max);
                 println!("{name}-{v}: seam {seam}, largest step inside {max_step}");
-                assert!(seam <= 1.15 * max_step, "{name}-{v}: seam {seam} against largest step {max_step:.0}");
+                assert!(
+                    seam <= 1.15 * max_step,
+                    "{name}-{v}: seam {seam} against largest step {max_step:.0}"
+                );
             }
         }
     }

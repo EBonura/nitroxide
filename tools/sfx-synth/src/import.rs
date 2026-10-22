@@ -16,10 +16,12 @@
 //! fade out s; loop crossfade s; target RMS dBFS`.
 
 use super::*;
-use symphonia::core::{
-    audio::SampleBuffer, codecs::DecoderOptions, formats::FormatOptions, io::MediaSourceStream,
-    meta::MetadataOptions, probe::Hint,
-};
+use symphonia::core::audio::SampleBuffer;
+use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
 
 struct Entry {
     name: String,
@@ -37,7 +39,9 @@ struct Entry {
 }
 
 pub fn fnv64(b: &[u8]) -> u64 {
-    b.iter().fold(0xcbf29ce484222325u64, |h, x| (h ^ *x as u64).wrapping_mul(0x100000001b3))
+    b.iter().fold(0xcbf29ce484222325u64, |h, x| {
+        (h ^ *x as u64).wrapping_mul(0x100000001b3)
+    })
 }
 
 fn parse(text: &str) -> Vec<Entry> {
@@ -71,7 +75,12 @@ fn decode_mp3(bytes: Vec<u8>) -> (u32, Vec<f64>) {
     let mut hint = Hint::new();
     hint.with_extension("mp3");
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .expect("an MP3");
     let mut format = probed.format;
     let track = format.default_track().expect("a track");
@@ -113,7 +122,11 @@ fn cut(src: &[f64], rate: u32, e: &Entry) -> Vec<f64> {
         // head, so the last sample runs straight into the first.
         let l = b - a;
         let x = at(e.xfade);
-        assert!(b + x <= src.len(), "{}: loop crossfade runs past the end", e.name);
+        assert!(
+            b + x <= src.len(),
+            "{}: loop crossfade runs past the end",
+            e.name
+        );
         let mut out = src[a..b].to_vec();
         for i in 0..x {
             let w = i as f64 / x as f64;
@@ -134,21 +147,39 @@ fn cut(src: &[f64], rate: u32, e: &Entry) -> Vec<f64> {
     }
 }
 
-pub fn run(manifest: &std::path::Path, sources: &std::path::Path, out: &std::path::Path, preview: Option<&std::path::Path>) {
+pub fn run(
+    manifest: &std::path::Path,
+    sources: &std::path::Path,
+    out: &std::path::Path,
+    preview: Option<&std::path::Path>,
+) {
     let entries = parse(&fs::read_to_string(manifest).expect("manifest"));
     fs::create_dir_all(out).unwrap();
     if let Some(p) = preview {
         fs::create_dir_all(p).unwrap();
     }
     let mut cache: std::collections::HashMap<String, (u32, Vec<f64>)> = Default::default();
-    let mut applied = String::from("# name; gain dB applied to the mono mix; decoded peak dBFS; decoded RMS dBFS\n");
+    let mut applied = String::from(
+        "# name; gain dB applied to the mono mix; decoded peak dBFS; decoded RMS dBFS\n",
+    );
     println!("| sound | source | cut | rate | samples | ADPCM bytes | gain dB | peak dBFS | RMS dBFS | target RMS |");
     println!("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
     for e in &entries {
         if !cache.contains_key(&e.file) {
-            let bytes = fs::read(sources.join(&e.file)).unwrap_or_else(|err| panic!("{}: {err}", e.file));
-            assert_eq!(bytes.len() as u64, e.bytes, "{}: not the recorded file (size)", e.file);
-            assert_eq!(fnv64(&bytes), e.fnv, "{}: not the recorded file (hash)", e.file);
+            let bytes =
+                fs::read(sources.join(&e.file)).unwrap_or_else(|err| panic!("{}: {err}", e.file));
+            assert_eq!(
+                bytes.len() as u64,
+                e.bytes,
+                "{}: not the recorded file (size)",
+                e.file
+            );
+            assert_eq!(
+                fnv64(&bytes),
+                e.fnv,
+                "{}: not the recorded file (hash)",
+                e.file
+            );
             let decoded = if e.file.ends_with(".wav") {
                 let w = wav::read(&bytes).expect("a WAV");
                 (w.rate, w.samples)
@@ -159,7 +190,9 @@ pub fn run(manifest: &std::path::Path, sources: &std::path::Path, out: &std::pat
         }
         let (rate, src) = &cache[&e.file];
         let pcm = cut(src, *rate, e);
-        let rms = (pcm.iter().map(|x| x * x).sum::<f64>() / pcm.len() as f64).sqrt().max(1e-9);
+        let rms = (pcm.iter().map(|x| x * x).sum::<f64>() / pcm.len() as f64)
+            .sqrt()
+            .max(1e-9);
         let mut gain = 10f64.powf(e.target_db / 20.0) * 32768.0 / rms;
         let mut opts = CookOptions::one_shot(e.rate);
         opts.normalize_peak = None;
@@ -202,14 +235,30 @@ pub fn run(manifest: &std::path::Path, sources: &std::path::Path, out: &std::pat
         if e.looped {
             let step = |a: i16, b: i16| (a as f64 - b as f64).abs();
             let seam = step(decoded[0], decoded[decoded.len() - 1]);
-            let max_step = decoded.windows(2).map(|w| step(w[1], w[0])).fold(0.0, f64::max);
-            println!("|  | seam | {seam:.0} against a largest step of {max_step:.0} | | | | | | | |");
+            let max_step = decoded
+                .windows(2)
+                .map(|w| step(w[1], w[0]))
+                .fold(0.0, f64::max);
+            println!(
+                "|  | seam | {seam:.0} against a largest step of {max_step:.0} | | | | | | | |"
+            );
             assert!(seam <= 1.15 * max_step, "{}: the loop seam clicks", e.name);
         }
-        applied.push_str(&format!("{}; {gain_db:.2}; {peak:.1}; {rms_out:.1}\n", e.name));
-        fs::write(out.join(format!("{}.psau", e.name)), psau(e.rate, decoded.len(), &c.adpcm)).unwrap();
+        applied.push_str(&format!(
+            "{}; {gain_db:.2}; {peak:.1}; {rms_out:.1}\n",
+            e.name
+        ));
+        fs::write(
+            out.join(format!("{}.psau", e.name)),
+            psau(e.rate, decoded.len(), &c.adpcm),
+        )
+        .unwrap();
         if let Some(p) = preview {
-            fs::write(p.join(format!("{}.wav", e.name)), wav::write_mono16(e.rate, &decoded)).unwrap();
+            fs::write(
+                p.join(format!("{}.wav", e.name)),
+                wav::write_mono16(e.rate, &decoded),
+            )
+            .unwrap();
         }
     }
     fs::write(manifest.with_file_name("recordings.applied"), applied).unwrap();

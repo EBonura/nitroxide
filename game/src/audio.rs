@@ -51,7 +51,7 @@
 //!   update in every phase, because a menu click has to be keyed off in a menu.
 
 use crate::draw;
-use nitroxide_sim::{uu, Car, Sim, WinCondition, GOAL_HALF_W, GOAL_H, HALF_Z, PADS};
+use nitroxide_sim::{uu, Car, Sim, WinCondition, GOAL_H, GOAL_HALF_W, HALF_Z, PADS};
 use psx_sfx::hw::Hw;
 use psx_sfx::master::{Master, Ratio};
 use psx_sfx::mixer::{Class, Handle, Lane, Mixer, Play, Policy, Sound, SoundId};
@@ -180,10 +180,10 @@ const LANE_SCENE: u8 = 4;
 /// least important sound that is no louder than the new one.
 const LANES: [Lane; 5] = [
     Lane::new(0x00_0003, Policy::RoundRobin),
-    Lane::new(0x00_007C, Policy::FirstFree),
-    Lane::new(0x00_0F80, Policy::Smart),
-    Lane::new(0x01_F000, Policy::Smart),
-    Lane::new(0x3E_0000, Policy::Smart),
+    Lane::new(0x00_007c, Policy::FirstFree),
+    Lane::new(0x00_0f80, Policy::Smart),
+    Lane::new(0x01_f000, Policy::Smart),
+    Lane::new(0x3e_0000, Policy::Smart),
 ];
 /// Each car's boost hiss. Noise, not a sample, so outside the mixer.
 const V_BOOST: [u8; 2] = [22, 23];
@@ -194,38 +194,38 @@ const NOISE_MASK: u32 = (1 << 22) | (1 << 23);
 /// matters, the priority inside that class (smaller is more important), and
 /// whether it loops until stopped.
 const PROPS: [(u8, Class, i16, bool); SND_COUNT] = [
-    (LANE_WORLD, Class::High, 1, false),    // Hit
-    (LANE_WORLD, Class::Normal, 2, false),  // Pad
-    (LANE_WORLD, Class::High, 0, false),    // Goal, and a wreck's bang
-    (LANE_CAR, Class::Normal, 1, false),    // Boost swoosh
-    (LANE_UI, Class::Normal, 0, false),     // UiMove
-    (LANE_UI, Class::Normal, 0, false),     // UiTick
-    (LANE_UI, Class::Normal, 0, false),     // UiSelect
-    (LANE_UI, Class::Normal, 0, false),     // UiBack
-    (LANE_UI, Class::Normal, 0, false),     // UiDeny
-    (LANE_UI, Class::Normal, 0, false),     // UiChime
-    (LANE_UI, Class::Normal, 0, false),     // UiSaved
-    (LANE_UI, Class::Normal, 0, false),     // UiOpen
-    (LANE_UI, Class::Normal, 0, false),     // UiClose
-    (LANE_SCENE, Class::High, 1, false),    // Beep
-    (LANE_SCENE, Class::High, 0, false),    // Go
+    (LANE_WORLD, Class::High, 1, false),      // Hit
+    (LANE_WORLD, Class::Normal, 2, false),    // Pad
+    (LANE_WORLD, Class::High, 0, false),      // Goal, and a wreck's bang
+    (LANE_CAR, Class::Normal, 1, false),      // Boost swoosh
+    (LANE_UI, Class::Normal, 0, false),       // UiMove
+    (LANE_UI, Class::Normal, 0, false),       // UiTick
+    (LANE_UI, Class::Normal, 0, false),       // UiSelect
+    (LANE_UI, Class::Normal, 0, false),       // UiBack
+    (LANE_UI, Class::Normal, 0, false),       // UiDeny
+    (LANE_UI, Class::Normal, 0, false),       // UiChime
+    (LANE_UI, Class::Normal, 0, false),       // UiSaved
+    (LANE_UI, Class::Normal, 0, false),       // UiOpen
+    (LANE_UI, Class::Normal, 0, false),       // UiClose
+    (LANE_SCENE, Class::High, 1, false),      // Beep
+    (LANE_SCENE, Class::High, 0, false),      // Go
     (LANE_SCENE, Class::Protected, 0, false), // Whistle
     (LANE_SCENE, Class::Protected, 0, false), // Horn
-    (LANE_SCENE, Class::High, 2, false),    // Roar
-    (LANE_SCENE, Class::Normal, 3, false),  // Gasp
-    (LANE_LOOP, Class::Normal, 0, true),    // CrowdLoop
-    (LANE_LOOP, Class::Normal, 0, true),    // EngineLoop
-    (LANE_LOOP, Class::Normal, 0, true),    // SkidLoop
-    (LANE_CAR, Class::Normal, 1, false),    // Jump
-    (LANE_CAR, Class::Normal, 1, false),    // Flip
-    (LANE_CAR, Class::Normal, 2, false),    // Land
-    (LANE_WORLD, Class::Normal, 2, false),  // Bounce
-    (LANE_WORLD, Class::Normal, 3, false),  // Net
-    (LANE_WORLD, Class::Normal, 2, false),  // Bump
-    (LANE_CAR, Class::High, 0, false),      // Sonic
-    (LANE_WORLD, Class::Normal, 2, false),  // PadBig
-    (LANE_CAR, Class::Normal, 3, false),    // Empty
-    (LANE_SCENE, Class::Normal, 2, false),  // Cheer
+    (LANE_SCENE, Class::High, 2, false),      // Roar
+    (LANE_SCENE, Class::Normal, 3, false),    // Gasp
+    (LANE_LOOP, Class::Normal, 0, true),      // CrowdLoop
+    (LANE_LOOP, Class::Normal, 0, true),      // EngineLoop
+    (LANE_LOOP, Class::Normal, 0, true),      // SkidLoop
+    (LANE_CAR, Class::Normal, 1, false),      // Jump
+    (LANE_CAR, Class::Normal, 1, false),      // Flip
+    (LANE_CAR, Class::Normal, 2, false),      // Land
+    (LANE_WORLD, Class::Normal, 2, false),    // Bounce
+    (LANE_WORLD, Class::Normal, 3, false),    // Net
+    (LANE_WORLD, Class::Normal, 2, false),    // Bump
+    (LANE_CAR, Class::High, 0, false),        // Sonic
+    (LANE_WORLD, Class::Normal, 2, false),    // PadBig
+    (LANE_CAR, Class::Normal, 3, false),      // Empty
+    (LANE_SCENE, Class::Normal, 2, false),    // Cheer
 ];
 
 // ---- the SPU as the mixer's hardware --------------------------------------------
@@ -234,11 +234,11 @@ const PROPS: [(u8, Class, i16, bool); SND_COUNT] = [
 /// and an audible release on key off.
 const HELD: Adsr = Adsr {
     // Attack shift 0x10 (quick), decay 0x0, sustain level 0xF (hold full).
-    lower: (0x10 << 8) | 0xF,
+    lower: (0x10 << 8) | 0xf,
     // Release shift 0x08: quick enough that letting go of boost is audible as
     // it stopping. 0x18 took several seconds to fade, so the hiss outlived
     // the tank by a wide margin.
-    upper: 0x08 | (0x7F << 6),
+    upper: 0x08 | (0x7f << 6),
 };
 
 /// The SPU, as `psx-sfx` drives it: each method is the register writes it
@@ -262,7 +262,12 @@ impl Hw for SpuHw {
         let v = spu::Voice::new(voice);
         self.rate[voice as usize] = sample.sample_rate_hz();
         let adsr = if looped { HELD } else { Adsr::default_tone() };
-        v.configure_sample(sample.addr(), sample.sample_rate_hz(), Volume::SILENCE, adsr);
+        v.configure_sample(
+            sample.addr(),
+            sample.sample_rate_hz(),
+            Volume::SILENCE,
+            adsr,
+        );
         v.set_pitch(self.pitch(voice, pitch_q12));
     }
 
@@ -301,8 +306,11 @@ fn hw() -> &'static mut SpuHw {
 }
 
 /// A sound with the mixer's treatment for it, filled in at upload.
-const UNSET: Sound =
-    Sound::one_shot(SoundId(0), SfxSample::resident(SpuAddr::new(SPU_SAMPLE_BASE), 22_050, 0), 0);
+const UNSET: Sound = Sound::one_shot(
+    SoundId(0),
+    SfxSample::resident(SpuAddr::new(SPU_SAMPLE_BASE), 22_050, 0),
+    0,
+);
 static mut SOUNDS: [Sound; SND_COUNT] = [UNSET; SND_COUNT];
 /// The menu's own samples are contiguous in the bank (`UiMove` to `UiClose`),
 /// so "everything but the menu" is two address ranges: below `UI_LO` and from
@@ -347,35 +355,35 @@ static mut UI_HI: u32 = 0;
 // the camera's own car is at full level in both.
 
 const L_UI_MOVE: i16 = 0x1275;
-const L_UI_TICK: i16 = 0x0C9F;
+const L_UI_TICK: i16 = 0x0c9f;
 const L_UI_SELECT: i16 = 0x1275;
-const L_UI_BACK: i16 = 0x0F87;
-const L_UI_DENY: i16 = 0x08D5;
+const L_UI_BACK: i16 = 0x0f87;
+const L_UI_DENY: i16 = 0x08d5;
 const L_UI_CHIME: i16 = 0x1781;
-const L_UI_SAVED: i16 = 0x15AF;
-const L_UI_OPEN: i16 = 0x138D;
-const L_UI_CLOSE: i16 = 0x131B;
-const L_BEEP: i16 = 0x1B1B;
-const L_GO: i16 = 0x1B4D;
-const L_WHISTLE: i16 = 0x39B4;
+const L_UI_SAVED: i16 = 0x15af;
+const L_UI_OPEN: i16 = 0x138d;
+const L_UI_CLOSE: i16 = 0x131b;
+const L_BEEP: i16 = 0x1b1b;
+const L_GO: i16 = 0x1b4d;
+const L_WHISTLE: i16 = 0x39b4;
 const L_HORN: i16 = 0x2600;
-const L_ROAR: i16 = 0x23A0;
-const L_GASP: i16 = 0x1FB5;
-const L_CROWD: i16 = 0x0E32;
-const L_ENGINE: i16 = 0x08F0;
-const L_SKID: i16 = 0x09AF;
-const L_JUMP: i16 = 0x180D;
-const L_FLIP: i16 = 0x19C6;
+const L_ROAR: i16 = 0x23a0;
+const L_GASP: i16 = 0x1fb5;
+const L_CROWD: i16 = 0x0e32;
+const L_ENGINE: i16 = 0x08f0;
+const L_SKID: i16 = 0x09af;
+const L_JUMP: i16 = 0x180d;
+const L_FLIP: i16 = 0x19c6;
 const L_LAND: i16 = 0x2393;
 const L_BOUNCE: i16 = 0x2776;
-const L_NET: i16 = 0x17C0;
-const L_BUMP: i16 = 0x2EE6;
-const L_SONIC: i16 = 0x35D9;
-const L_PAD_BIG: i16 = 0x2B44;
-const L_EMPTY: i16 = 0x1CEC;
+const L_NET: i16 = 0x17c0;
+const L_BUMP: i16 = 0x2ee6;
+const L_SONIC: i16 = 0x35d9;
+const L_PAD_BIG: i16 = 0x2b44;
+const L_EMPTY: i16 = 0x1cec;
 /// The chant after a goal sits 7 dB under the horn; at a kickoff it is softer.
 const L_CHEER: i16 = 0x2600;
-const L_CHEER_KICKOFF: i16 = 0x1D42;
+const L_CHEER_KICKOFF: i16 = 0x1d42;
 
 // ---- space --------------------------------------------------------------------
 
@@ -383,7 +391,7 @@ const L_CHEER_KICKOFF: i16 = 0x1D42;
 /// in a straight line to `floor` at `clip` and stays there. Unity peak: the
 /// sound's own level is applied after, so one curve serves every level.
 const fn ramp(start: i32, clip: i32, floor: i16) -> Curve {
-    let peak = 0x3FFF;
+    let peak = 0x3fff;
     Curve::Ramp {
         peak,
         start,
@@ -401,7 +409,7 @@ const fn ramp(start: i32, clip: i32, floor: i16) -> Curve {
 const CURVE_CAR: Curve = ramp(1500, 9000, 0);
 /// The ball. It is the thing both players are watching, so it carries across
 /// the whole arena, quietly.
-const CURVE_BALL: Curve = ramp(1800, 14_000, 0x0A00);
+const CURVE_BALL: Curve = ramp(1800, 14_000, 0x0a00);
 /// A boost pad being taken: where a car is, so it is a car sound.
 const CURVE_PAD: Curve = ramp(1500, 6000, 0);
 /// A goal, the biggest sound in the match: always heard, wherever you are.
@@ -429,7 +437,10 @@ fn refresh_ears(s: &Sim, split: bool) {
     unsafe {
         SPLIT = split;
         if split {
-            EARS_TWO = Some(Listeners::new([listener(0, &s.car), listener(1, &s.opponent)]));
+            EARS_TWO = Some(Listeners::new([
+                listener(0, &s.car),
+                listener(1, &s.opponent),
+            ]));
         } else {
             EARS_ONE = Some(Listeners::new([listener(0, &s.car)]));
         }
@@ -487,7 +498,11 @@ fn at_rate(snd: Snd, rate_hz: u32) -> u16 {
 fn start(snd: Snd, left: i16, right: i16, pitch_q12: u16, key: u16) -> Option<Handle> {
     // SAFETY: the table is written once, at boot.
     let sound = unsafe { (*(&raw const SOUNDS))[snd as usize] };
-    mixer().play(hw(), &sound, Play::new(left, right).with_pitch(pitch_q12).with_key(key))
+    mixer().play(
+        hw(),
+        &sound,
+        Play::new(left, right).with_pitch(pitch_q12).with_key(key),
+    )
 }
 
 /// A sound that is not in the arena: both ears the same.
@@ -512,7 +527,7 @@ fn at(
 /// Bring the SPU up, upload the samples, set the mixer up. Once, at boot.
 pub fn init() {
     spu::init();
-    spu::set_main_volume(Volume(0x3FFF), Volume(0x3FFF));
+    spu::set_main_volume(Volume(0x3fff), Volume(0x3fff));
     // Route the CD's own audio into the mix, for the XA music `music.rs`
     // plays. Without this the drive plays to nothing. Its level is the
     // mixer's music master, below.
@@ -746,7 +761,11 @@ pub fn ui(event: Ui) {
         Ui::Move => (Snd::UiMove, L_UI_MOVE, UNITY),
         // Up is a step brighter than as cooked and down a step darker, so
         // the direction of a slider can be heard as well as seen.
-        Ui::Adjust(dir) => (Snd::UiTick, L_UI_TICK, ratio(if dir >= 0 { 18 } else { 14 })),
+        Ui::Adjust(dir) => (
+            Snd::UiTick,
+            L_UI_TICK,
+            ratio(if dir >= 0 { 18 } else { 14 }),
+        ),
         Ui::Select => (Snd::UiSelect, L_UI_SELECT, UNITY),
         Ui::Back => (Snd::UiBack, L_UI_BACK, UNITY),
         Ui::Deny => (Snd::UiDeny, L_UI_DENY, UNITY),
@@ -837,7 +856,7 @@ pub fn update(s: &Sim, split: bool) {
     // clearance cracks, and pitch tracks it too: the same sample played a
     // fifth up reads as a harder strike rather than as a louder one.
     if s.hit > HIT_FLOOR {
-        let loud = ((s.hit - HIT_FLOOR).min(HIT_LOUD) * 0x2A00 / HIT_LOUD) as i16;
+        let loud = ((s.hit - HIT_FLOOR).min(HIT_LOUD) * 0x2a00 / HIT_LOUD) as i16;
         let rate = 30_000 + (s.hit.min(HIT_LOUD) as u32) * 6;
         let _ = at(
             Snd::Hit,
@@ -857,15 +876,35 @@ pub fn update(s: &Sim, split: bool) {
         // The pad whose timer was just set to its respawn is the one taken. A
         // big one fills the tank and sounds it.
         let taken = s.pad_timers.iter().zip(PADS.iter()).position(|(t, p)| {
-            *t == if p.big { PAD_BIG_TICKS } else { PAD_SMALL_TICKS }
+            *t == if p.big {
+                PAD_BIG_TICKS
+            } else {
+                PAD_SMALL_TICKS
+            }
         });
         if let Some(i) = taken {
             let p = &PADS[i];
             let pos = [uu(p.x), uu(30), uu(p.z)];
             if p.big {
-                let _ = at(Snd::PadBig, L_PAD_BIG, UNITY, 0, pos, &CURVE_PAD, ListenerRule::Loudest);
+                let _ = at(
+                    Snd::PadBig,
+                    L_PAD_BIG,
+                    UNITY,
+                    0,
+                    pos,
+                    &CURVE_PAD,
+                    ListenerRule::Loudest,
+                );
             } else {
-                let _ = at(Snd::Pad, 0x1E00, UNITY, 0, pos, &CURVE_PAD, ListenerRule::Loudest);
+                let _ = at(
+                    Snd::Pad,
+                    0x1e00,
+                    UNITY,
+                    0,
+                    pos,
+                    &CURVE_PAD,
+                    ListenerRule::Loudest,
+                );
             }
         }
     }
@@ -875,10 +914,14 @@ pub fn update(s: &Sim, split: bool) {
     // it reads as a nearby car-sized blast while the pitched-down goal still
     // owns the large arena-wide boom. It sounds where the wreck is.
     if s.demo {
-        let wreck = if s.car.demo_timer >= s.opponent.demo_timer { &s.car } else { &s.opponent };
+        let wreck = if s.car.demo_timer >= s.opponent.demo_timer {
+            &s.car
+        } else {
+            &s.opponent
+        };
         let _ = at(
             Snd::Goal,
-            0x1C00,
+            0x1c00,
             UNITY,
             0,
             at_car(wreck),
@@ -901,7 +944,15 @@ pub fn update(s: &Sim, split: bool) {
                 v.set_volume(hiss(l), hiss(r));
                 v.set_pitch(Pitch::for_frequency(8_000, 44_100));
                 spu::Voice::start(1 << V_BOOST[k]);
-                let _ = at(Snd::Boost, 0x1C00, UNITY, 0, pos, &CURVE_CAR, ListenerRule::Loudest);
+                let _ = at(
+                    Snd::Boost,
+                    0x1c00,
+                    UNITY,
+                    0,
+                    pos,
+                    &CURVE_CAR,
+                    ListenerRule::Loudest,
+                );
             } else {
                 spu::Voice::release(1 << V_BOOST[k]);
                 // The tank ran dry under the player's thumb: a sputter, so the
@@ -909,7 +960,15 @@ pub fn update(s: &Sim, split: bool) {
                 // Dry is less than one tick of fuel (the sim's BOOST_DRAIN, 36),
                 // not zero: the burn stops while a remainder is left in the tank.
                 if car.boost < BOOST_DRY {
-                    let _ = at(Snd::Empty, L_EMPTY, UNITY, 0, pos, &CURVE_CAR, ListenerRule::Loudest);
+                    let _ = at(
+                        Snd::Empty,
+                        L_EMPTY,
+                        UNITY,
+                        0,
+                        pos,
+                        &CURVE_CAR,
+                        ListenerRule::Loudest,
+                    );
                 }
             }
             seen.cars[k].boosting = car.boosting;
@@ -925,7 +984,7 @@ pub fn update(s: &Sim, split: bool) {
     if freeze > 0 && unsafe { LAST_FREEZE } == 0 {
         let _ = at(
             Snd::Goal,
-            0x1CC0,
+            0x1cc0,
             at_rate(Snd::Goal, 32_000),
             0,
             ball,
@@ -941,7 +1000,15 @@ pub fn update(s: &Sim, split: bool) {
         let v = s.ball.v;
         let pace = (v.x.abs() + v.y.abs() + v.z.abs()).clamp(NET_SOFT, NET_HARD);
         let level = L_NET as i32 * pace / NET_HARD;
-        let _ = at(Snd::Net, level as i16, UNITY, 0, ball, &CURVE_GOAL, ListenerRule::Centroid);
+        let _ = at(
+            Snd::Net,
+            level as i16,
+            UNITY,
+            0,
+            ball,
+            &CURVE_GOAL,
+            ListenerRule::Centroid,
+        );
     }
     if freeze == CHEER_AT {
         let _ = flat(Snd::Cheer, L_CHEER, UNITY);
@@ -1020,7 +1087,15 @@ fn car_sounds(s: &Sim, seen: &mut Seen, live: bool) {
 
         if car.supersonic != cs.supersonic {
             if car.supersonic {
-                let _ = at(Snd::Sonic, L_SONIC, UNITY, 0, pos, &CURVE_CAR, ListenerRule::Loudest);
+                let _ = at(
+                    Snd::Sonic,
+                    L_SONIC,
+                    UNITY,
+                    0,
+                    pos,
+                    &CURVE_CAR,
+                    ListenerRule::Loudest,
+                );
             }
             cs.supersonic = car.supersonic;
         }
@@ -1034,7 +1109,15 @@ fn car_sounds(s: &Sim, seen: &mut Seen, live: bool) {
     if ((bump[0] && !seen.cars[0].bump) || (bump[1] && !seen.cars[1].bump)) && !wreck {
         let (a, b) = (&s.car.p, &s.opponent.p);
         let mid = [(a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2];
-        let _ = at(Snd::Bump, L_BUMP, UNITY, 0, mid, &CURVE_BALL, ListenerRule::Loudest);
+        let _ = at(
+            Snd::Bump,
+            L_BUMP,
+            UNITY,
+            0,
+            mid,
+            &CURVE_BALL,
+            ListenerRule::Loudest,
+        );
     }
     seen.cars[0].bump = bump[0];
     seen.cars[1].bump = bump[1];
@@ -1071,7 +1154,15 @@ fn ball_sounds(s: &Sim, seen: &mut Seen, live: bool) {
     let p = s.ball.p;
     let pos = [p.x, p.y, p.z];
     let bounce = |pitch: u16| {
-        let _ = at(Snd::Bounce, level, pitch, 0, pos, &CURVE_BALL, ListenerRule::Loudest);
+        let _ = at(
+            Snd::Bounce,
+            level,
+            pitch,
+            0,
+            pos,
+            &CURVE_BALL,
+            ListenerRule::Loudest,
+        );
     };
     if tz > 0
         && p.z.abs() > uu(HALF_Z - 220)
@@ -1253,10 +1344,10 @@ pub fn new_match() {
 pub mod sound_test {
     use super::*;
 
-    const SPU: u32 = 0x1F80_1C00;
+    const SPU: u32 = 0x1f80_1c00;
     /// Voices the test follows, with their names, for one test.
     const WATCH: usize = 5;
-    static mut VOICE: [u8; WATCH] = [0xFF; WATCH];
+    static mut VOICE: [u8; WATCH] = [0xff; WATCH];
     static mut NAME: [&str; WATCH] = [""; WATCH];
     static mut AT: u32 = 0;
     static mut LIVE: bool = false;
@@ -1271,7 +1362,7 @@ pub mod sound_test {
 
     fn watch(i: usize, name: &'static str, h: Option<Handle>) {
         unsafe {
-            VOICE[i] = h.map_or(0xFF, |h| h.voice());
+            VOICE[i] = h.map_or(0xff, |h| h.voice());
             NAME[i] = name;
         }
     }
@@ -1280,7 +1371,7 @@ pub mod sound_test {
     /// (5). Levels are the game's own.
     pub fn play(which: u8) {
         unsafe {
-            VOICE = [0xFF; WATCH];
+            VOICE = [0xff; WATCH];
             NAME = [""; WATCH];
             SEEN = [[[0; 4]; WATCH]; 2];
             KONS = KONS.wrapping_add(1);
@@ -1288,13 +1379,21 @@ pub mod sound_test {
             LIVE = true;
         }
         match which {
-            0 => watch(0, "BOOM", flat(Snd::Goal, 0x1CC0, at_rate(Snd::Goal, 32_000))),
+            0 => watch(
+                0,
+                "BOOM",
+                flat(Snd::Goal, 0x1cc0, at_rate(Snd::Goal, 32_000)),
+            ),
             1 => watch(0, "HORN", flat(Snd::Horn, L_HORN, UNITY)),
             2 => watch(0, "ROAR", flat(Snd::Roar, L_ROAR, UNITY)),
             3 => watch(0, "NET", flat(Snd::Net, L_NET, UNITY)),
             4 => watch(0, "BEEP", flat(Snd::Beep, L_BEEP, UNITY)),
             5 => {
-                watch(0, "BOOM", flat(Snd::Goal, 0x1CC0, at_rate(Snd::Goal, 32_000)));
+                watch(
+                    0,
+                    "BOOM",
+                    flat(Snd::Goal, 0x1cc0, at_rate(Snd::Goal, 32_000)),
+                );
                 watch(1, "HORN", flat(Snd::Horn, L_HORN, UNITY));
                 watch(2, "ROAR", flat(Snd::Roar, L_ROAR, UNITY));
                 watch(3, "NET", flat(Snd::Net, L_NET, UNITY));
@@ -1321,17 +1420,17 @@ pub mod sound_test {
                 }
                 return;
             };
-            let endx = rd(0x1F80_1E9C) as u32 | ((rd(0x1F80_1E9E) as u32) << 16);
+            let endx = rd(0x1f80_1e9c) as u32 | ((rd(0x1f80_1e9e) as u32) << 16);
             for i in 0..WATCH {
                 let v = VOICE[i] as u32;
                 if v >= 24 {
                     continue;
                 }
                 SEEN[slot][i] = [
-                    rd(SPU + v * 16 + 0xC),
+                    rd(SPU + v * 16 + 0xc),
                     ((endx >> v) & 1) as u16,
-                    rd(0x1F80_1E00 + v * 4),
-                    rd(0x1F80_1E00 + v * 4 + 2),
+                    rd(0x1f80_1e00 + v * 4),
+                    rd(0x1f80_1e00 + v * 4 + 2),
                 ];
             }
         }
@@ -1339,7 +1438,7 @@ pub mod sound_test {
 
     fn hex(line: &mut [u8; 48], at: &mut usize, v: u16, digits: usize) {
         for d in (0..digits).rev() {
-            let n = ((v >> (d * 4)) & 0xF) as u8;
+            let n = ((v >> (d * 4)) & 0xf) as u8;
             line[*at] = if n < 10 { b'0' + n } else { b'A' + n - 10 };
             *at += 1;
         }
@@ -1366,7 +1465,7 @@ pub mod sound_test {
             text(&mut l[0], &mut at, " CD ");
             hex(&mut l[0], &mut at, MUSIC_LEVEL as u16, 4);
             text(&mut l[0], &mut at, " MAIN ");
-            hex(&mut l[0], &mut at, rd(0x1F80_1DB8), 4);
+            hex(&mut l[0], &mut at, rd(0x1f80_1db8), 4);
             text(&mut l[0], &mut at, " KON ");
             hex(&mut l[0], &mut at, KONS, 2);
             l[1] = [b' '; 48];
