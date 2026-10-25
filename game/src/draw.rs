@@ -35,12 +35,12 @@ use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedGouraud, QuadTexturedMate
 use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, project_vertex_scheduled as project};
-use psx_gte::{mfc2, mtc2};
+use psx_gte::{read_data, write_data};
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
 #[cfg(feature = "profile")]
 use psx_telemetry as telemetry;
-use psx_vram::{upload_bytes, Clut, TexDepth, Tpage, VramRect};
+use psx_vram::{upload_bytes, Clut, TextureDepth, TexturePage, VramRect};
 use sim::{Sim, FP};
 
 /// Ordering-table depth. The arena is ~13000 uu corner to corner, so this is
@@ -1856,9 +1856,9 @@ fn corner_slots(sx: i32, sz: i32) -> [(i32, i32, i32, i32); SLOTS] {
 // two open meshes share the asset without trying to share a sixteen-colour
 // palette.
 
-const TEX_TPAGE: Tpage = Tpage::new(384, 0, TexDepth::Bit4);
-const MARKED_LEFT_TPAGE: Tpage = Tpage::new(448, 0, TexDepth::Bit4);
-const MARKED_RIGHT_TPAGE: Tpage = Tpage::new(576, 0, TexDepth::Bit4);
+const TEX_TPAGE: TexturePage = TexturePage::new(384, 0, TextureDepth::Bit4);
+const MARKED_LEFT_TPAGE: TexturePage = TexturePage::new(448, 0, TextureDepth::Bit4);
+const MARKED_RIGHT_TPAGE: TexturePage = TexturePage::new(576, 0, TextureDepth::Bit4);
 /// One palette each. Sharing sixteen colours between grass and wall left six
 /// for the pitch, which is the largest surface in the game; 4bpp lets every
 /// quad name its own CLUT, so they get sixteen apiece for nothing.
@@ -1892,7 +1892,7 @@ const BALL_U0: u8 = 0;
 const BALL_V0: u8 = GLOW_V0 + GLOW_W + 1;
 const BALL_ROW_V: [u8; BALL_LAT + 1] = [0, 13, 26, 38, 51, 64];
 const BALL_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(BALL_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(BALL_CLUT.uv_word(), TEX_TPAGE.uv_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
 /// A plain radial falloff for every other light sprite.
@@ -1931,22 +1931,22 @@ const fn uvw(u: u8, v: u8) -> u16 {
 /// reads whatever GP0(E1) was last set to, which is what
 /// [`apply_arena_draw_mode`] is for.
 const ARENA_MATERIAL: TextureMaterial =
-    TextureMaterial::new(0, TEX_TPAGE.uv_tpage_word(0)).with_dither(true);
+    TextureMaterial::new(0, TEX_TPAGE.uv_word(0)).with_dither(true);
 
 /// Prepacked packet words, one per palette. The floor and the walls are the
 /// only textured geometry in the game and neither ever changes material, so
 /// the CLUT / tpage / command words are resolved at compile time and every
 /// quad only fills in positions, UVs and four colours.
 const GRASS_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(GRASS_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(GRASS_CLUT.uv_word(), TEX_TPAGE.uv_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
 const WALL_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(TEX_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(TEX_CLUT.uv_word(), TEX_TPAGE.uv_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
 const COVER_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(COVER_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(COVER_CLUT.uv_word(), TEX_TPAGE.uv_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material();
 /// The crowd tile (tools/cook-arena `CROWD_*`): tiers of fans under the
@@ -1956,10 +1956,10 @@ const CROWD_V0: u8 = 88;
 const CROWD_H: u8 = 40;
 const CROWD_CLUTS: [Clut; 2] = [Clut::new(384, 265), Clut::new(384, 266)];
 const CROWD_PACKETS: [TexturedGouraudPacketMaterial; 2] = [
-    TextureMaterial::new(CROWD_CLUTS[0].uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(CROWD_CLUTS[0].uv_word(), TEX_TPAGE.uv_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material(),
-    TextureMaterial::new(CROWD_CLUTS[1].uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(CROWD_CLUTS[1].uv_word(), TEX_TPAGE.uv_word(0))
         .with_dither(true)
         .textured_gouraud_packet_material(),
 ];
@@ -1967,7 +1967,7 @@ const CROWD_PACKETS: [TexturedGouraudPacketMaterial; 2] = [
 /// lit object can only ever brighten what it covers. The blend lives in the
 /// material, which owns the tpage word's blend bits.
 const GLOW_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(GLOW_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(GLOW_CLUT.uv_word(), TEX_TPAGE.uv_word(0))
         .with_blend_mode(BlendMode::Add)
         .with_dither(true)
         .textured_gouraud_packet_material();
@@ -3683,7 +3683,7 @@ fn car_materials_for(blob: &[u8], out: &mut [(u8, u8, u8); CAR_SLOT_VERTS]) {
     let Ok(mesh) = Mesh::from_bytes(blob) else {
         return;
     };
-    let verts = (mesh.vert_count() as usize).min(CAR_SLOT_VERTS);
+    let verts = (mesh.vertex_count() as usize).min(CAR_SLOT_VERTS);
     let mut claimed = [false; CAR_SLOT_VERTS];
     for f in 0..mesh.face_count() {
         let Some(colour) = mesh.face_color(f) else {
@@ -3714,7 +3714,7 @@ fn build_car_wheel_centres() {
         let mut minimum = [[i32::MAX; 3]; 4];
         let mut maximum = [[i32::MIN; 3]; 4];
         let mut found = [false; 4];
-        let count = (mesh.vert_count() as usize).min(slots.len());
+        let count = (mesh.vertex_count() as usize).min(slots.len());
         for vertex in 0..count {
             let slot = slots[vertex];
             if slot == WHEEL_NONE || slot >= 4 {
@@ -3783,7 +3783,7 @@ fn decode_car_geometry(blob: &[u8], which: usize) {
     let Ok(mesh) = Mesh::from_bytes(blob) else {
         return;
     };
-    let count = (mesh.vert_count() as usize).min(CAR_SLOT_VERTS);
+    let count = (mesh.vertex_count() as usize).min(CAR_SLOT_VERTS);
     for i in 0..count {
         unsafe {
             let v = mesh.vertex(i as u16);
@@ -4173,7 +4173,7 @@ fn submit_car_faces<'a>(
 /// block: positions `p` and normals `n` as packed (XY, Z) register words,
 /// `rgbc` the material. Returns (SXY0-2, SZ1-3, RGB0-2).
 ///
-/// The GTE sees exactly what the separate `mtc2!`/`mfc2!` sequence gave it:
+/// The GTE sees exactly what the separate `write_data!`/`read_data!` sequence gave it:
 /// the same register writes in the same order, RTPT straight after the last
 /// vertex write and NCCT straight after RGBC, as before. What goes is the
 /// glue around each transfer, a `move` into `$8` before every write and a
@@ -4295,41 +4295,45 @@ fn project_car_animated(which: usize, materials: &[u32; CAR_MAX_VERTS], slots: &
             vi += 3;
             continue;
         }
-        mtc2!(0, a.0);
-        mtc2!(1, a.1);
-        mtc2!(2, b.0);
-        mtc2!(3, b.1);
-        mtc2!(4, c.0);
-        mtc2!(5, c.1);
+        write_data!(0, a.0);
+        write_data!(1, a.1);
+        write_data!(2, b.0);
+        write_data!(3, b.1);
+        write_data!(4, c.0);
+        write_data!(5, c.1);
         // SAFETY: V0-V2 loaded; the car's rotation, translation and the
         // projection were loaded by `draw_cars`.
-        unsafe { psx_gte::ops::rtpt() };
-        let sxy = [mfc2!(12), mfc2!(13), mfc2!(14)];
-        let sz = [mfc2!(17) & 0xffff, mfc2!(18) & 0xffff, mfc2!(19) & 0xffff];
+        unsafe { psx_gte::ops::project_triple() };
+        let sxy = [read_data!(12), read_data!(13), read_data!(14)];
+        let sz = [
+            read_data!(17) & 0xffff,
+            read_data!(18) & 0xffff,
+            read_data!(19) & 0xffff,
+        ];
         let rgb = if ma == mb && mb == mc {
-            mtc2!(0, a.2);
-            mtc2!(1, a.3);
-            mtc2!(2, b.2);
-            mtc2!(3, b.3);
-            mtc2!(4, c.2);
-            mtc2!(5, c.3);
-            mtc2!(6, ma);
+            write_data!(0, a.2);
+            write_data!(1, a.3);
+            write_data!(2, b.2);
+            write_data!(3, b.3);
+            write_data!(4, c.2);
+            write_data!(5, c.3);
+            write_data!(6, ma);
             // SAFETY: V0-V2 hold the normals, RGBC the shared material, and
             // the light rig was loaded by `draw_cars`.
-            unsafe { psx_gte::ops::ncct() };
-            [mfc2!(20), mfc2!(21), mfc2!(22)]
+            unsafe { psx_gte::ops::light_color_triple() };
+            [read_data!(20), read_data!(21), read_data!(22)]
         } else {
             let mut rgb = [0u32; 3];
             for (k, (n, m)) in [((a.2, a.3), ma), ((b.2, b.3), mb), ((c.2, c.3), mc)]
                 .into_iter()
                 .enumerate()
             {
-                mtc2!(0, n.0);
-                mtc2!(1, n.1);
-                mtc2!(6, m);
+                write_data!(0, n.0);
+                write_data!(1, n.1);
+                write_data!(6, m);
                 // SAFETY: as above, one normal at a time.
-                unsafe { psx_gte::ops::nccs() };
-                rgb[k] = mfc2!(22);
+                unsafe { psx_gte::ops::light_color_single() };
+                rgb[k] = read_data!(22);
             }
             rgb
         };
@@ -4344,19 +4348,19 @@ fn project_car_animated(which: usize, materials: &[u32; CAR_MAX_VERTS], slots: &
     }
     while vi < count {
         let a = vertex(vi);
-        mtc2!(0, a.0);
-        mtc2!(1, a.1);
+        write_data!(0, a.0);
+        write_data!(1, a.1);
         // SAFETY: V0 loaded; scene state as above.
-        unsafe { psx_gte::ops::rtps() };
-        let (xy, sz) = (mfc2!(14), mfc2!(19) & 0xffff);
-        mtc2!(0, a.2);
-        mtc2!(1, a.3);
-        mtc2!(6, materials[vi]);
+        unsafe { psx_gte::ops::project_single() };
+        let (xy, sz) = (read_data!(14), read_data!(19) & 0xffff);
+        write_data!(0, a.2);
+        write_data!(1, a.3);
+        write_data!(6, materials[vi]);
         // SAFETY: V0 holds the normal, RGBC the material.
-        unsafe { psx_gte::ops::nccs() };
+        unsafe { psx_gte::ops::light_color_single() };
         proj[vi] = CarLit {
             xy,
-            rgb: mfc2!(22),
+            rgb: read_data!(22),
             sz,
         };
         vi += 1;
@@ -9496,12 +9500,12 @@ const GOAL_BURST_SCALE: i32 = 4096 * 7;
 const BURST_GRAVITY: i32 = 128;
 
 const FX_SMOKE_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(GLOW_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(GLOW_CLUT.uv_word(), TEX_TPAGE.uv_word(0))
         .with_blend_mode(BlendMode::Subtract)
         .with_dither(true)
         .textured_gouraud_packet_material();
 const FX_RING_PACKET: TexturedGouraudPacketMaterial =
-    TextureMaterial::new(RING_CLUT.uv_clut_word(), TEX_TPAGE.uv_tpage_word(0))
+    TextureMaterial::new(RING_CLUT.uv_word(), TEX_TPAGE.uv_word(0))
         .with_blend_mode(BlendMode::Add)
         .with_dither(true)
         .textured_gouraud_packet_material();

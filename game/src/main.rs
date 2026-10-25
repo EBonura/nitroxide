@@ -9,7 +9,7 @@
 #![no_std]
 #![no_main]
 #![allow(static_mut_refs)]
-// The GTE register macros (psx_gte::mtc2!/mfc2!) are inline assembly, which is
+// The GTE register macros (psx_gte::write_data!/read_data!) are inline assembly, which is
 // still feature-gated on MIPS; draw.rs drives the car projection with them.
 #![cfg_attr(target_arch = "mips", feature(asm_experimental_arch))]
 
@@ -26,7 +26,7 @@ use psx_gpu::Gpu;
 use psx_math::fmt::{u32_dec, U32_DEC_MAX};
 use psx_math::sincos::{cos_q12, sin_q12};
 use psx_settings::Profile;
-use psx_vram::{Clut, TexDepth, Tpage};
+use psx_vram::{Clut, TextureDepth, TexturePage};
 
 use nitroxide_sim::{
     DemoMatch, Input, Sim, Team, WinCondition, BOOST_MAX_PIPS, BOOST_SCALE, DEMO_MATCHES,
@@ -54,16 +54,16 @@ const CAM_BALL_DEFAULT: bool = cfg!(feature = "cam-ball-default");
 /// Two faces, the way most games do it: a wide display one for headings and a
 /// compact one for anything you read at a glance mid-match. Kenney Rocket is
 /// 18 px wide, which is right for a title and far too wide for a clock.
-const DISPLAY_TPAGE: Tpage = Tpage::new(320, 0, TexDepth::Bit4);
+const DISPLAY_TPAGE: TexturePage = TexturePage::new(320, 0, TextureDepth::Bit4);
 const DISPLAY_CLUT: Clut = Clut::new(320, 256);
 /// Clear of the display atlas at 320 and the arena's own texture page at 384.
-const HUD_TPAGE: Tpage = Tpage::new(512, 0, TexDepth::Bit4);
+const HUD_TPAGE: TexturePage = TexturePage::new(512, 0, TextureDepth::Bit4);
 const HUD_CLUT: Clut = Clut::new(512, 256);
 
 /// Bonnie Studios intro logo: 128x128 4bpp in an otherwise free VRAM column,
 /// its CLUT in the spare row under the HUD's. Same art and placement family as
 /// VoXide and the Celeste collection.
-const BONNIE_TPAGE: Tpage = Tpage::new(896, 0, TexDepth::Bit4);
+const BONNIE_TPAGE: TexturePage = TexturePage::new(896, 0, TextureDepth::Bit4);
 const BONNIE_CLUT: Clut = Clut::new(896, 256);
 
 /// Intro cadence, matched to the other games on the demo disc: fade in, hold,
@@ -1787,8 +1787,8 @@ impl NitroXide {
         psx_gpu::draw_quad_textured(
             [(112, 34), (208, 34), (112, 130), (208, 130)],
             [(0, 0), (128, 0), (0, 128), (128, 128)],
-            BONNIE_CLUT.uv_clut_word(),
-            BONNIE_TPAGE.uv_tpage_word(0),
+            BONNIE_CLUT.uv_word(),
+            BONNIE_TPAGE.uv_word(0),
             (l, l, l),
         );
 
