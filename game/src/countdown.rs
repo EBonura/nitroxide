@@ -29,7 +29,17 @@ pub fn draw(gpu: &mut Gpu, font: &FontAtlas, sim: &Sim, held: bool, split: bool)
     if held || sim.goal_freeze > 0 {
         return;
     }
-    let (cx, cy) = (160, if split { 120 } else { 78 });
+    // One in the middle of each view: the whole screen's, or each half's.
+    if split {
+        draw_in(gpu, font, sim, 160, 60, true);
+        draw_in(gpu, font, sim, 160, 180, true);
+    } else {
+        draw_in(gpu, font, sim, 160, 78, false);
+    }
+}
+
+/// The countdown or the burst centred on (`cx`, `cy`).
+fn draw_in(gpu: &mut Gpu, font: &FontAtlas, sim: &Sim, cx: i32, cy: i32, split: bool) {
     let rest = if split { 640 } else { 1024 };
     if sim.kickoff_hold > 0 {
         let hold = i32::from(sim.kickoff_hold);
@@ -99,7 +109,10 @@ fn big_text(font: &FontAtlas, text: &str, cx: i32, cy: i32, scale: i32, tint: Rg
     let scale = scale.clamp(16, 2000) as u16;
     let w = i32::from(font.text_width(text)) * i32::from(scale) / 256;
     let h = i32::from(font.line_height()) * i32::from(scale) / 256;
-    let (x, y) = ((cx - w / 2) as i16, (cy - h / 2) as i16);
+    // The advance of the last glyph ends in a gap, which is not ink: shift the
+    // word back by half of it (measured at about 5 pixels at four times size).
+    let gap = i32::from(scale) * 5 / 2048;
+    let (x, y) = ((cx - w / 2 + gap) as i16, (cy - h / 2) as i16);
     let ink = (tint.0.div_ceil(2), tint.1.div_ceil(2), tint.2.div_ceil(2));
     let o = if scale > 600 { 2 } else { 1 };
     for (dx, dy) in [(o, o)] {

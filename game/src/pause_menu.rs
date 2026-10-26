@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! The pause menu: a dark slanted panel with a header band, the live score, the
-//! match in a line, slanted buttons with the title menu's cyan selection bar and
-//! a hint bar along the foot.
+//! The pause menu: a dark slanted panel with a header band, the live score and
+//! slanted buttons with the title menu's cyan selection bar.
 //!
 //! It builds in out of tiles, the sweep of [`crate::sweep`] clipped to the
 //! panel's own area, with the match still in view around it and dimmed a little,
@@ -16,14 +15,14 @@ use psx_math::fmt::{u32_dec, U32_DEC_MAX};
 
 use crate::draw::{self, seat_signal};
 use crate::fx::{self, Rgb, ONE};
-use crate::{sweep, NitroXide, PauseRow, PAUSE_HALF, PAUSE_TICKS, ROW_PRACTICE};
+use crate::{sweep, NitroXide, PauseRow, PAUSE_HALF, PAUSE_TICKS};
 
 /// The panel's rectangle, on the 16 pixel tile grid so a sweep can cover it
 /// exactly: 14 by 13 tiles.
 const PX: i32 = 48;
 const PY: i32 = 16;
 const PW: i32 = 224;
-const PH: i32 = 208;
+const PH: i32 = 192;
 const AREA: sweep::Area = sweep::Area {
     col: PX / 16,
     row: PY / 16,
@@ -88,7 +87,6 @@ impl NitroXide {
     }
 
     fn draw_panel(&self, gpu: &mut Gpu, display: &FontAtlas, hud: &FontAtlas, tick: u32) {
-        let right = PX + PW;
         // The plate: a dark border, a lighter body, both leaning like the buttons.
         let w = PW - SLANT;
         fx::slanted(gpu, PX, PY, w, PH, SLANT, (10, 12, 22));
@@ -110,51 +108,15 @@ impl NitroXide {
             (26, 30, 48),
         );
         fx::slanted(gpu, hx, hy + hh - 2, w - 22, 2, SLANT / 2, CYAN_HI);
-        Self::shadowed(
+        // Centred on the band, whose middle leans with its slant.
+        let mid = hx + (w - 22) / 2 + SLANT / 4;
+        Self::centred(
             display,
-            (hx + 14) as i16,
+            mid as i16,
             (hy + (hh - 10) / 2 - 1) as i16,
             "PAUSED",
             LIT,
         );
-        // On the right of the band, two lines: the rule, and the arena and who
-        // is playing.
-        let mut dec = [0u8; U32_DEC_MAX];
-        let mut clock = [b'0'; 4];
-        let (rule, target) = match self.sim.win_condition {
-            WinCondition::TimeLimit(ticks) => {
-                let secs = u32::from(ticks) / 60;
-                clock[0] = b'0' + (secs / 60) as u8;
-                clock[1] = b':';
-                clock[2] = b'0' + ((secs % 60) / 10) as u8;
-                clock[3] = b'0' + ((secs % 60) % 10) as u8;
-                // SAFETY: four ASCII bytes.
-                ("TIMED", unsafe { core::str::from_utf8_unchecked(&clock) })
-            }
-            WinCondition::GoalLimit(n) => ("FIRST TO", u32_dec(&mut dec, n as u32)),
-        };
-        let tw = hud.text_width(target) as i32;
-        let rw = hud.text_width(rule) as i32;
-        let sx = right - 26 - tw;
-        Self::shadowed(hud, (sx - rw - 5) as i16, (hy + 4) as i16, rule, IDLE);
-        Self::shadowed(hud, sx as i16, (hy + 4) as i16, target, (255, 220, 120));
-        let arena = match self.arena_time {
-            draw::ArenaTime::Day => "DAY",
-            draw::ArenaTime::Sunset => "SUNSET",
-            draw::ArenaTime::Night => "NIGHT",
-        };
-        let who = if self.two_player {
-            "VERSUS"
-        } else if self.menu == ROW_PRACTICE {
-            "PRACTICE"
-        } else {
-            "VS CPU"
-        };
-        let (aw, ww) = (hud.text_width(arena) as i32, hud.text_width(who) as i32);
-        let wx = right - 26 - ww;
-        Self::shadowed(hud, wx as i16, (hy + 15) as i16, who, IDLE);
-        Self::shadowed(hud, (wx - aw - 8) as i16, (hy + 15) as i16, arena, IDLE);
-
         self.draw_score(gpu, hud);
 
         // The buttons, or the question that replaces them.
@@ -204,16 +166,6 @@ impl NitroXide {
                 );
             }
         }
-
-        // The hint bar.
-        let hy = PY + PH - 16;
-        fx::slanted(gpu, PX + 14, hy - 5, w - 24, 1, SLANT / 2, (70, 80, 110));
-        let hint = if self.pause_confirm.is_some() {
-            "X CONFIRM     O CANCEL"
-        } else {
-            "X SELECT     O BACK     START RESUME"
-        };
-        Self::centred(hud, (PX + PW / 2) as i16, hy as i16, hint, IDLE);
     }
 
     /// The live score: the two teams' colours at the ends, the clock or the
