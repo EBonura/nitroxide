@@ -34,6 +34,15 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 180
+[[step]]
 press = ["r2", "circle"]
 hold = 160
 [[step]]
@@ -128,6 +137,15 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 180
+[[step]]
 press = ["r2", "circle"]
 hold = 160
 [[step]]
@@ -154,6 +172,11 @@ value = 3
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
+# Any button skips the fly-over before the countdown.
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
 timeout = 190
 [[step]]
@@ -165,6 +188,11 @@ timeout = 400
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
+[[step]]
+# Any button skips the fly-over before the countdown.
+press = ["cross"]
+hold = 4
+wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
 timeout = 190
@@ -247,6 +275,15 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 180
+[[step]]
 press = ["r2", "circle"]
 hold = 160
 [[step]]
@@ -273,6 +310,11 @@ value = 3
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
+# Any button skips the fly-over before the countdown.
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
 timeout = 190
 [[step]]
@@ -284,6 +326,11 @@ timeout = 400
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
+[[step]]
+# Any button skips the fly-over before the countdown.
+press = ["cross"]
+hold = 4
+wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
 timeout = 190
@@ -297,6 +344,11 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
+# Any button skips the fly-over before the countdown.
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
 timeout = 190
 [[step]]
@@ -308,6 +360,11 @@ timeout = 400
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
+[[step]]
+# Any button skips the fly-over before the countdown.
+press = ["cross"]
+hold = 4
+wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
 timeout = 190
@@ -390,8 +447,14 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
-# The tile sweep into the match swaps the screen after fifteen ticks.
-wait = 24
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 186
 checkpoint = "timed-one-timed-kickoff"
 golden = false
 [[step.assert]]
@@ -465,8 +528,14 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
-# The tile sweep into the match swaps the screen after fifteen ticks.
-wait = 24
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 186
 checkpoint = "timed-three-timed-kickoff"
 golden = false
 [[step.assert]]
@@ -540,8 +609,14 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
-# The tile sweep into the match swaps the screen after fifteen ticks.
-wait = 24
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 186
 checkpoint = "timed-five-timed-kickoff"
 golden = false
 [[step.assert]]
@@ -620,8 +695,14 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
-# The tile sweep into the match swaps the screen after fifteen ticks.
-wait = 24
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 186
 checkpoint = "practice-timed-timed-kickoff"
 golden = false
 [[step.assert]]

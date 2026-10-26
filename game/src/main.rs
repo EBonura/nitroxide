@@ -38,6 +38,7 @@ mod settings_menu;
 use settings_menu::{Action as SettingsAction, SettingsRow};
 mod bonnie;
 mod boost_meter;
+mod countdown;
 #[cfg(feature = "diag-log")]
 mod diaglog;
 mod draw;
@@ -46,6 +47,7 @@ mod gate_state;
 mod music;
 #[allow(dead_code)]
 mod music_map;
+mod pause_menu;
 mod sweep;
 
 /// Whether a match starts in ball cam. Off, as shipped: a dev option
@@ -149,6 +151,35 @@ enum Phase {
     /// any press. See [`DEMO_SHOWS`].
     Demo,
 }
+
+/// Ticks of the camera fly-over before each kickoff's countdown: a second and
+/// a half, long enough to see the arena and short enough to be no wait.
+const KICK_INTRO_TICKS: u16 = 96;
+/// Ticks the pause panel takes to build in out of tiles, and the same again to
+/// break up when the match resumes. It is a tile sweep of the panel's own area,
+/// the match staying in view around it.
+const PAUSE_TICKS: u8 = 20;
+/// Half of it: tiles cover the panel's area for this long, the panel is swapped
+/// in or out under them, and they uncover it for as long again.
+const PAUSE_HALF: u8 = PAUSE_TICKS / 2;
+/// How much the match is darkened behind the pause menu, of 255.
+const PAUSE_DIM: i32 = 80;
+/// What cuts the fly-over short: every button but Start (which pauses) and
+/// Select (the controls page).
+const SKIP_BUTTONS: [u16; 12] = [
+    button::CROSS,
+    button::CIRCLE,
+    button::SQUARE,
+    button::TRIANGLE,
+    button::L1,
+    button::L2,
+    button::R1,
+    button::R2,
+    button::UP,
+    button::DOWN,
+    button::LEFT,
+    button::RIGHT,
+];
 
 /// Ticks of no input on a menu page before the attract demo starts:
 /// thirty seconds, about where WipEout's sits.
@@ -562,6 +593,8 @@ enum PauseRow {
     Resume,
     Swap,
     Settings,
+    Controls,
+    Restart,
     Quit,
 }
 
@@ -669,6 +702,19 @@ struct NitroXide {
     sweep: Option<sweep::Sweep>,
     /// What each seat's boost meter is showing.
     meters: boost_meter::Meters,
+    /// Ticks left of the camera fly-over before a kickoff's countdown starts.
+    /// The sim stands still while it runs, and any button ends it.
+    kick_intro: u16,
+    /// Ticks into the pause panel's tile sweep, `0..=PAUSE_TICKS`; it rests at
+    /// the top while the menu is open.
+    pause_t: u8,
+    /// The pause menu is on its way out after Resume.
+    pause_closing: bool,
+    /// A Yes or No question is up for Restart or Quit, and which of the two.
+    pause_confirm: Option<PauseRow>,
+    confirm_yes: bool,
+    /// The tick the pause selection last moved on: the cyan bar sweeps from it.
+    pause_at: u32,
 }
 
 /// The now-playing disc's three fans as rim offsets from its centre, in
@@ -805,6 +851,12 @@ impl NitroXide {
             idle: 0,
             sweep: None,
             meters: boost_meter::Meters::new(),
+            kick_intro: 0,
+            pause_t: 0,
+            pause_closing: false,
+            pause_confirm: None,
+            confirm_yes: false,
+            pause_at: 0,
             demo: DemoState {
                 show: 0,
                 t: 0,
@@ -925,11 +977,31 @@ impl NitroXide {
                 PauseRow::Resume,
                 PauseRow::Swap,
                 PauseRow::Settings,
+                PauseRow::Controls,
+                PauseRow::Restart,
                 PauseRow::Quit,
             ]
         } else {
-            &[PauseRow::Resume, PauseRow::Settings, PauseRow::Quit]
+            &[
+                PauseRow::Resume,
+                PauseRow::Settings,
+                PauseRow::Controls,
+                PauseRow::Restart,
+                PauseRow::Quit,
+            ]
         }
+    }
+
+    /// The panel is built and the pads may use it: it has been swapped in under
+    /// the tiles and is not on its way out.
+    fn pause_ready(&self) -> bool {
+        !self.pause_closing && self.pause_t >= PAUSE_HALF
+    }
+
+    /// Start taking the pause panel down.
+    fn pause_resume(&mut self) {
+        self.pause_closing = true;
+        self.pause_t = 0;
     }
 
     /// The settings rows on offer, in order. The music rows only appear when
@@ -1267,8 +1339,11 @@ impl NitroXide {
     fn start_match(&mut self) {
         // The previous match is over: forget it, and say go.
         audio::new_match();
-        audio::ui(audio::Ui::Go);
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
+        // The match opens like every restart: the fly-over, then three, two,
+        // one and the go, which the countdown's own sounds carry.
+        self.sim.kickoff_hold = nitroxide_sim::KICKOFF_HOLD_TICKS;
+        self.kick_intro = KICK_INTRO_TICKS;
         // The meters start from this match's tanks, not the last one's.
         self.meters = boost_meter::Meters::new();
         self.meters.track(&self.sim);
@@ -1332,13 +1407,14 @@ impl NitroXide {
     /// What a tile sweep was hiding, done on the tick the tiles are all down.
     fn apply_change(&mut self, change: sweep::Change, tick: u32) {
         match change {
-            sweep::Change::Pause => {
-                self.paused = true;
-                self.pause_row = 0;
+            sweep::Change::Restart => {
+                self.paused = false;
+                self.pause_closing = false;
+                self.start_match();
             }
-            sweep::Change::Resume => self.paused = false,
             sweep::Change::Quit => {
                 self.paused = false;
+                self.pause_closing = false;
                 self.to_title(tick);
             }
             sweep::Change::Kickoff => self.start_match(),
@@ -1348,6 +1424,7 @@ impl NitroXide {
 
     /// Back to the front end, with the highlight sweeping in from scratch.
     fn to_title(&mut self, tick: u32) {
+        self.kick_intro = 0;
         self.menu_at = tick;
         self.idle = 0;
         self.settings = None;
@@ -1651,31 +1728,11 @@ impl NitroXide {
         }
     }
 
-    /// The kickoff countdown's number: 3, 2, 1 across the hold after a goal,
-    /// a second each, centred high in the frame like the goal banner.
-    fn kickoff_banner(&self, font: &FontAtlas) -> draw::Banner {
-        const DIGITS: [&str; 3] = ["1", "2", "3"];
-        let digit = DIGITS[(usize::from(self.sim.kickoff_hold).div_ceil(60)).clamp(1, 3) - 1];
-        let q8: i32 = 512;
-        let x = (160 - font.text_width(digit) as i32 * q8 / 256 / 2) as i16;
-        draw::Banner {
-            font: *font,
-            y: 34,
-            q8: q8 as u16,
-            parts: [(x, digit, (255, 232, 130)), (x, "", (255, 232, 130))],
-        }
-    }
-
     /// The banner written straight to the GPU over the finished frame: split
     /// screen, whose two tables have no tail of their own to carry it. A
     /// single view files it in its table instead (`draw::set_banner`).
     fn draw_goal_banner(&self, font: &FontAtlas) {
         Self::draw_banner(self.goal_banner(font));
-    }
-
-    /// The same for the kickoff countdown.
-    fn draw_kickoff_banner(&self, font: &FontAtlas) {
-        Self::draw_banner(self.kickoff_banner(font));
     }
 
     fn draw_banner(banner: draw::Banner) {
@@ -1771,62 +1828,6 @@ impl NitroXide {
     /// VRAM coordinates and ignores both the drawing area and the offset,
     /// which is why it needs `buffer_y` and why it can cross the seam at all.
     /// Its X and width are rounded to 16, which the command requires.
-    fn draw_pause_menu(&self, display: &FontAtlas, font: &FontAtlas, buffer_y: u16) {
-        const X: u16 = 64;
-        const W: u16 = 192;
-        let rows = self.pause_rows();
-        let h = 72 + rows.len() as u16 * 16;
-        let y = (draw::SCREEN_H as u16 - h) / 2;
-
-        psx_gpu::fill_rect(X, buffer_y + y, W, h, 10, 12, 22);
-        psx_gpu::fill_rect(X + 4, buffer_y + y + 4, W - 8, h - 8, 24, 28, 44);
-
-        Self::centred(
-            font,
-            X as i16 + W as i16 / 2,
-            y as i16 + h as i16 - 22,
-            CONTROLS_HINT,
-            (148, 158, 182),
-        );
-        Self::shadowed(
-            display,
-            X as i16 + 46,
-            y as i16 + 12,
-            "PAUSED",
-            (255, 255, 255),
-        );
-
-        for (i, row) in rows.iter().enumerate() {
-            let label = match row {
-                PauseRow::Resume => "RESUME",
-                PauseRow::Swap => {
-                    if self.swap_seats {
-                        "SIDES: P2 P1"
-                    } else {
-                        "SIDES: P1 P2"
-                    }
-                }
-                PauseRow::Settings => "SETTINGS",
-                PauseRow::Quit => "QUIT TO MENU",
-            };
-            let lit = i == self.pause_row;
-            let row_y = y as i16 + 40 + i as i16 * 16;
-            if lit {
-                Self::shadowed(font, X as i16 + 14, row_y, ">", (255, 210, 110));
-            }
-            Self::shadowed(
-                font,
-                X as i16 + 28,
-                row_y,
-                label,
-                if lit {
-                    (255, 255, 255)
-                } else {
-                    (148, 158, 182)
-                },
-            );
-        }
-    }
 
     /// The boot splash: black frame, the Bonnie Studios logo, and the "Built
     /// with PSoXide" sheen line. Ported from hl-psx's intro, drawn through
@@ -2419,6 +2420,8 @@ impl Scene for NitroXide {
                     next().min(draw::PAINT_COUNT - 1),
                 ];
             }
+            #[cfg(feature = "boot-split-kickoff")]
+            self.start_match();
         }
         #[cfg(feature = "boot-hatch")]
         {
@@ -2622,6 +2625,13 @@ impl Scene for NitroXide {
                 self.scoreboard_open.saturating_sub(1)
             };
         }
+        if self.phase == Phase::Play && self.paused {
+            self.pause_t = (self.pause_t + 1).min(PAUSE_TICKS);
+            if self.pause_closing && self.pause_t >= PAUSE_TICKS {
+                self.paused = false;
+                self.pause_closing = false;
+            }
+        }
         // A tile sweep is hiding a change between the match and a menu: the
         // world stands still under it, the pads are ignored, and the change
         // itself lands on the tick the tiles are all down.
@@ -2681,7 +2691,7 @@ impl Scene for NitroXide {
         }
         let menu_open = match self.phase {
             Phase::Title => self.settings.is_none(),
-            Phase::Play => self.paused && self.settings.is_none(),
+            Phase::Play => self.paused && self.pause_ready() && self.settings.is_none(),
             _ => false,
         };
         if menu_open && ctx.just_pressed(button::SELECT) {
@@ -2896,6 +2906,8 @@ impl Scene for NitroXide {
                     audio::ui(audio::Ui::Ready);
                 }
             }
+            // The panel is building in or breaking up: it takes no input.
+            Phase::Play if self.paused && !self.pause_ready() => {}
             Phase::Play if self.paused => {
                 // Port 2 keeps being polled while held, so the pause menu can
                 // be driven from either seat. Whoever called it is usually the
@@ -2921,26 +2933,52 @@ impl Scene for NitroXide {
                     self.settings_input(up, down, left, right, cross, back, ctx.sim_tick.as_u32());
                     return;
                 }
-                if ctx.just_pressed(button::UP) || p2(button::UP) {
+                let up = ctx.just_pressed(button::UP) || p2(button::UP);
+                let down = ctx.just_pressed(button::DOWN) || p2(button::DOWN);
+                let cross = ctx.just_pressed(button::CROSS) || p2(button::CROSS);
+                let back = ctx.just_pressed(button::CIRCLE) || p2(button::CIRCLE);
+                let start = ctx.just_pressed(button::START) || p2(button::START);
+                let tick = ctx.sim_tick.as_u32();
+                // A question is up: Yes or No, and nothing else.
+                if let Some(ask) = self.pause_confirm {
+                    if up || down {
+                        self.confirm_yes = !self.confirm_yes;
+                        audio::ui(audio::Ui::Move);
+                        self.pause_at = tick;
+                    } else if back || start {
+                        self.pause_confirm = None;
+                        audio::ui(audio::Ui::Back);
+                    } else if cross && !self.confirm_yes {
+                        self.pause_confirm = None;
+                        audio::ui(audio::Ui::Back);
+                    } else if cross {
+                        audio::stop_all();
+                        audio::ui(audio::Ui::Back);
+                        self.pause_confirm = None;
+                        self.sweep = Some(sweep::Sweep::new(match ask {
+                            PauseRow::Restart => sweep::Change::Restart,
+                            _ => sweep::Change::Quit,
+                        }));
+                    }
+                    return;
+                }
+                if up {
                     self.pause_row = (self.pause_row + rows.len() - 1) % rows.len();
-                } else if ctx.just_pressed(button::DOWN) || p2(button::DOWN) {
+                } else if down {
                     self.pause_row = (self.pause_row + 1) % rows.len();
                 }
-                if ctx.just_pressed(button::UP)
-                    || p2(button::UP)
-                    || ctx.just_pressed(button::DOWN)
-                    || p2(button::DOWN)
-                {
+                if up || down {
                     audio::ui(audio::Ui::Move);
+                    self.pause_at = tick;
                 }
-                if ctx.just_pressed(button::START) || p2(button::START) {
+                if start || back {
                     audio::ui(audio::Ui::Close);
-                    self.sweep = Some(sweep::Sweep::new(sweep::Change::Resume));
-                } else if ctx.just_pressed(button::CROSS) || p2(button::CROSS) {
+                    self.pause_resume();
+                } else if cross {
                     match rows[self.pause_row] {
                         PauseRow::Resume => {
                             audio::ui(audio::Ui::Close);
-                            self.sweep = Some(sweep::Sweep::new(sweep::Change::Resume));
+                            self.pause_resume();
                         }
                         // Stays on the menu: the world is still drawn behind
                         // it, so the swap is visible the moment it happens and
@@ -2953,10 +2991,15 @@ impl Scene for NitroXide {
                             self.settings = Some(0);
                             audio::ui(audio::Ui::Open);
                         }
-                        PauseRow::Quit => {
-                            audio::stop_all();
-                            audio::ui(audio::Ui::Back);
-                            self.sweep = Some(sweep::Sweep::new(sweep::Change::Quit));
+                        PauseRow::Controls => {
+                            self.controls = Some(0);
+                            audio::ui(audio::Ui::Open);
+                        }
+                        ask @ (PauseRow::Restart | PauseRow::Quit) => {
+                            self.pause_confirm = Some(ask);
+                            self.confirm_yes = false;
+                            self.pause_at = tick;
+                            audio::ui(audio::Ui::Open);
                         }
                     }
                 }
@@ -2965,15 +3008,33 @@ impl Scene for NitroXide {
                 if ctx.just_pressed(button::START) {
                     audio::stop_all();
                     audio::ui(audio::Ui::Open);
-                    self.sweep = Some(sweep::Sweep::new(sweep::Change::Pause));
+                    self.paused = true;
+                    self.pause_row = 0;
+                    self.pause_t = 0;
+                    self.pause_closing = false;
+                    self.pause_confirm = None;
+                    self.pause_at = ctx.sim_tick.as_u32();
                     return;
                 }
                 if ctx.just_pressed(button::TRIANGLE) {
                     self.ball_cam[0] = !self.ball_cam[0];
                 }
+                // The fly-over before a kickoff: nothing in the match moves, and
+                // any button on either pad cuts it short.
+                if self.kick_intro > 0 {
+                    let skipped = SKIP_BUTTONS.iter().any(|&b| {
+                        ctx.just_pressed(b) || (self.two_player && ctx.just_pressed_for(1, b))
+                    });
+                    self.kick_intro = if skipped { 0 } else { self.kick_intro - 1 };
+                    if self.two_player {
+                        ctx.refresh_second_pad();
+                    }
+                    return;
+                }
                 let actions = self.profile.actions;
                 let deadzone = Deadzone::new(self.profile.move_deadzone as i16);
                 let input = Self::read_pad(&actions, deadzone, &ctx.pad, &ctx.pad_prev);
+                let was_celebrating = self.sim.goal_freeze > 0;
                 if self.two_player {
                     // The engine context owns both samples, but port 2 stays
                     // opt-in so solo play pays no second SIO transaction.
@@ -2990,6 +3051,11 @@ impl Scene for NitroXide {
                     self.sim.tick_versus(&input, &p2);
                 } else {
                     self.sim.tick(&input);
+                }
+                // The tick a goal's celebration ends the cars are back on their
+                // spots and the countdown is armed: fly over the arena first.
+                if was_celebrating && self.sim.goal_freeze == 0 && self.sim.kickoff_hold > 0 {
+                    self.kick_intro = KICK_INTRO_TICKS;
                 }
                 draw::track_tick(&self.sim);
                 #[cfg(feature = "diag-meter")]
@@ -3031,12 +3097,16 @@ impl Scene for NitroXide {
                         (-2 << nitroxide_sim::SUSPENSION_VISUAL_FP) as i16,
                     ];
                 }
-                #[cfg(feature = "diag-audio-cost")]
-                audio_cost::measure(audio_cost::UPDATE, || {
-                    audio::update(&self.sim, self.two_player)
-                });
-                #[cfg(not(feature = "diag-audio-cost"))]
-                audio::update(&self.sim, self.two_player);
+                // Held back through the tick the fly-over starts on, or the
+                // countdown's first beep would sound under it.
+                if self.kick_intro == 0 {
+                    #[cfg(feature = "diag-audio-cost")]
+                    audio_cost::measure(audio_cost::UPDATE, || {
+                        audio::update(&self.sim, self.two_player)
+                    });
+                    #[cfg(not(feature = "diag-audio-cost"))]
+                    audio::update(&self.sim, self.two_player);
+                }
                 #[cfg(any(feature = "boot-goal", feature = "boot-goal-ai"))]
                 if self.sim.goal_freeze == nitroxide_sim::GOAL_FREEZE_TICKS {
                     psx_rt::tty::println("boot-goal: GOAL, freeze started");
@@ -3162,12 +3232,15 @@ impl Scene for NitroXide {
             {
                 Some(self.goal_banner(font))
             }
-            (Phase::Play, Some(font)) if self.sim.kickoff_hold > 0 && !self.two_player => {
-                Some(self.kickoff_banner(font))
-            }
             _ => None,
         };
         draw::set_banner(banner);
+        draw::set_intro(match self.phase {
+            Phase::Play if self.kick_intro > 0 => Some(
+                i32::from(KICK_INTRO_TICKS - self.kick_intro) * 4096 / i32::from(KICK_INTRO_TICKS),
+            ),
+            _ => None,
+        });
         match self.phase {
             // Nothing behind the splash: the overlay paints the whole frame.
             Phase::Intro => {}
@@ -3389,19 +3462,17 @@ impl NitroXide {
                         self.draw_goal_banner(display);
                     }
                 } else {
-                    if self.sim.kickoff_hold > 0 && self.two_player {
-                        self.draw_kickoff_banner(display);
-                    }
+                    countdown::draw(
+                        Gpu::from_dma_mut(ctx.gpu_dma()),
+                        display,
+                        &self.sim,
+                        self.kick_intro > 0,
+                        self.two_player,
+                    );
                     self.draw_now_playing(hud, ctx.sim_tick.as_u32());
                 }
                 if self.paused {
-                    if self.settings.is_some() {
-                        self.draw_settings(display, hud, ctx.fb.draw_origin().1);
-                    } else if let Some(page) = self.controls {
-                        self.draw_controls(display, hud, ctx.fb.draw_origin().1, page);
-                    } else {
-                        self.draw_pause_menu(display, hud, ctx.fb.draw_origin().1);
-                    }
+                    self.draw_pause(ctx, display, hud);
                 }
                 return;
             }

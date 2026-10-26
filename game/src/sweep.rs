@@ -28,14 +28,12 @@ const CYAN: Rgb = (70, 184, 232);
 /// What changes underneath the tiles on [`SWAP_TICK`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Change {
-    /// The pause menu opens over the frozen match.
-    Pause,
-    /// The pause menu closes and the match carries on.
-    Resume,
     /// Leave the match for the title menu.
     Quit,
     /// Leave the select screen for the match.
     Kickoff,
+    /// Start the match again from the pause menu.
+    Restart,
     /// The final whistle: on to the results.
     Results,
 }
@@ -54,20 +52,46 @@ impl Sweep {
     }
 }
 
-/// Draw the tiles for tick `t` of a sweep.
+/// A block of the 16 pixel tile grid: the part of the screen a sweep covers.
+#[derive(Clone, Copy)]
+pub struct Area {
+    pub col: i32,
+    pub row: i32,
+    pub cols: i32,
+    pub rows: i32,
+}
+
+impl Area {
+    /// The whole 320x240 frame.
+    pub const SCREEN: Area = Area {
+        col: 0,
+        row: 0,
+        cols: COLS,
+        rows: ROWS,
+    };
+}
+
+/// Draw the tiles for tick `t` of a full-screen sweep.
 pub fn draw(gpu: &mut Gpu, t: u32) {
-    let covering = t < SWAP_TICK;
-    let half = SWAP_TICK as i32;
+    draw_in(gpu, t, SWAP_TICK, Area::SCREEN);
+}
+
+/// Draw the tiles of a sweep that covers `area` and nothing else: `half` ticks
+/// to cover it and `half` to uncover it, `t` ticks in. The stagger runs across
+/// the area's own columns.
+pub fn draw_in(gpu: &mut Gpu, t: u32, half: u32, area: Area) {
+    let covering = t < half;
+    let half = half as i32;
     let step = if covering { t as i32 } else { t as i32 - half };
     // Progress through this half, Q12: its first tick is 0 and its last is 1,
     // so the cover ends fully down and the reveal ends with nothing left.
     let q = step * ONE / (half - 1);
-    for row in 0..ROWS {
-        for col in 0..COLS {
+    for row in 0..area.rows {
+        for col in 0..area.cols {
             // When this tile starts: later columns start later, and each is
             // nudged a little so the front is ragged rather than a wipe.
-            let start =
-                col * 2540 / (COLS - 1) + (fx::scatter(col as u32, row as u32) as i32) * 328 / 255;
+            let start = col * 2540 / (area.cols - 1).max(1)
+                + (fx::scatter(col as u32, row as u32) as i32) * 328 / 255;
             // How far through its own growth or shrink the tile is, Q12.
             let l = fx::clamp((q - start) * 10 / 3, 0, ONE);
             let scale = if covering {
@@ -79,8 +103,8 @@ pub fn draw(gpu: &mut Gpu, t: u32) {
             if w <= 0 {
                 continue;
             }
-            let x = col * TILE + ((TILE - w) >> 1);
-            let y = row * TILE + ((TILE - w) >> 1);
+            let x = (area.col + col) * TILE + ((TILE - w) >> 1);
+            let y = (area.row + row) * TILE + ((TILE - w) >> 1);
             fx::rect(gpu, x, y, w, w, NAVY[((col + row) & 1) as usize]);
             if l > 0 && l < ONE {
                 fx::rect(gpu, x, y, w, 1, CYAN);

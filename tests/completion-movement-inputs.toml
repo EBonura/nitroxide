@@ -16,7 +16,7 @@ wait = 60
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 190
+wait = 330
 [[step]]
 checkpoint = "free-camera"
 golden = false
@@ -83,7 +83,16 @@ wait = 34
 press = ["down"]
 hold = 4
 wait = 8
-repeat = 2
+repeat = 4
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 8
+# Quit asks first: down moves from No to Yes.
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
 [[step]]
 press = ["cross"]
 hold = 4

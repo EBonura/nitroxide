@@ -2,12 +2,30 @@
 
 ## Unreleased
 
+Every kickoff opens with a camera fly-over of the arena and a big countdown. The
+match start and each restart after a goal first swing the camera round the arena,
+high and looking at the centre spot, and bring it down onto the chase camera in
+about a second and a half; any button (but Start) cuts it short. Then three, two,
+one punch in on a slanted plate with the two team colours at its ends, each landing
+on the tick of its beep, and a GO! bursts out when play is released, with the same
+timings as the go and cheer. The sim stands still through the fly-over, and the
+match start now has the same three-second countdown a goal restart always had.
+
+The pause menu is rebuilt. It builds in out of tiles, the sweep clipped to its own
+area with the match dimmed around it, and breaks up the same way on resume. It has
+a header band with the rule, the arena and who is playing, the live score and
+clock in the team colours, slanted buttons with the title menu's cyan bar sweeping
+in (Resume, Sides in two-player, Settings, Controls, Restart match and Quit to
+menu, the last two asking Yes or No first) and a hint bar along the foot. The
+tile sweep stays full-screen for real scene changes: kickoff from the select
+screen, restart, quit and the final whistle.
+
 A tile sweep now hides every change between the match and its menus. Sixteen pixel
 tiles grow from their centres across the screen from left to right, the screen
 underneath is swapped on the tick the last one is down, and the tiles shrink away
 the same way: half a second in all, drawn as flat quads over the finished frame
-with no copy of the old one. It covers opening the pause menu, resuming, quitting to
-the title, kicking off from the select screen and the final whistle into the results.
+with no copy of the old one. It covers quitting to the title, restarting, kicking off from the select screen and
+the final whistle into the results.
 The world stands still under it and the pads are ignored until it is done.
 
 The boost dial in the corner is now a bar of ten slanted cells, the shape of the

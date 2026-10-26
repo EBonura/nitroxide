@@ -3,7 +3,7 @@
 //! cubic ease, colour scaling and the additive draw mode.
 
 use psx_gpu::material::{BlendMode, TextureMaterial};
-use psx_gpu::prim::QuadFlat;
+use psx_gpu::prim::{QuadFlat, QuadGouraud};
 use psx_gpu::Gpu;
 
 /// A colour as the GPU takes it.
@@ -134,4 +134,48 @@ const fn slanted_corners(x: i32, y: i32, w: i32, h: i32, slant: i32) -> [(i16, i
         (x as i16, (y + h) as i16),
         ((x + w) as i16, (y + h) as i16),
     ]
+}
+
+/// An arbitrary quad in PS1 vertex order (top left, top right, bottom left,
+/// bottom right), opaque.
+pub fn quad(gpu: &mut Gpu, v: [(i32, i32); 4], colour: Rgb) {
+    gpu.draw(&QuadFlat::new(corners(v), colour.0, colour.1, colour.2));
+}
+
+/// [`quad`] drawn with the blend [`additive`] last set.
+pub fn quad_blended(gpu: &mut Gpu, v: [(i32, i32); 4], colour: Rgb) {
+    gpu.draw(&QuadFlat::new(corners(v), colour.0, colour.1, colour.2).translucent());
+}
+
+fn corners(v: [(i32, i32); 4]) -> [(i16, i16); 4] {
+    v.map(|(x, y)| (x as i16, y as i16))
+}
+
+/// Switch the GPU to take what is drawn away from what is already there, so
+/// a grey rectangle darkens the frame by exactly that much. Follow it with
+/// [`opaque`].
+pub fn subtractive(gpu: &mut Gpu) {
+    gpu.set_draw_mode(TextureMaterial::blended(
+        0,
+        0,
+        (0, 0, 0),
+        BlendMode::Subtract,
+    ));
+}
+
+/// [`slanted`] shaded from `top` to `bottom`.
+pub fn slanted_gradient(
+    gpu: &mut Gpu,
+    (x, y, w, h): (i32, i32, i32, i32),
+    slant: i32,
+    top: Rgb,
+    bottom: Rgb,
+) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    gpu.draw(&QuadGouraud::new(
+        slanted_corners(x, y, w, h, slant),
+        [top, top, bottom, bottom],
+    ));
 }

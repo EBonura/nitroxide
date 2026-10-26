@@ -3182,6 +3182,12 @@ fn camera(
         &request,
         now,
     );
+    // The kickoff fly-over takes the view over, ending exactly on the chase
+    // camera's, which the update above keeps tracking underneath.
+    let pose = match unsafe { INTRO } {
+        Some(progress) => intro_pose(progress, pose),
+        None => pose,
+    };
     #[cfg(feature = "diag-log")]
     crate::diaglog::fill!(cam;
         now as i32,
@@ -3215,6 +3221,65 @@ fn camera(
         pose.yaw,
         pose.pitch.rem_euclid(4096) as u16,
     )
+}
+
+/// How far through the kickoff fly-over the cameras are, Q12 (`0..=4096`), or
+/// none when they follow their cars.
+static mut INTRO: Option<i32> = None;
+
+/// Start, move or end the kickoff fly-over. `None` hands the cameras back.
+pub fn set_intro(progress: Option<i32>) {
+    // SAFETY: the game is single-threaded.
+    unsafe { INTRO = progress };
+}
+
+/// Where the cameras are `progress` of the way through the kickoff fly-over:
+/// a swing round the arena, high and looking at the centre spot, which comes
+/// down onto `chase`, the pose the camera would have had, and ends on it.
+fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
+    // How far out and how high the swing is, how far round it goes, and what it
+    // looks at, all in uu (the angle in Q12). The ring stays inside the
+    // chamfered corners and under the roof.
+    const RADIUS: i32 = 3300;
+    const HEIGHT: i32 = 1500;
+    const SPAN: i32 = 2300;
+    const TARGET_Y: i32 = 250;
+    // Where in the swing the descent onto the chase camera starts, Q12.
+    const DESCENT: i32 = 2300;
+
+    let p = progress.clamp(0, 4096);
+    let eased = (3 * p * p >> 12) - (2 * p * p >> 12) * p / 4096;
+    // The swing ends over the chase camera's own side of the arena.
+    let end = atan2_q12(chase.eye.0, chase.eye.2) as i32;
+    let a = (end + (SPAN * (4096 - eased) >> 12)) as u16;
+    let eye = (
+        (sin_q12(a) * RADIUS) >> 12,
+        HEIGHT,
+        (cos_q12(a) * RADIUS) >> 12,
+    );
+    let (dx, dz) = (-eye.0, -eye.2);
+    let yaw = atan2_q12(dx, dz) as i32;
+    let pitch = atan2_q12(eye.1 - TARGET_Y, isqrt_i32(dx * dx + dz * dz).max(1)) as i32;
+
+    // The descent, eased in and out, so the hand-over has no corner in it.
+    let t = ((p - DESCENT).max(0) * 4096 / (4096 - DESCENT)).min(4096);
+    let b = (3 * t * t >> 12) - (2 * t * t >> 12) * t / 4096;
+    let lerp = |from: i32, to: i32| from + ((to - from) * b >> 12);
+    // Angles take the short way round.
+    let turn = |from: i32, to: i32| {
+        let d = ((to - from + 2048).rem_euclid(4096)) - 2048;
+        from + (d * b >> 12)
+    };
+    sim::camera::Pose {
+        eye: (
+            lerp(eye.0, chase.eye.0),
+            lerp(eye.1, chase.eye.1),
+            lerp(eye.2, chase.eye.2),
+        ),
+        yaw: turn(yaw, i32::from(chase.yaw)).rem_euclid(4096) as u16,
+        pitch: turn(pitch, chase.pitch.rem_euclid(4096)),
+        ..chase
+    }
 }
 
 /// A camera at `pos` looking along `yaw` with `pitch` below the horizontal.
