@@ -17,6 +17,10 @@ boot-play = []
 # (small pickup, big pickup, a long burn, another pickup) so the meter can be
 # captured at known ticks.
 diag-meter = ["boot-play"]
+# Dev: boot into a match and drive the sim state through every in-match
+# feedback effect at fixed ticks (shot, save, demolition, aerial goal, minute
+# banner, landing, pad, wall, ball off screen) so each can be captured.
+diag-fb = ["boot-play"]
 # Dev: the split-screen boot, but through a real match start, so the kickoff
 # fly-over, countdown and GO! can be profiled.
 boot-split-kickoff = ["boot-split-play"]

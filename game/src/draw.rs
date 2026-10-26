@@ -126,9 +126,21 @@ fn use_plane(h: i32) {
     scene::set_projection_plane(h as u16);
 }
 
-/// The plane of the chosen field of view.
+/// How far the field of view has widened toward the next step up, Q12: the
+/// rush of boosting. Set by the game each frame; split screen never uses it.
+static mut FOV_WIDEN: i32 = 0;
+
+/// Widen the match's field of view by `amount` (Q12) of one step.
+pub fn set_fov_widen(amount: i32) {
+    // SAFETY: the game is single-threaded.
+    unsafe { FOV_WIDEN = amount.clamp(0, 4096) };
+}
+
+/// The plane of the chosen field of view, drawn in by the boost's widening.
 fn match_plane() -> i32 {
-    sim::camera::FOV_PLANE[fov()] as i32
+    let base = i32::from(sim::camera::FOV_PLANE[fov()]);
+    let next = i32::from(sim::camera::FOV_PLANE[(fov() + 1).min(FOV_STEPS - 1)]);
+    base - ((base - next) * unsafe { FOV_WIDEN } >> 12)
 }
 
 /// One player's slice of the back buffer, stacked top and bottom, the way
@@ -3236,6 +3248,7 @@ pub fn set_intro(progress: Option<i32>) {
 /// Where the cameras are `progress` of the way through the kickoff fly-over:
 /// a swing round the arena, high and looking at the centre spot, which comes
 /// down onto `chase`, the pose the camera would have had, and ends on it.
+#[inline(never)]
 fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
     // How far out and how high the swing is, how far round it goes, and what it
     // looks at, all in uu (the angle in Q12). The ring stays inside the
@@ -3280,6 +3293,47 @@ fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
         pitch: turn(pitch, chase.pitch.rem_euclid(4096)),
         ..chase
     }
+}
+
+/// The last frame's camera and viewport for each seat, which is what the
+/// overlay's world-space effects project through.
+static mut SEAT_VIEWS: [Option<(View, Viewport)>; 2] = [None; 2];
+
+/// Where a point of the world falls on one seat's view.
+#[derive(Copy, Clone)]
+pub struct SeatPoint {
+    /// Screen position in display pixels (meaningless when behind the camera).
+    pub x: i32,
+    pub y: i32,
+    /// Distance in front of the camera; zero or less is behind it.
+    pub depth: i32,
+    /// Where the point lies from the middle of the view, right and down, in
+    /// camera space: the direction to point an arrow, in front or behind.
+    pub dir: (i32, i32),
+    /// The view's rectangle.
+    pub view: Viewport,
+}
+
+/// Project `p`, a point of the world in uu with Y up, through `seat`'s camera as
+/// it was in the last frame drawn. None before the first frame.
+pub fn project_seat(seat: usize, p: (i32, i32, i32)) -> Option<SeatPoint> {
+    // SAFETY: the game is single-threaded.
+    let (view, vp) = unsafe { SEAT_VIEWS[seat.min(1)] }?;
+    let (cx, cy, cz) = view.camera_space((p.0, -p.1, p.2));
+    let h = proj_h();
+    let z = cz.max(1);
+    Some(SeatPoint {
+        x: i32::from(vp.x) + i32::from(vp.w) / 2 + cx * h / z,
+        y: i32::from(vp.y) + i32::from(vp.h) / 2 + cy * h / z,
+        depth: cz,
+        dir: (cx, cy),
+        view: vp,
+    })
+}
+
+/// The projection plane in force, for sizing things by their distance.
+pub fn plane() -> i32 {
+    proj_h()
 }
 
 /// A camera at `pos` looking along `yaw` with `pitch` below the horizontal.
@@ -8656,6 +8710,8 @@ fn render_view(
             camera_slot,
         )
     });
+    // Kept for the overlay, which projects the ball and the particles itself.
+    unsafe { SEAT_VIEWS[camera_slot.min(1)] = Some((view, vp)) };
     build_view(s, cars, view, vp, None);
 }
 

@@ -42,6 +42,7 @@ mod countdown;
 #[cfg(feature = "diag-log")]
 mod diaglog;
 mod draw;
+mod feedback;
 mod fx;
 mod gate_state;
 mod music;
@@ -705,6 +706,8 @@ struct NitroXide {
     /// Ticks left of the camera fly-over before a kickoff's countdown starts.
     /// The sim stands still while it runs, and any button ends it.
     kick_intro: u16,
+    /// The in-match feedback layer: event tags, particles, banners.
+    fb: feedback::Feedback,
     /// Ticks into the pause panel's tile sweep, `0..=PAUSE_TICKS`; it rests at
     /// the top while the menu is open.
     pause_t: u8,
@@ -852,6 +855,7 @@ impl NitroXide {
             sweep: None,
             meters: boost_meter::Meters::new(),
             kick_intro: 0,
+            fb: feedback::Feedback::new(),
             pause_t: 0,
             pause_closing: false,
             pause_confirm: None,
@@ -922,6 +926,7 @@ impl NitroXide {
         self.sim = Sim::demo(&ROUTE_MATCHES[show]);
         self.meters = boost_meter::Meters::new();
         self.meters.track(&self.sim);
+        self.fb.reset();
         self.demo.show = show;
         self.demo.t = 0;
         self.demo.scored = false;
@@ -1347,6 +1352,7 @@ impl NitroXide {
         // The meters start from this match's tanks, not the last one's.
         self.meters = boost_meter::Meters::new();
         self.meters.track(&self.sim);
+        self.fb.reset();
         self.sim.opponent_ai = self.menu != ROW_PRACTICE && !self.two_player;
         self.ball_cam = [CAM_BALL_DEFAULT; 2];
         self.paused = false;
@@ -1357,6 +1363,89 @@ impl NitroXide {
         self.scoreboard_open = draw::SCOREBOARD_STEPS;
         draw::set_seat_paints(self.paints);
         self.phase = Phase::Play;
+    }
+
+    /// `diag-fb`: put the sim through each feedback effect at a fixed tick.
+    #[cfg(feature = "diag-fb")]
+    fn script_fb(&mut self) {
+        use nitroxide_sim::{uu, GOAL_FREEZE_TICKS, PADS, V3};
+        static mut TICK: u32 = 0;
+        // SAFETY: the game is single-threaded.
+        let t = unsafe {
+            TICK += 1;
+            TICK
+        };
+        let s = &mut self.sim;
+        let shot = |s: &mut Sim, z: i32| {
+            s.car.p = V3::new(uu(0), uu(28), uu(z - 100));
+            s.ball.p = V3::new(uu(0), uu(100), uu(z));
+            s.ball.v = V3::new(0, 600, 1700);
+            s.hit = 1;
+        };
+        let save = |s: &mut Sim| {
+            s.opponent.p = V3::new(s.ball.p.x, uu(28), s.ball.p.z + uu(60));
+            s.ball.v = V3::new(0, 300, -1200);
+            s.hit = 1;
+        };
+        match t {
+            150 => shot(s, 3900),
+            200 => save(s),
+            240 => shot(s, 4700),
+            260 => save(s),
+            300 => s.opponent.demo_timer = 150,
+            340 => s.car.demo_timer = 130,
+            1200 => {
+                s.car.grounded = false;
+                s.ball.p = V3::new(uu(0), uu(500), uu(5000));
+                s.last_scorer = nitroxide_sim::Team::Blue;
+                s.goal_freeze = GOAL_FREEZE_TICKS;
+            }
+            400 => s.clock = 3602,
+            1100 => s.clock = 590,
+            _ => {}
+        }
+        // The staged shots stop dead a tick later, so none of them scores.
+        if matches!(t, 151 | 201 | 241 | 261) {
+            s.ball.v = V3::ZERO;
+            s.ball.p = V3::new(0, uu(100), uu(0));
+        }
+        // Landing hard, then a pad taken under the car, then a run along a wall.
+        if t == 640 {
+            s.car.grounded = false;
+            s.car.v.y = -700;
+        }
+        if t == 641 {
+            s.car.grounded = true;
+        }
+        if t == 700 {
+            let pad = PADS.iter().find(|p| !p.big).unwrap();
+            s.car.p = V3::new(uu(pad.x), uu(28), uu(pad.z - 300));
+            s.pad_taken = true;
+            s.pad_timers[PADS.iter().position(|p| !p.big).unwrap()] = 240;
+        }
+        if (760..840).contains(&t) {
+            s.car.p = V3::new(uu(3950), uu(600), uu(-2000 + (t as i32 - 760) * 40));
+            s.car.up = V3::new(-4096, 0, 0);
+            s.car.grounded = true;
+            s.car.v = V3::new(0, 0, 1500);
+        }
+        // Back on the pitch after the wall.
+        if t == 845 {
+            s.car.p = V3::new(0, uu(28), 0);
+            s.car.up = V3::new(0, 4096, 0);
+            s.car.yaw = 0;
+            s.car.v = V3::ZERO;
+            s.car.grounded = true;
+        }
+        // The ball behind the car, then high in front of it.
+        if (880..960).contains(&t) {
+            s.ball.p = V3::new(uu(0), uu(100), s.car.p.z + uu(2600));
+            s.ball.v = V3::new(0, 0, 0);
+        }
+        if (980..1060).contains(&t) {
+            s.ball.p = V3::new(s.car.p.x, uu(900), s.car.p.z - uu(1600));
+            s.ball.v = V3::new(0, 0, 0);
+        }
     }
 
     /// `diag-meter`: drive both cars' boost through a fixed script, so the
@@ -1578,6 +1667,29 @@ impl NitroXide {
         font.draw_text_scaled_q8(x, y, text, 512, 512, Self::ink(tint));
     }
 
+    /// The views of a match, top first, with the seat looking through each. One
+    /// player has the one whole-screen view; the second entry is then unused.
+    fn view_seats(&self) -> [(draw::Viewport, usize, bool); 2] {
+        if !self.two_player {
+            return [
+                (draw::Viewport::FULL, 0, self.ball_cam[0]),
+                (draw::Viewport::FULL, 0, self.ball_cam[0]),
+            ];
+        }
+        // Follows `swap_seats`, or the readouts sit over the other player's view.
+        if self.swap_seats {
+            [
+                (draw::Viewport::TOP, 1, self.ball_cam[1]),
+                (draw::Viewport::BOTTOM, 0, self.ball_cam[0]),
+            ]
+        } else {
+            [
+                (draw::Viewport::TOP, 0, self.ball_cam[0]),
+                (draw::Viewport::BOTTOM, 1, self.ball_cam[1]),
+            ]
+        }
+    }
+
     fn draw_hud(&self, gpu: &mut Gpu, font: &FontAtlas, tick: u32) {
         let s = &self.sim;
         let mut dec = [0u8; U32_DEC_MAX];
@@ -1631,13 +1743,26 @@ impl NitroXide {
                     pale
                 };
                 let cw = font.text_width(clock) as i16;
-                Self::shadowed(
-                    font,
-                    draw::HUD_CENTRE_X - cw / 2,
-                    board.clock_y,
-                    clock,
-                    tint,
-                );
+                if s.clock > 0 && s.clock < 600 {
+                    // The last ten seconds: each second the clock jumps up in
+                    // size and settles back.
+                    let age = ((60 - s.clock % 60) % 60) as i32;
+                    let pop = if age < 20 { 160 * (20 - age) / 20 } else { 0 };
+                    let q = (256 + pop) as u16;
+                    let w = i32::from(cw) * i32::from(q) / 256;
+                    let x = draw::HUD_CENTRE_X - (w / 2) as i16;
+                    let y = board.clock_y - (i32::from(font.line_height()) * pop / 512) as i16;
+                    font.draw_text_scaled_q8(x + 1, y + 1, clock, q, q, (0, 0, 0));
+                    font.draw_text_scaled_q8(x, y, clock, q, q, Self::ink(tint));
+                } else {
+                    Self::shadowed(
+                        font,
+                        draw::HUD_CENTRE_X - cw / 2,
+                        board.clock_y,
+                        clock,
+                        tint,
+                    );
+                }
             }
             WinCondition::GoalLimit(target) => {
                 let prefix = "TO ";
@@ -3061,6 +3186,9 @@ impl Scene for NitroXide {
                 #[cfg(feature = "diag-meter")]
                 self.script_meter();
                 self.meters.track(&self.sim);
+                #[cfg(feature = "diag-fb")]
+                self.script_fb();
+                self.fb.update(&self.sim, self.two_player);
                 #[cfg(feature = "boot-demo-fx")]
                 self.rearm_demo_fx();
                 #[cfg(feature = "boot-roof-length")]
@@ -3235,6 +3363,11 @@ impl Scene for NitroXide {
             _ => None,
         };
         draw::set_banner(banner);
+        draw::set_fov_widen(if self.phase == Phase::Play && !self.two_player {
+            self.fb.widen
+        } else {
+            0
+        });
         draw::set_intro(match self.phase {
             Phase::Play if self.kick_intro > 0 => Some(
                 i32::from(KICK_INTRO_TICKS - self.kick_intro) * 4096 / i32::from(KICK_INTRO_TICKS),
@@ -3470,6 +3603,12 @@ impl NitroXide {
                         self.two_player,
                     );
                     self.draw_now_playing(hud, ctx.sim_tick.as_u32());
+                }
+                if self.kick_intro == 0 {
+                    let views = self.view_seats();
+                    let seats = [(views[0].0, views[0].1), (views[1].0, views[1].1)];
+                    let n = if self.two_player { 2 } else { 1 };
+                    self.draw_feedback(Gpu::from_dma_mut(ctx.gpu_dma()), display, hud, &seats[..n]);
                 }
                 if self.paused {
                     self.draw_pause(ctx, display, hud);

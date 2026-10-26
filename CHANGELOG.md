@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+The match gives more feedback. An arrow on the rim of the view points at the ball
+when it is off screen, and a dotted drop line with a ring runs from the ball to the
+pitch when it is in the air. Small slanted tags in the team colours pop up for a
+SHOT ON GOAL, a SAVE, an EPIC SAVE (close to the line or very hard), a DEMOLITION
+and an AERIAL GOAL, read off the sim's state each tick. A boosting car leaves a
+trail in its own colour, a supersonic one gets speed lines at the rim of the view,
+a car on a wall throws sparks, a hard landing raises dust, and a pad taken gives a
+flash and a ring. A demolished car's own view counts down its respawn, a timed match
+announces its last minute with a banner, the clock pops each second of the last
+ten, and in single player the field of view opens up a notch while boosting. The
+particles are projected through the frame's own cameras and drawn over it, a pool of
+forty shared by both views. No overtime banner: the game has no overtime, a tied
+timed match is a draw.
+
 Every kickoff opens with a camera fly-over of the arena and a big countdown. The
 match start and each restart after a goal first swing the camera round the arena,
 high and looking at the centre spot, and bring it down onto the chase camera in
