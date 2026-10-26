@@ -60,6 +60,9 @@ value = 3
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
 timeout = 200
 [[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
+[[step]]
 checkpoint = "car-0-night-first-to-one-results"
 golden = false
 [[step.assert]]
@@ -156,6 +159,9 @@ value = 3
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
 timeout = 200
 [[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
+[[step]]
 checkpoint = "car-1-day-first-to-one-results"
 golden = false
 [[step.assert]]
@@ -251,6 +257,9 @@ value = 3
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
 timeout = 200
+[[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
 [[step]]
 checkpoint = "car-2-sunset-first-to-one-results"
 golden = false

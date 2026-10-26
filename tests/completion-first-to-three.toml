@@ -86,6 +86,9 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
 timeout = 200
 [[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
+[[step]]
 checkpoint = "first-to-three-results"
 golden = false
 [[step.assert]]

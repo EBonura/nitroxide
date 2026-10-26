@@ -28,9 +28,7 @@ use psx_math::sincos::{cos_q12, sin_q12};
 use psx_settings::Profile;
 use psx_vram::{Clut, TextureDepth, TexturePage};
 
-use nitroxide_sim::{
-    DemoMatch, Input, Sim, Team, WinCondition, BOOST_MAX_PIPS, BOOST_SCALE, DEMO_MATCHES,
-};
+use nitroxide_sim::{DemoMatch, Input, Sim, Team, WinCondition, DEMO_MATCHES};
 
 mod assets;
 mod audio;
@@ -39,13 +37,16 @@ mod audio_cost;
 mod settings_menu;
 use settings_menu::{Action as SettingsAction, SettingsRow};
 mod bonnie;
+mod boost_meter;
 #[cfg(feature = "diag-log")]
 mod diaglog;
 mod draw;
+mod fx;
 mod gate_state;
 mod music;
 #[allow(dead_code)]
 mod music_map;
+mod sweep;
 
 /// Whether a match starts in ball cam. Off, as shipped: a dev option
 /// (`cam-ball-default`) for judging it, not a decision.
@@ -664,6 +665,10 @@ struct NitroXide {
     /// `DEMO_IDLE_TICKS`.
     idle: u32,
     demo: DemoState,
+    /// The tile sweep that is hiding a change between the match and a menu.
+    sweep: Option<sweep::Sweep>,
+    /// What each seat's boost meter is showing.
+    meters: boost_meter::Meters,
 }
 
 /// The now-playing disc's three fans as rim offsets from its centre, in
@@ -798,6 +803,8 @@ impl NitroXide {
             card_ask: CardAsk::Idle,
             card_saving: false,
             idle: 0,
+            sweep: None,
+            meters: boost_meter::Meters::new(),
             demo: DemoState {
                 show: 0,
                 t: 0,
@@ -861,6 +868,8 @@ impl NitroXide {
     fn demo_show(&mut self, show: usize) {
         audio::new_match();
         self.sim = Sim::demo(&ROUTE_MATCHES[show]);
+        self.meters = boost_meter::Meters::new();
+        self.meters.track(&self.sim);
         self.demo.show = show;
         self.demo.t = 0;
         self.demo.scored = false;
@@ -1260,6 +1269,9 @@ impl NitroXide {
         audio::new_match();
         audio::ui(audio::Ui::Go);
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
+        // The meters start from this match's tanks, not the last one's.
+        self.meters = boost_meter::Meters::new();
+        self.meters.track(&self.sim);
         self.sim.opponent_ai = self.menu != ROW_PRACTICE && !self.two_player;
         self.ball_cam = [CAM_BALL_DEFAULT; 2];
         self.paused = false;
@@ -1270,6 +1282,68 @@ impl NitroXide {
         self.scoreboard_open = draw::SCOREBOARD_STEPS;
         draw::set_seat_paints(self.paints);
         self.phase = Phase::Play;
+    }
+
+    /// `diag-meter`: drive both cars' boost through a fixed script, so the
+    /// meter is captured at the same ticks every run. Pad pickups are made the
+    /// way the sim makes them (a rise, `pad_taken` and the pad's timer).
+    #[cfg(feature = "diag-meter")]
+    fn script_meter(&mut self) {
+        use nitroxide_sim::{BOOST_MAX_PIPS, BOOST_SCALE, PADS};
+        static mut TICK: u32 = 0;
+        // SAFETY: the game is single-threaded.
+        let t = unsafe {
+            TICK += 1;
+            TICK
+        };
+        let small = PADS.iter().position(|p| !p.big).unwrap_or(0);
+        let big = PADS.iter().position(|p| p.big).unwrap_or(0);
+        self.sim.pad_taken = false;
+        for (seat, car) in [&mut self.sim.car, &mut self.sim.opponent]
+            .into_iter()
+            .enumerate()
+        {
+            // The second seat runs the same script half a second late.
+            let n = t.saturating_sub(seat as u32 * 30);
+            if n == 1 {
+                car.boost = 29 * BOOST_SCALE;
+            }
+            car.boosting = false;
+            match n {
+                60 | 420 => {
+                    car.boost += 12 * BOOST_SCALE;
+                    self.sim.pad_taken = true;
+                    self.sim.pad_timers[small] = 240;
+                }
+                150 => {
+                    car.boost = BOOST_MAX_PIPS * BOOST_SCALE;
+                    self.sim.pad_taken = true;
+                    self.sim.pad_timers[big] = 600;
+                }
+                240..=390 => {
+                    car.boosting = true;
+                    car.boost = (car.boost - 36).max(0);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// What a tile sweep was hiding, done on the tick the tiles are all down.
+    fn apply_change(&mut self, change: sweep::Change, tick: u32) {
+        match change {
+            sweep::Change::Pause => {
+                self.paused = true;
+                self.pause_row = 0;
+            }
+            sweep::Change::Resume => self.paused = false,
+            sweep::Change::Quit => {
+                self.paused = false;
+                self.to_title(tick);
+            }
+            sweep::Change::Kickoff => self.start_match(),
+            sweep::Change::Results => self.phase = Phase::Results,
+        }
     }
 
     /// Back to the front end, with the highlight sweeping in from scratch.
@@ -1427,7 +1501,7 @@ impl NitroXide {
         font.draw_text_scaled_q8(x, y, text, 512, 512, Self::ink(tint));
     }
 
-    fn draw_hud(&self, font: &FontAtlas) {
+    fn draw_hud(&self, gpu: &mut Gpu, font: &FontAtlas, tick: u32) {
         let s = &self.sim;
         let mut dec = [0u8; U32_DEC_MAX];
 
@@ -1507,31 +1581,26 @@ impl NitroXide {
         // Everything below here belongs to a seat rather than to the match, so
         // it repeats once per view and follows that view's geometry. One
         // player gets one pass over the whole screen.
-        let seats: &[(draw::Viewport, &nitroxide_sim::Car, bool)] = if self.two_player {
+        let seats: &[(draw::Viewport, usize, bool)] = if self.two_player {
             // Follows `swap_seats`, or the readouts sit over the other
             // player's dial.
             if self.swap_seats {
                 &[
-                    (draw::Viewport::TOP, &s.opponent, self.ball_cam[1]),
-                    (draw::Viewport::BOTTOM, &s.car, self.ball_cam[0]),
+                    (draw::Viewport::TOP, 1, self.ball_cam[1]),
+                    (draw::Viewport::BOTTOM, 0, self.ball_cam[0]),
                 ]
             } else {
                 &[
-                    (draw::Viewport::TOP, &s.car, self.ball_cam[0]),
-                    (draw::Viewport::BOTTOM, &s.opponent, self.ball_cam[1]),
+                    (draw::Viewport::TOP, 0, self.ball_cam[0]),
+                    (draw::Viewport::BOTTOM, 1, self.ball_cam[1]),
                 ]
             }
         } else {
-            &[(draw::Viewport::FULL, &s.car, self.ball_cam[0])]
+            &[(draw::Viewport::FULL, 0, self.ball_cam[0])]
         };
-        for &(vp, car, ball_cam) in seats {
-            // Boost, as the number inside the dial `draw` puts on the right.
-            let pips = (car.boost / BOOST_SCALE).clamp(0, BOOST_MAX_PIPS) as u32;
-            let text = u32_dec(&mut dec, pips);
-            let w = font.text_width(text) as i16;
-            let cx = draw::boost_gauge_x(vp);
-            let cy = draw::boost_gauge_y(vp);
-            Self::shadowed(font, cx - w / 2, cy - 6, text, (255, 255, 255));
+        for &(vp, seat, ball_cam) in seats {
+            // Boost, as the slanted-cell meter on the right.
+            boost_meter::draw(gpu, font, vp, self.meters.seat(seat), tick);
 
             if ball_cam {
                 Self::shadowed(
@@ -2553,6 +2622,20 @@ impl Scene for NitroXide {
                 self.scoreboard_open.saturating_sub(1)
             };
         }
+        // A tile sweep is hiding a change between the match and a menu: the
+        // world stands still under it, the pads are ignored, and the change
+        // itself lands on the tick the tiles are all down.
+        if let Some(mut sweep) = self.sweep {
+            sweep.t += 1;
+            if sweep.t == sweep::SWAP_TICK {
+                self.apply_change(sweep.change, ctx.sim_tick.as_u32());
+            }
+            if sweep.t < sweep::TICKS {
+                self.sweep = Some(sweep);
+                return;
+            }
+            self.sweep = None;
+        }
         // The controls page owns the pad while it is up, whichever menu opened
         // it. SELECT opens it from the title and from the pause menu (the
         // settings panel and the card question keep their own pads), so no
@@ -2808,7 +2891,7 @@ impl Scene for NitroXide {
                 // Starting the match says go; a lock-in that is not the last one
                 // says it is locked.
                 if self.all_ready() {
-                    self.start_match();
+                    self.sweep = Some(sweep::Sweep::new(sweep::Change::Kickoff));
                 } else if readied {
                     audio::ui(audio::Ui::Ready);
                 }
@@ -2851,13 +2934,13 @@ impl Scene for NitroXide {
                     audio::ui(audio::Ui::Move);
                 }
                 if ctx.just_pressed(button::START) || p2(button::START) {
-                    self.paused = false;
                     audio::ui(audio::Ui::Close);
+                    self.sweep = Some(sweep::Sweep::new(sweep::Change::Resume));
                 } else if ctx.just_pressed(button::CROSS) || p2(button::CROSS) {
                     match rows[self.pause_row] {
                         PauseRow::Resume => {
-                            self.paused = false;
                             audio::ui(audio::Ui::Close);
+                            self.sweep = Some(sweep::Sweep::new(sweep::Change::Resume));
                         }
                         // Stays on the menu: the world is still drawn behind
                         // it, so the swap is visible the moment it happens and
@@ -2873,8 +2956,7 @@ impl Scene for NitroXide {
                         PauseRow::Quit => {
                             audio::stop_all();
                             audio::ui(audio::Ui::Back);
-                            self.paused = false;
-                            self.to_title(ctx.sim_tick.as_u32());
+                            self.sweep = Some(sweep::Sweep::new(sweep::Change::Quit));
                         }
                     }
                 }
@@ -2882,9 +2964,8 @@ impl Scene for NitroXide {
             Phase::Play => {
                 if ctx.just_pressed(button::START) {
                     audio::stop_all();
-                    self.paused = true;
                     audio::ui(audio::Ui::Open);
-                    self.pause_row = 0;
+                    self.sweep = Some(sweep::Sweep::new(sweep::Change::Pause));
                     return;
                 }
                 if ctx.just_pressed(button::TRIANGLE) {
@@ -2911,6 +2992,9 @@ impl Scene for NitroXide {
                     self.sim.tick(&input);
                 }
                 draw::track_tick(&self.sim);
+                #[cfg(feature = "diag-meter")]
+                self.script_meter();
+                self.meters.track(&self.sim);
                 #[cfg(feature = "boot-demo-fx")]
                 self.rearm_demo_fx();
                 #[cfg(feature = "boot-roof-length")]
@@ -2995,7 +3079,7 @@ impl Scene for NitroXide {
                 if self.sim.finished() {
                     audio::stop_all();
                     audio::match_end();
-                    self.phase = Phase::Results;
+                    self.sweep = Some(sweep::Sweep::new(sweep::Change::Results));
                 }
             }
             Phase::Results => {
@@ -3026,6 +3110,7 @@ impl Scene for NitroXide {
                 // what happens.
                 self.sim.tick(&Input::default());
                 draw::track_tick(&self.sim);
+                self.meters.track(&self.sim);
                 #[cfg(feature = "diag-audio-cost")]
                 audio_cost::measure(audio_cost::UPDATE, || {
                     audio::update(&self.sim, self.two_player)
@@ -3164,6 +3249,9 @@ impl NitroXide {
     /// over everything the brightness.
     fn draw_overlay(&mut self, ctx: &mut Ctx) {
         self.draw_overlay_scene(ctx);
+        if let Some(sweep) = self.sweep {
+            sweep::draw(Gpu::from_dma_mut(ctx.gpu_dma()), sweep.t);
+        }
         if matches!(self.card_ask, CardAsk::Asking | CardAsk::Formatting) {
             let display = self.display.as_ref().expect("display font");
             let hud = self.hud.as_ref().expect("hud font");
@@ -3289,7 +3377,8 @@ impl NitroXide {
             }
             Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
             Phase::Play => {
-                self.draw_hud(hud);
+                let tick = ctx.sim_tick.as_u32();
+                self.draw_hud(Gpu::from_dma_mut(ctx.gpu_dma()), hud, tick);
                 // The goal banner has the corner to itself: the plate slides
                 // in at the song's start, which a goal celebration often
                 // shares, and drawn over the headline it cut the end off
@@ -3319,7 +3408,8 @@ impl NitroXide {
             Phase::Results => self.draw_results(display, hud),
             Phase::Demo if self.demo.cut > 0 => return,
             Phase::Demo => {
-                self.draw_hud(hud);
+                let tick = ctx.sim_tick.as_u32();
+                self.draw_hud(Gpu::from_dma_mut(ctx.gpu_dma()), hud, tick);
                 if self.sim.goal_freeze > 0 && self.two_player {
                     self.draw_goal_banner(display);
                 }

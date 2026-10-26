@@ -176,27 +176,10 @@ impl Viewport {
     };
 }
 
-/// How far in from a view's right edge the boost dial's centre sits. Exported
-/// so the HUD's boost readout lands in the middle of the dial it belongs to.
-pub const BOOST_GAUGE_INSET: i16 = 52;
-
 /// The seam between two split views, and its half-width in pixels. Slot 0 is
 /// the front of the table and nothing else in a match uses it.
 const SPLIT_SEAM_SLOT: usize = 0;
 const SPLIT_SEAM_W: i16 = 2;
-
-/// Centre of the boost dial, and its readout, for one view.
-pub const fn boost_gauge_x(vp: Viewport) -> i16 {
-    vp.x + vp.w - BOOST_GAUGE_INSET
-}
-
-/// How far up from a view's bottom edge the boost dial's centre sits.
-pub const BOOST_GAUGE_RISE: i16 = 50;
-
-/// Vertical centre of the boost dial for one view.
-pub const fn boost_gauge_y(vp: Viewport) -> i16 {
-    vp.y + vp.h - BOOST_GAUGE_RISE
-}
 
 /// Slack around the viewport that the screen-space rejection tests allow, so a
 /// quad straddling an edge is kept rather than popped. The cull frustum uses
@@ -6163,49 +6146,6 @@ impl Builder<'_> {
         }
     }
 
-    /// The boost gauge: an arc that fills as the tank does, with the number in
-    /// the middle. A flat row of pips reads as a debug bar; a dial reads as an
-    /// instrument, and it is what the original uses.
-    ///
-    /// The boost dial, centred `cx` across. One player's screen puts it near
-    /// the right edge; a split game gives each half its own.
-    fn boost_gauge(&mut self, cx: i16, cy: i16, boost_pips: i32) {
-        const SEGS: i32 = 18;
-        // Two thirds the size in a half-height view, or the dial is a
-        // quarter of the picture.
-        let (r_out, r_in) = if split_view() { (20, 15) } else { (30, 22) };
-        // Sweep three quarters of a turn, opening at the bottom right so the
-        // gap faces away from the pitch.
-        const START: i32 = 1300;
-        const SWEEP: i32 = 3000;
-
-        let filled = boost_pips * SEGS / sim::BOOST_MAX_PIPS;
-        for i in 0..SEGS {
-            let lit = i < filled;
-            let c = if lit {
-                // Warms toward the top of the tank, so a full one reads at a
-                // glance without having to count.
-                let heat = (i * 255 / SEGS) as u8;
-                (255, 150 + heat / 3, 40)
-            } else {
-                (44, 48, 62)
-            };
-            let a0 = (START + SWEEP * i / SEGS) as u16;
-            let a1 = (START + SWEEP * (i + 1) / SEGS - 40) as u16;
-            let p = |a: u16, rad: i32| {
-                (
-                    cx + ((sin_q12(a) * rad) >> 12) as i16,
-                    cy - ((cos_q12(a) * rad) >> 12) as i16,
-                )
-            };
-            self.screen_quad(
-                1,
-                [p(a0, r_in), p(a0, r_out), p(a1, r_in), p(a1, r_out)],
-                [c; 4],
-            );
-        }
-    }
-
     /// The explosion a demolished car leaves behind, at the point of contact.
     ///
     /// The sim keeps a wreck where it was hit until its timer runs out, so the
@@ -8483,7 +8423,7 @@ pub fn render_menu(s: &Sim, cars: [usize; SEATS], panels: FrontPanels, pair: boo
         PENDING = false;
         SPLIT_PENDING = false;
     }
-    build_view(s, cars, view, Viewport::FULL, Some(panels), 0);
+    build_view(s, cars, view, Viewport::FULL, Some(panels));
     submit_detached();
 }
 
@@ -8651,7 +8591,7 @@ fn render_view(
             camera_slot,
         )
     });
-    build_view(s, cars, view, vp, None, subject.boost / sim::BOOST_SCALE);
+    build_view(s, cars, view, vp, None);
 }
 
 /// The whole scratchpad, as a call stack for `build_view`'s phases.
@@ -8675,18 +8615,11 @@ fn on_scratchpad<R>(f: impl FnOnce() -> R) -> R {
 /// Build the ordering table for one view from an already-chosen camera.
 ///
 /// `front` selects title or player-choice fascia on the front end. Either
-/// suppresses the match furniture -- scoreboard, clock and boost dial -- and
+/// suppresses the match furniture -- scoreboard, clock and boost meter -- and
 /// puts its own screen-space panels in their place. Everything else is the
 /// arena exactly as a match draws it, which is the point: the menu stands in
 /// the same building.
-fn build_view(
-    s: &Sim,
-    cars: [usize; SEATS],
-    view: View,
-    vp: Viewport,
-    front: Option<FrontPanels>,
-    boost: i32,
-) {
+fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Option<FrontPanels>) {
     // World-space rig into camera space once; each object then rotates it
     // into its own local frame.
     let lights = staged!(S_SETUP, { LIGHTS.rotated(&view.v) });
@@ -8786,18 +8719,15 @@ fn build_view(
         });
         staged!(S_TRIM, {
             on_scratchpad(|| {
-                // The dial belongs to whoever is looking through this view, and
-                // sits the same distance in from that view's right edge.
                 if let Some(panels) = &front {
                     match panels {
                         FrontPanels::Title(menu) => menu_panels(b, menu),
                         FrontPanels::Select(select) => select_panels(b, select),
                     }
                 } else {
-                    b.boost_gauge(boost_gauge_x(vp), boost_gauge_y(vp), boost);
-                    // The scoreboard is not here: it belongs to the match rather
-                    // than to a view, so the overlay draws it once over the whole
-                    // screen (see `scoreboard`).
+                    // The scoreboard and the boost meters are not here: the overlay
+                    // draws them over the finished frame (see `scoreboard` and
+                    // `boost_meter`).
                     b.goal_burst(s);
                     b.demo_burst(s);
                 }

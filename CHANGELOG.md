@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+A tile sweep now hides every change between the match and its menus. Sixteen pixel
+tiles grow from their centres across the screen from left to right, the screen
+underneath is swapped on the tick the last one is down, and the tiles shrink away
+the same way: half a second in all, drawn as flat quads over the finished frame
+with no copy of the old one. It covers opening the pause menu, resuming, quitting to
+the title, kicking off from the select screen and the final whistle into the results.
+The world stands still under it and the pads are ignored until it is done.
+
+The boost dial in the corner is now a bar of ten slanted cells, the shape of the
+menu buttons, going from amber to orange, with the number on a small slanted tag
+above it, inside the television's title-safe area. A pad pickup runs a white sweep
+along the bar with three chevrons flashing past its end, the big pad adds an outline
+flash, the fill climbs to a new value over a fifth of a second, and while boosting
+the last lit cell flickers and short streaks trail off the back. Split screen gets
+one per half, at two thirds the size. The old dial is gone from the ordering table.
+
 The credits moved off the boot splash. The splash is the Bonnie Studios logo and
 "Built with PSoXide" and nothing else; the cars, music, crowd, tyre squeal, impact
 and font credits are on a Credits row at the bottom of the title menu, two pages,

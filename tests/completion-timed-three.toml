@@ -36,7 +36,8 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
-wait = 8
+# The tile sweep into the match swaps the screen after fifteen ticks.
+wait = 24
 checkpoint = "timed-kickoff"
 golden = false
 [[step.assert]]
@@ -54,6 +55,9 @@ hold = 160
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
 timeout = 19000
+[[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
 [[step]]
 checkpoint = "timed-results"
 golden = false

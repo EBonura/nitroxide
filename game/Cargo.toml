@@ -13,6 +13,10 @@ default = ["pad-irq-engine"]
 pad-irq-engine = ["psx-engine/pad-irq-engine"]
 # Dev shortcut: boot straight into the match for headless capture.
 boot-play = []
+# Dev: boot into a match whose boost meters are driven through a fixed script
+# (small pickup, big pickup, a long burn, another pickup) so the meter can be
+# captured at known ticks.
+diag-meter = ["boot-play"]
 # Dev shortcut: the normal kickoff with both player views enabled, used to
 # profile split-screen renderer changes without requiring a second host pad.
 boot-split-play = []

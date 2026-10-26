@@ -78,7 +78,7 @@ signed = true
 [[step]]
 press = ["start"]
 hold = 4
-wait = 8
+wait = 34
 [[step]]
 press = ["down"]
 hold = 4
@@ -87,7 +87,7 @@ repeat = 2
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 34
 [[step]]
 checkpoint = "quit-to-title"
 golden = false
@@ -104,7 +104,7 @@ wait = 12
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 0
+wait = 18
 [[step]]
 checkpoint = "fresh-match-reset"
 golden = false
