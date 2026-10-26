@@ -166,7 +166,7 @@ op = "zero"
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 24
 [[step]]
 checkpoint = "returned-title"
 golden = false

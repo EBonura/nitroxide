@@ -45,6 +45,7 @@ mod draw;
 mod feedback;
 mod fx;
 mod gate_state;
+mod loader;
 mod music;
 #[allow(dead_code)]
 mod music_map;
@@ -60,6 +61,10 @@ const CAM_BALL_DEFAULT: bool = cfg!(feature = "cam-ball-default");
 /// 18 px wide, which is right for a title and far too wide for a clock.
 const DISPLAY_TPAGE: TexturePage = TexturePage::new(320, 0, TextureDepth::Bit4);
 const DISPLAY_CLUT: Clut = Clut::new(320, 256);
+/// The display face's palette again with the semi-transparency bit set on the
+/// ink, so the same glyphs can be blended (the font's own palette draws opaque
+/// whatever blend a material names). Sixteen halfwords in the row below it.
+const DISPLAY_BLEND_CLUT: Clut = Clut::new(320, 257);
 /// Clear of the display atlas at 320 and the arena's own texture page at 384.
 const HUD_TPAGE: TexturePage = TexturePage::new(512, 0, TextureDepth::Bit4);
 const HUD_CLUT: Clut = Clut::new(512, 256);
@@ -960,10 +965,23 @@ impl NitroXide {
         self.scoreboard_open = draw::SCOREBOARD_STEPS;
     }
 
+    /// Bake the arena's lighting for the look the player has chosen, if it is
+    /// not the one baked, behind the loading bar, and drop the clock debt the
+    /// wait leaves.
+    fn apply_arena(&mut self, ctx: &mut Ctx) {
+        if draw::arena_time() == self.arena_time {
+            return;
+        }
+        let mut loading = loader::Loader::begin(ctx);
+        draw::set_arena_time_with(self.arena_time, &mut |f| loading.report(ctx, f));
+        loading.finish(ctx);
+        ctx.request_timing_realign();
+    }
+
     /// Push the arena look, paints and cars to the renderer now rather than
     /// on the next frame, and drop the clock debt the work leaves.
     fn dress(&mut self, ctx: &mut Ctx) {
-        draw::set_arena_time(self.arena_time);
+        self.apply_arena(ctx);
         draw::set_seat_paints(self.paints);
         for seat in 0..2 {
             draw::set_appearance(seat, self.cars[seat], self.paints[seat]);
@@ -1109,7 +1127,6 @@ impl NitroXide {
                 } else {
                     self.arena_time.prev()
                 };
-                draw::set_arena_time(self.arena_time);
             }
             SettingsRow::Sound => {
                 audio::set_muted(!audio::muted());
@@ -2510,11 +2527,16 @@ impl Scene for NitroXide {
         if !self.profile.screen_offset.is_centre() {
             self.apply_screen_offset(ctx);
         }
-        draw::setup();
+        // The load shows as a bar: the tables are built and the lighting baked
+        // (a third of the wait), the arena atlas comes off the disc (a third), and
+        // the sound bank goes up to the SPU (the rest).
+        let mut loading = loader::Loader::begin(ctx);
+        draw::setup(&mut |f| loading.report(ctx, f * 34 / 100));
         assert!(
             assets::load_arena_texture(),
             "arena texture missing or invalid in WORLD.PAK"
         );
+        loading.report(ctx, 4096 * 69 / 100);
         // The last disc read of the game: after this the drive is the music's.
         self.music.locate();
         #[cfg(feature = "arena-day")]
@@ -2527,7 +2549,7 @@ impl Scene for NitroXide {
             self.arena_time = draw::ArenaTime::Sunset;
             draw::set_arena_time(self.arena_time);
         }
-        audio::init();
+        audio::init(&mut |f| loading.report(ctx, 4096 * 69 / 100 + f * 31 / 100));
         #[cfg(feature = "diag-audio-cost")]
         audio_cost::init();
         audio::set_muted(self.profile.sfx_volume == 0);
@@ -2539,6 +2561,12 @@ impl Scene for NitroXide {
             DISPLAY_CLUT,
         ));
         self.hud = Some(FontAtlas::upload(&KENNEY_PIXEL, HUD_TPAGE, HUD_CLUT));
+        let mut blend_clut = [0u16; 16];
+        blend_clut[1] = 0xffff;
+        psx_vram::upload_16bpp(
+            psx_vram::VramRect::new(DISPLAY_BLEND_CLUT.x(), DISPLAY_BLEND_CLUT.y(), 16, 1),
+            &blend_clut,
+        );
         psx_vram::upload_16bpp(
             psx_vram::VramRect::new(BONNIE_TPAGE.x(), BONNIE_TPAGE.y(), 32, 128),
             &bonnie::COVER_BONNIE,
@@ -2551,6 +2579,7 @@ impl Scene for NitroXide {
             psx_vram::VramRect::new(BONNIE_CLUT.x(), BONNIE_CLUT.y(), 16, 1),
             &clut,
         );
+        loading.finish(ctx);
         #[cfg(feature = "boot-play")]
         {
             self.phase = Phase::Play;
@@ -2737,6 +2766,8 @@ impl Scene for NitroXide {
         // Publish the prior completed simulation tick before this update can
         // return early for a menu, pause, card prompt or attract transition.
         gate_state::publish(self, ctx.sim_tick.as_u32().saturating_sub(1));
+        // An arena look chosen on the select screen or in the settings.
+        self.apply_arena(ctx);
         if self.display_dirty {
             self.display_dirty = false;
             self.apply_screen_offset(ctx);
@@ -3035,7 +3066,6 @@ impl Scene for NitroXide {
                                 } else {
                                     self.arena_time.prev()
                                 };
-                                draw::set_arena_time(self.arena_time);
                             }
                             ROW_RULE => {
                                 let n = MATCH_RULES.len() as i32;
@@ -3401,7 +3431,6 @@ impl Scene for NitroXide {
         // walls should already be wearing what the select screen has picked.
         // Idempotent: this only does work on the frame a colour moved.
         draw::set_seat_paints(self.paints);
-        draw::set_arena_time(self.arena_time);
         // The goal banner rides in a single view's table; split screen draws
         // it over the finished frame (see `draw_goal_banner`).
         let banner = match (self.phase, self.display.as_ref()) {

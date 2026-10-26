@@ -914,11 +914,21 @@ fn arena_look() -> ArenaLook {
 /// Change the arena look and rebuild the static lighting tables. This is paid
 /// once when the setting changes, never in the steady-state frame loop.
 pub fn set_arena_time(time: ArenaTime) {
+    set_arena_time_with(time, &mut |_| {});
+}
+
+/// The look the lighting is baked for.
+pub fn arena_time() -> ArenaTime {
+    unsafe { ARENA_TIME }
+}
+
+/// [`set_arena_time`] reporting how far the bake has got, Q12, as it goes.
+pub fn set_arena_time_with(time: ArenaTime, report: &mut dyn FnMut(i32)) {
     if unsafe { ARENA_TIME } == time {
         return;
     }
     unsafe { ARENA_TIME = time };
-    build_lighting();
+    build_lighting(report);
     if unsafe { CURB_PAINTED } {
         paint_curb();
     }
@@ -1552,7 +1562,7 @@ fn floor_tint(x: i32, z: i32) -> Rgb {
 }
 
 /// Bake every static light table. Runs once, at boot.
-fn build_lighting() {
+fn build_lighting(report: &mut dyn FnMut(i32)) {
     // Pitch. Up in render space is -Y.
     let step_x = sim::HALF_X * 2 / TILES_X;
     let step_z = sim::HALF_Z * 2 / TILES_Z;
@@ -1592,6 +1602,7 @@ fn build_lighting() {
         }
     }
     paint_lines();
+    report(ONE_Q12 / (SPAN_COUNT as i32 + 2));
 
     // Walls. One tint per (span, ring, split position).
     let profile = Builder::profile();
@@ -1638,6 +1649,7 @@ fn build_lighting() {
                 }
             }
         }
+        report(((si as i32 + 2) * ONE_Q12) / (SPAN_COUNT as i32 + 2));
     }
 
     // Roof, seen edge-on from a ground camera but lit all the same.
@@ -3143,16 +3155,25 @@ impl Cull {
 }
 
 /// Screen offset and projection plane. Call once at boot.
-pub fn setup() {
+/// One in Q12.
+const ONE_Q12: i32 = 4096;
+
+/// Build every table the renderer draws from, reporting how far it has got, Q12
+/// of the whole, between its steps. The lighting bake is nearly all of it.
+pub fn setup(report: &mut dyn FnMut(i32)) {
     scene::set_screen_offset((SCREEN_W as i32 / 2) << 16, (SCREEN_H as i32 / 2) << 16);
     use_plane(MENU_PROJ_H);
     build_meshes();
     build_spans();
     build_stands();
     build_lines();
-    build_lighting();
+    report(150);
+    build_lighting(&mut |f| report(150 + (f * 3500 >> 12)));
+    report(3650);
     build_car_materials();
+    report(4000);
     build_burst();
+    report(ONE_Q12);
 }
 
 /// The chase camera for one player. `subject` is the car this view follows,

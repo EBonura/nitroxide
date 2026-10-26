@@ -19,13 +19,14 @@ use crate::draw::seat_signal;
 use crate::fx::{self, Rgb, ONE};
 
 /// Ticks of live play the GO! burst stays up for.
-const GO_TICKS: u32 = 8;
+const GO_TICKS: u32 = 5;
 /// Ticks a leaving number's echo takes to grow and fade.
 const ECHO_TICKS: i32 = 10;
 /// The plate behind a number and what the ends of it are made of.
 const PLATE: Rgb = (13, 20, 48);
 const RULE: Rgb = (226, 232, 244);
 const GOLD: Rgb = (255, 222, 110);
+const WHITE: Rgb = (255, 255, 255);
 
 /// Draw the countdown or the burst for this tick of the sim, if either is up.
 /// `held` means the fly-over is still running and nothing shows.
@@ -53,12 +54,13 @@ fn draw_in(gpu: &mut Gpu, font: &FontAtlas, sim: &Sim, cx: i32, cy: i32, split: 
         let text = ["1", "2", "3"][(digit.clamp(1, 3) - 1) as usize];
         let punch = punch_in(age);
         let fade = if age > 52 { 256 - (age - 52) * 30 } else { 256 };
-        plate(gpu, cx, cy, punch, 0, split, fade);
-        // As each number leaves, its echo swells behind the one that replaces it.
+        // As each number leaves, its echo swells behind the banner and the one
+        // that replaces it, so only what reaches past the banner shows.
         if digit < 3 && age < ECHO_TICKS {
             let gone = ["", "2", "3"][digit as usize];
             echo(gpu, font, gone, cx, cy, rest, age * ONE / ECHO_TICKS);
         }
+        plate(gpu, cx, cy, punch, 0, split, fade);
         big_text(
             font,
             text,
@@ -167,24 +169,22 @@ fn big_text(font: &FontAtlas, text: &str, cx: i32, cy: i32, scale: i32, tint: Rg
     font.draw_text_scaled_q8(x, y, text, q, q, ink);
 }
 
-/// The echo of a number that has just left: the same word in the same colour,
-/// swelling from its own size to about one and a half times it while it fades out,
-/// added to what is behind it. `progress` runs from 0 to one (Q12) over its life.
+/// The echo of a number that has just left: a faint outline of it, in its colour,
+/// swelling to about twice its size while it fades out. It is the number a little
+/// larger, added, less the number itself, subtracted by the same amount, so only the
+/// rim is left. `progress` runs from 0 to one (Q12) over its life.
 fn echo(gpu: &mut Gpu, font: &FontAtlas, text: &str, cx: i32, cy: i32, rest: i32, progress: i32) {
     let k = fx::ease_out(progress);
-    let scale = rest * (256 + (154 * k >> 12)) >> 8;
-    let alpha = 256 - (256 * progress >> 12);
+    let scale = rest * (256 + (230 * k >> 12)) >> 8;
+    let alpha = (256 - (256 * progress >> 12)) * 150 >> 8;
     let tint = fx::dim((255, 232, 130), alpha);
+    let tint = (tint.0 / 2, tint.1 / 2, tint.2 / 2);
+    // The outline is a seventh of the number's own size wide.
+    let rim = scale / 7;
+    let (x, y) = ink_origin(font, text, cx, cy, scale + rim);
+    additive_text(gpu, font, text, x, y, scale + rim, tint, BlendMode::Add);
     let (x, y) = ink_origin(font, text, cx, cy, scale);
-    additive_text(
-        gpu,
-        font,
-        text,
-        x,
-        y,
-        scale,
-        (tint.0 / 2, tint.1 / 2, tint.2 / 2),
-    );
+    additive_text(gpu, font, text, x, y, scale, tint, BlendMode::Subtract);
 }
 
 /// `text` scaled by `scale` (Q8) and drawn additively from the display face's
@@ -199,6 +199,7 @@ fn additive_text(
     y: i32,
     scale: i32,
     tint: Rgb,
+    blend: BlendMode,
 ) {
     let face = font.font();
     let cell = (u16::from(face.glyph_w).max(1)).div_ceil(4) * 4;
@@ -209,10 +210,10 @@ fn additive_text(
         ((gh * scale + 128) >> 8).max(1),
     );
     let material = TextureMaterial::blended(
-        crate::DISPLAY_CLUT.uv_word(),
+        crate::DISPLAY_BLEND_CLUT.uv_word(),
         crate::DISPLAY_TPAGE.uv_word(0),
         tint,
-        BlendMode::Add,
+        blend,
     );
     let mut cursor = x << 8;
     for ch in text.chars() {
@@ -245,9 +246,8 @@ fn additive_text(
 /// GO!: the word pops, a flash sweeps the plate's colours across the screen and
 /// rays leave the centre.
 fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32, split: bool) {
-    // Over in eight ticks: the word punches out as the cars launch and is gone
-    // before they have moved, so nothing lingers over the pitch.
-    let fade = 256 - t * 256 / GO_TICKS as i32;
+    // Over in five ticks: the word punches out in white as the cars launch and is
+    // simply gone, not faded, so nothing lingers over the pitch.
     let scale = match t {
         0 => 160,
         1 => 420,
@@ -255,32 +255,17 @@ fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32
         _ => 440 + (t - 2) * 40,
     };
     if t < 3 {
-        plate(gpu, cx, cy, scale.min(300) * 3 / 4 + 70, 90, split, fade);
+        plate(gpu, cx, cy, scale.min(300) * 3 / 4 + 70, 90, split, 256);
     }
     if t < ECHO_TICKS {
         echo(gpu, font, "1", cx, cy, rest, t * ONE / GO_TICKS as i32);
     }
-    big_text(
-        font,
-        "GO!",
-        cx,
-        cy,
-        rest * 3 / 5 * scale >> 8,
-        fx::dim(GOLD, fade),
-    );
+    big_text(font, "GO!", cx, cy, rest * 3 / 5 * scale >> 8, WHITE);
     fx::additive(gpu);
     if t < 2 {
         let a = 230 - t * 90;
         let (w, h) = (if split { 320 } else { 360 }, if split { 44 } else { 70 });
-        fx::slanted_blended(
-            gpu,
-            cx - w / 2,
-            cy - h / 2,
-            w,
-            h,
-            12,
-            fx::dim((255, 255, 255), a),
-        );
+        fx::slanted_blended(gpu, cx - w / 2, cy - h / 2, w, h, 12, fx::dim(WHITE, a));
     }
     // Rays leave the word and are gone with it.
     {
@@ -298,11 +283,11 @@ fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32
                     cy + ((c * r * 3 / 4) >> 12) + py * k,
                 )
             };
-            let colour = if i % 2 == 0 { GOLD } else { (255, 255, 255) };
+            let colour = if i % 2 == 0 { GOLD } else { WHITE };
             fx::quad_blended(
                 gpu,
                 [p(near, -1), p(near, 1), p(far, -1), p(far, 1)],
-                fx::dim(colour, fade),
+                colour,
             );
         }
     }

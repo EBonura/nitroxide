@@ -525,7 +525,9 @@ fn at(
 }
 
 /// Bring the SPU up, upload the samples, set the mixer up. Once, at boot.
-pub fn init() {
+/// Set up the SPU and upload the sound bank, reporting how far it has got, Q12,
+/// after each sound.
+pub fn init(report: &mut dyn FnMut(i32)) {
     spu::init();
     spu::set_main_volume(Volume(0x3fff), Volume(0x3fff));
     // Route the CD's own audio into the mix, for the XA music `music.rs`
@@ -565,6 +567,7 @@ pub fn init() {
         if i == Snd::Beep as usize {
             unsafe { UI_HI = sample.addr().byte_offset() };
         }
+        report(((i + 1) * 4096 / BANK.len()) as i32);
     }
 
     // The boost is held rather than struck.
