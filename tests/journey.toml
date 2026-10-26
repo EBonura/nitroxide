@@ -97,7 +97,8 @@ value = 2
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 2
+# The tile sweep into the match swaps the screen after fifteen ticks.
+wait = 34
 [[step]]
 checkpoint = "kickoff"
 golden = false
