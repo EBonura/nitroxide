@@ -1489,6 +1489,11 @@ pub struct Sim {
     /// [`KICKOFF_HOLD_TICKS`]); zero while play is live. Counts down
     /// whatever is on the pads, and the game draws its countdown from it.
     pub kickoff_hold: u16,
+    /// A timed match that was level at 0:00 plays on until the next goal, which
+    /// wins it. True from the kickoff that starts the extra play.
+    pub overtime: bool,
+    /// Ticks of live play since overtime began: the clock counts up from here.
+    pub overtime_ticks: u32,
     /// Ticks since the cars were placed for kickoff.
     kickoff_ticks: u8,
     /// What the opponent is currently driving at, held between ticks.
@@ -1558,6 +1563,8 @@ impl Sim {
             pad_timers: [0; PADS.len()],
             opponent_ai: true,
             kickoff_hold: 0,
+            overtime: false,
+            overtime_ticks: 0,
             kickoff_ticks: 0,
             ai_target: AiTarget::None,
             ai_target_ticks: 0,
@@ -2067,7 +2074,13 @@ impl Sim {
     /// True once this match's selected condition has been reached.
     pub fn finished(&self) -> bool {
         match self.win_condition {
-            WinCondition::TimeLimit(_) => self.clock == 0,
+            // Level at 0:00 is not the end: it goes to overtime. In overtime the
+            // winning goal's celebration plays out first, as a goal-limit match's does.
+            WinCondition::TimeLimit(_) => {
+                self.clock == 0
+                    && self.score_blue != self.score_orange
+                    && (!self.overtime || self.goal_freeze == 0)
+            }
             WinCondition::GoalLimit(target) => {
                 target > 0
                     && self.goal_freeze == 0
@@ -2083,8 +2096,18 @@ impl Sim {
             WinCondition::GoalLimit(target) => {
                 target > 0 && (self.score_blue >= target || self.score_orange >= target)
             }
-            WinCondition::TimeLimit(_) => false,
+            WinCondition::TimeLimit(_) => self.overtime && self.score_blue != self.score_orange,
         }
+    }
+
+    /// The clock is out and the score level: put the ball and both cars back on
+    /// their kickoff spots and play on, three-two-one first, until the next goal.
+    fn begin_overtime(&mut self) {
+        self.overtime = true;
+        self.overtime_ticks = 0;
+        self.kickoff();
+        self.pad_timers = [0; PADS.len()];
+        self.kickoff_hold = KICKOFF_HOLD_TICKS;
     }
 
     /// Advance one 60 Hz tick.
@@ -2162,8 +2185,12 @@ impl Sim {
             self.kickoff_hold -= 1;
             return;
         }
-        if matches!(self.win_condition, WinCondition::TimeLimit(_)) && self.clock > 0 {
-            self.clock -= 1;
+        if matches!(self.win_condition, WinCondition::TimeLimit(_)) {
+            if self.clock > 0 {
+                self.clock -= 1;
+            } else if self.overtime {
+                self.overtime_ticks = self.overtime_ticks.saturating_add(1);
+            }
         }
         self.kickoff_ticks = self.kickoff_ticks.saturating_add(1);
         let blue = if self.blue_ai {
@@ -2205,6 +2232,15 @@ impl Sim {
         }
         self.hit = a.max(b);
         self.collide_cars();
+        // The whistle with the score level, and no goal being celebrated.
+        if matches!(self.win_condition, WinCondition::TimeLimit(_))
+            && self.clock == 0
+            && !self.overtime
+            && self.goal_freeze == 0
+            && self.score_blue == self.score_orange
+        {
+            self.begin_overtime();
+        }
     }
 
     /// Run the boost pads down and hand out what anybody drove over.
@@ -6959,19 +6995,108 @@ mod tests {
     #[test]
     fn clock_runs_out() {
         let mut sim = solo();
+        sim.score_blue = 1;
         sim.clock = 3;
         coast(&mut sim, 10);
         assert!(sim.finished());
+        assert!(!sim.overtime, "a match that was not level went to overtime");
     }
 
     #[test]
     fn authored_time_limit_sets_and_ends_the_clock() {
         let mut sim = Sim::with_win_condition(WinCondition::TimeLimit(3));
         sim.opponent_ai = false;
+        sim.score_orange = 1;
         coast(&mut sim, 2);
         assert_eq!(sim.clock, 1);
         assert!(!sim.finished());
         coast(&mut sim, 1);
+        assert!(sim.finished());
+    }
+
+    /// A timed match that is level when the clock runs out goes to overtime.
+    fn level_at_the_whistle() -> Sim {
+        let mut sim = Sim::with_win_condition(WinCondition::TimeLimit(3));
+        sim.opponent_ai = false;
+        coast(&mut sim, 3);
+        sim
+    }
+
+    #[test]
+    fn a_tie_at_zero_goes_to_overtime_from_a_fresh_kickoff() {
+        let mut sim = Sim::with_win_condition(WinCondition::TimeLimit(30));
+        sim.opponent_ai = false;
+        // Out of position, to see the reset.
+        sim.car.p = V3::new(uu(900), uu(CAR_REST_Y), uu(1200));
+        sim.ball.p = V3::new(uu(500), uu(BALL_R), uu(700));
+        coast(&mut sim, 30);
+        assert_eq!(sim.clock, 0);
+        assert!(sim.overtime, "a level match ended at 0:00");
+        assert!(!sim.finished());
+        assert_eq!(sim.kickoff_hold, KICKOFF_HOLD_TICKS, "no countdown");
+        assert_eq!(sim.ball.p, V3::new(0, uu(BALL_R), 0), "ball not recentred");
+        assert_ne!(sim.car.p.x, uu(900), "the car stayed where it was");
+        assert_eq!(sim.overtime_ticks, 0);
+    }
+
+    #[test]
+    fn overtime_clock_counts_live_play_only() {
+        let mut sim = level_at_the_whistle();
+        assert!(sim.overtime);
+        coast(&mut sim, KICKOFF_HOLD_TICKS as u32);
+        assert_eq!(sim.overtime_ticks, 0, "the countdown counted as overtime");
+        coast(&mut sim, 90);
+        assert_eq!(sim.overtime_ticks, 90);
+        assert_eq!(sim.clock, 0, "the countdown clock moved");
+    }
+
+    #[test]
+    fn the_first_goal_in_overtime_wins_after_its_celebration() {
+        for team in [Team::Blue, Team::Orange] {
+            let mut sim = level_at_the_whistle();
+            coast(&mut sim, KICKOFF_HOLD_TICKS as u32 + 10);
+            let spot = V3::new(uu(200), uu(BALL_R), uu(HALF_Z));
+            sim.ball.p = spot;
+            sim.score(team);
+            assert!(!sim.finished(), "the golden goal skipped its celebration");
+            coast(&mut sim, GOAL_FREEZE_TICKS as u32);
+            assert!(sim.finished());
+            assert_eq!(sim.ball.p, spot, "a fresh kickoff replaced the backdrop");
+            let (blue, orange) = (sim.score_blue, sim.score_orange);
+            assert_eq!(
+                (blue, orange),
+                if team == Team::Blue { (1, 0) } else { (0, 1) }
+            );
+            assert!(sim.overtime);
+        }
+    }
+
+    #[test]
+    fn a_level_overtime_keeps_going() {
+        let mut sim = level_at_the_whistle();
+        coast(&mut sim, 3000);
+        assert!(!sim.finished());
+        assert!(sim.overtime_ticks > 2000);
+    }
+
+    #[test]
+    fn goal_limit_matches_never_go_to_overtime() {
+        let mut sim = Sim::with_win_condition(WinCondition::GoalLimit(2));
+        sim.opponent_ai = false;
+        coast(&mut sim, 600);
+        assert!(!sim.overtime);
+        assert!(!sim.finished());
+    }
+
+    #[test]
+    fn a_goal_with_the_clock_out_is_not_a_tie() {
+        let mut sim = Sim::with_win_condition(WinCondition::TimeLimit(2));
+        sim.opponent_ai = false;
+        sim.clock = 0;
+        sim.ball.p = V3::new(uu(200), uu(BALL_R), uu(HALF_Z));
+        sim.score(Team::Blue);
+        coast(&mut sim, 5);
+        assert!(!sim.overtime, "a scored match went to overtime");
         assert!(sim.finished());
     }
 

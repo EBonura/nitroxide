@@ -17,7 +17,7 @@ use crate::draw::seat_signal;
 use crate::fx::{self, Rgb, ONE};
 
 /// Ticks of live play the GO! burst stays up for.
-const GO_TICKS: u32 = 46;
+const GO_TICKS: u32 = 8;
 /// The plate behind a number and what the ends of it are made of.
 const PLATE: Rgb = (13, 20, 48);
 const RULE: Rgb = (226, 232, 244);
@@ -124,15 +124,17 @@ fn big_text(font: &FontAtlas, text: &str, cx: i32, cy: i32, scale: i32, tint: Rg
 /// GO!: the word pops, a flash sweeps the plate's colours across the screen and
 /// rays leave the centre.
 fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32, split: bool) {
-    let fade = if t > 32 { 256 - (t - 32) * 18 } else { 256 };
-    // The word: out of nothing to well past its size, settling.
+    // Over in eight ticks: the word punches out as the cars launch and is gone
+    // before they have moved, so nothing lingers over the pitch.
+    let fade = 256 - t * 256 / GO_TICKS as i32;
     let scale = match t {
-        ..=4 => 80 + (360 * fx::ease_out(t * ONE / 5) >> 12),
-        5..=13 => 440 - (130 * fx::ease_out((t - 5) * ONE / 9) >> 12),
-        _ => 310 - (t - 13) / 3,
+        0 => 160,
+        1 => 420,
+        2 => 440,
+        _ => 440 + (t - 2) * 40,
     };
-    if t < 12 {
-        plate(gpu, cx, cy, scale.min(300) * 3 / 4 + 70, 90, split, 256);
+    if t < 3 {
+        plate(gpu, cx, cy, scale.min(300) * 3 / 4 + 70, 90, split, fade);
     }
     big_text(
         font,
@@ -143,9 +145,8 @@ fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32
         fx::dim(GOLD, fade),
     );
     fx::additive(gpu);
-    // A white flash over the plate's width on the first ticks.
-    if t < 4 {
-        let a = 230 - t * 40;
+    if t < 2 {
+        let a = 230 - t * 90;
         let (w, h) = (if split { 320 } else { 360 }, if split { 44 } else { 70 });
         fx::slanted_blended(
             gpu,
@@ -157,18 +158,15 @@ fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32
             fx::dim((255, 255, 255), a),
         );
     }
-    // Rays: ten thin streaks leaving a ring round the word, fading as they go.
-    if t < 26 {
-        let grow = fx::ease_out(t * ONE / 20);
-        let alpha = 256 - t * 256 / 26;
-        let (r_in, r_len) = if split { (26, 50) } else { (34, 80) };
+    // Rays leave the word and are gone with it.
+    {
+        let grow = fx::ease_out(t * ONE / GO_TICKS as i32);
+        let (r_in, r_len) = if split { (26, 40) } else { (34, 64) };
         for i in 0..6 {
             let a = (i * 683 + 150) as u16;
             let (s, c) = (sin_q12(a), cos_q12(a));
             let near = r_in + (r_len * grow >> 12);
-            let far = near + (r_len / 2) * (ONE - fx::ease_in(t * ONE / 26)) / ONE + 8;
-            // A thin streak of two pixels across, taller than wide on the sides
-            // for the 1:1 pixels but fine for the 4:3 screen.
+            let far = near + 14;
             let (px, py) = ((-c * 2) >> 12, (s * 2) >> 12);
             let p = |r: i32, k: i32| {
                 (
@@ -176,9 +174,12 @@ fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32
                     cy + ((c * r * 3 / 4) >> 12) + py * k,
                 )
             };
-            let (n0, n1, f0, f1) = (p(near, -1), p(near, 1), p(far, -1), p(far, 1));
             let colour = if i % 2 == 0 { GOLD } else { (255, 255, 255) };
-            fx::quad_blended(gpu, [n0, n1, f0, f1], fx::dim(colour, alpha));
+            fx::quad_blended(
+                gpu,
+                [p(near, -1), p(near, 1), p(far, -1), p(far, 1)],
+                fx::dim(colour, fade),
+            );
         }
     }
     fx::opaque(gpu);

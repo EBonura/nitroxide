@@ -206,16 +206,23 @@ impl NitroXide {
             let tx = bx + (block + SLANT / 2 - tw) / 2;
             Self::shadowed_big(hud, tx as i16, (y + 4) as i16, text, white);
         }
-        let mut clock = [b'0'; 4];
+        let mut clock = [b'+'; 5];
+        let overtime = self.sim.overtime;
         let centre = match self.sim.win_condition {
             WinCondition::TimeLimit(_) => {
-                let secs = self.sim.clock / 60;
-                clock[0] = b'0' + (secs / 60) as u8;
-                clock[1] = b':';
-                clock[2] = b'0' + ((secs % 60) / 10) as u8;
-                clock[3] = b'0' + ((secs % 60) % 10) as u8;
-                // SAFETY: four ASCII bytes.
-                unsafe { core::str::from_utf8_unchecked(&clock) }
+                let secs = if overtime {
+                    (self.sim.overtime_ticks / 60).min(599)
+                } else {
+                    self.sim.clock / 60
+                };
+                clock[1] = b'0' + (secs / 60) as u8;
+                clock[2] = b':';
+                clock[3] = b'0' + ((secs % 60) / 10) as u8;
+                clock[4] = b'0' + ((secs % 60) % 10) as u8;
+                // SAFETY: ASCII bytes.
+                unsafe {
+                    core::str::from_utf8_unchecked(if overtime { &clock } else { &clock[1..] })
+                }
             }
             WinCondition::GoalLimit(_) => "FIRST TO",
         };
@@ -226,7 +233,11 @@ impl NitroXide {
             (mid - cw / 2) as i16,
             (y + 8) as i16,
             centre,
-            (226, 232, 244),
+            if overtime {
+                crate::OVERTIME_INK
+            } else {
+                (226, 232, 244)
+            },
         );
     }
 }

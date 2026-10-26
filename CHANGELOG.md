@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+A timed match that is level when the clock runs out now goes to overtime instead of
+ending in a draw: the ball and both cars go back to their kickoff spots, three, two,
+one, and the next goal wins, after its celebration. An OVERTIME banner opens out
+from the middle of the screen for the kickoff, the clock counts up from +0:00 in
+violet while it lasts, and the results say the match was won in overtime. Goal-limit
+matches and timed matches that are not level are unchanged. The overtime kickoff has
+no camera fly-over. The published gate clock carries the overtime flag (0x40000000)
+and the ticks of live overtime play. The GO! now flashes for eight ticks as the cars
+launch and is gone, leaving the pitch clear.
+
 The menus move. On the title the logo slides in, the camera circles the staged car
 in a slow turn (about fifty seconds), and the selection bar slides from one row to
 the next with a band of light crossing it, in the pause menu too. The car-select
@@ -11,17 +21,14 @@ minute without a press rather than thirty seconds.
 
 The match gives more feedback. An arrow on the rim of the view points at the ball
 when it is off screen, and a dotted drop line with a ring runs from the ball to the
-pitch when it is in the air. Small slanted tags in the team colours pop up for a
-SHOT ON GOAL, a SAVE, an EPIC SAVE (close to the line or very hard), a DEMOLITION
-and an AERIAL GOAL, read off the sim's state each tick. A boosting car leaves a
+pitch when it is in the air. A boosting car leaves a
 trail in its own colour, a supersonic one gets speed lines at the rim of the view,
 a car on a wall throws sparks, a hard landing raises dust, and a pad taken gives a
 flash and a ring. A demolished car's own view counts down its respawn, a timed match
 announces its last minute with a banner, the clock pops each second of the last
 ten, and in single player the field of view opens up a notch while boosting. The
 particles are projected through the frame's own cameras and drawn over it, a pool of
-forty shared by both views. No overtime banner: the game has no overtime, a tied
-timed match is a draw.
+forty shared by both views.
 
 Every kickoff opens with a camera fly-over of the arena and a big countdown. The
 match start and each restart after a goal first swing the camera round the arena,

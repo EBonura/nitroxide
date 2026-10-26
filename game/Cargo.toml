@@ -24,6 +24,11 @@ diag-fb = ["boot-play"]
 # Dev: the split-screen boot, but through a real match start, so the kickoff
 # fly-over, countdown and GO! can be profiled.
 boot-split-kickoff = ["boot-split-play"]
+# Dev: the split kickoff with only two seconds on a level clock, so it goes
+# to overtime at once.
+boot-split-overtime = ["boot-split-kickoff"]
+# Dev: the single-player match start with two seconds on a level clock.
+boot-overtime = ["boot-play"]
 # Dev shortcut: the normal kickoff with both player views enabled, used to
 # profile split-screen renderer changes without requiring a second host pad.
 boot-split-play = []

@@ -156,6 +156,9 @@ enum Phase {
 /// Ticks of the camera fly-over before each kickoff's countdown: a second and
 /// a half, long enough to see the arena and short enough to be no wait.
 const KICK_INTRO_TICKS: u16 = 96;
+/// The colour of the overtime clock and its banner's accent: nothing else in the
+/// match is violet.
+pub const OVERTIME_INK: (u8, u8, u8) = (196, 150, 255);
 /// Ticks the pause panel takes to build in out of tiles, and the same again to
 /// break up when the match resumes. It is a tile sweep of the panel's own area,
 /// the match staying in view around it.
@@ -1740,16 +1743,25 @@ impl NitroXide {
         let pale = (226, 232, 244);
         match s.win_condition {
             WinCondition::TimeLimit(_) => {
-                let secs = s.clock / 60;
-                let mut clock = [b'0'; 4];
-                clock[0] = b'0' + (secs / 60) as u8;
-                clock[1] = b':';
-                clock[2] = b'0' + ((secs % 60) / 10) as u8;
-                clock[3] = b'0' + ((secs % 60) % 10) as u8;
-                let clock = unsafe { core::str::from_utf8_unchecked(&clock) };
+                // In overtime the clock counts up from +0:00, in its own colour.
+                let secs = if s.overtime {
+                    (s.overtime_ticks / 60).min(599)
+                } else {
+                    s.clock / 60
+                };
+                let mut clock = [b'+'; 5];
+                clock[1] = b'0' + (secs / 60) as u8;
+                clock[2] = b':';
+                clock[3] = b'0' + ((secs % 60) / 10) as u8;
+                clock[4] = b'0' + ((secs % 60) % 10) as u8;
+                let clock = unsafe {
+                    core::str::from_utf8_unchecked(if s.overtime { &clock } else { &clock[1..] })
+                };
                 // Under a minute, and in the colour of trouble.
-                let urgent = s.clock < 60 * 60;
-                let tint = if urgent && (s.clock / 15) % 2 == 0 {
+                let urgent = s.clock < 60 * 60 && !s.overtime;
+                let tint = if s.overtime {
+                    OVERTIME_INK
+                } else if urgent && (s.clock / 15) % 2 == 0 {
                     (255, 120, 96)
                 } else if urgent {
                     (255, 196, 170)
@@ -1757,7 +1769,7 @@ impl NitroXide {
                     pale
                 };
                 let cw = font.text_width(clock) as i16;
-                if s.clock > 0 && s.clock < 600 {
+                if s.clock > 0 && s.clock < 600 && !s.overtime {
                     // The last ten seconds: each second the clock jumps up in
                     // size and settles back.
                     let age = ((60 - s.clock % 60) % 60) as i32;
@@ -2447,6 +2459,9 @@ impl NitroXide {
         // headline gets the goal banner's outline and the rest the HUD's
         // shadow, or the true (dimmer) colours wash out.
         Self::outlined(font, 96, 48, verdict, 448, color);
+        if s.overtime {
+            Self::centred(small, 160, 96, "WON IN OVERTIME", OVERTIME_INK);
+        }
         let mut dec = [0u8; U32_DEC_MAX];
         Self::shadowed(small, 84, 120, "GOALS", (160, 175, 205));
         Self::shadowed(
@@ -2540,6 +2555,12 @@ impl Scene for NitroXide {
         {
             self.phase = Phase::Play;
         }
+        #[cfg(feature = "boot-overtime")]
+        {
+            self.start_match();
+            self.kick_intro = 0;
+            self.sim.clock = 120;
+        }
         #[cfg(any(feature = "boot-split-stress", feature = "boot-demo-picks"))]
         self.start_demo();
         #[cfg(feature = "boot-split-play")]
@@ -2564,6 +2585,10 @@ impl Scene for NitroXide {
             }
             #[cfg(feature = "boot-split-kickoff")]
             self.start_match();
+            #[cfg(feature = "boot-split-overtime")]
+            {
+                self.sim.clock = 120;
+            }
         }
         #[cfg(feature = "boot-hatch")]
         {

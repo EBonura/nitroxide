@@ -296,6 +296,7 @@ impl NitroXide {
             }
         }
         fb.draw_banner(gpu, display, seats.len() > 1);
+        draw_overtime(gpu, display, hud, sim, seats.len() > 1);
     }
 
     /// The arrow to the ball at the edge of a view that is not looking at it,
@@ -569,5 +570,50 @@ impl NitroXide {
             let _ = first;
         }
         fx::opaque(gpu);
+    }
+}
+
+/// The OVERTIME banner: a neutral navy slanted plate with a violet rule that
+/// opens out from its middle when overtime kicks off, stays through the
+/// countdown and a moment of play, and closes. Stateless: its age is read off
+/// the sim's own countdown and overtime clock.
+fn draw_overtime(gpu: &mut Gpu, display: &FontAtlas, hud: &FontAtlas, sim: &Sim, split: bool) {
+    if !sim.overtime {
+        return;
+    }
+    let hold = i32::from(nitroxide_sim::KICKOFF_HOLD_TICKS);
+    let age = if sim.kickoff_hold > 0 {
+        hold - i32::from(sim.kickoff_hold)
+    } else {
+        hold + sim.overtime_ticks.min(1000) as i32
+    };
+    let total = hold + 70;
+    if age >= total {
+        return;
+    }
+    let slide = 12;
+    let k = if age < slide {
+        fx::ease_out(age * ONE / slide)
+    } else if total - age < slide {
+        fx::ease_out((total - age) * ONE / slide)
+    } else {
+        ONE
+    };
+    let (w, h) = (176, 32);
+    let y = if split { 94 } else { 134 };
+    let ow = w * k >> 12;
+    let x = 160 - ow / 2 - 3;
+    fx::slanted(gpu, x, y, ow, h, 6, (13, 20, 48));
+    fx::slanted(gpu, x, y + h - 2, ow, 2, 6, crate::OVERTIME_INK);
+    fx::slanted(gpu, x, y, ow, 2, 6, crate::OVERTIME_INK);
+    if k > 3000 {
+        NitroXide::centred(display, 160, (y + 6) as i16, "OVERTIME", (255, 255, 255));
+        NitroXide::centred(
+            hud,
+            160,
+            (y + 20) as i16,
+            "NEXT GOAL WINS",
+            crate::OVERTIME_INK,
+        );
     }
 }

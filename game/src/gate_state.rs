@@ -86,6 +86,11 @@ pub struct GateState {
     pub pad_remaining: [u32; PADS.len()],
 }
 
+/// Set in the published clock while the match is in overtime, with the ticks of
+/// live overtime play in the low bits: a journey can tell that the clock has
+/// turned round without the layout growing.
+pub const OVERTIME_FLAG: u32 = 0x4000_0000;
+
 const MAGIC: u32 = u32::from_le_bytes(*b"NITR");
 const VERSION: u32 = 1;
 
@@ -157,7 +162,11 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
         score_orange: u32::from(sim.score_orange),
         goal_freeze: u32::from(sim.goal_freeze),
         kickoff_hold: u32::from(sim.kickoff_hold),
-        clock: sim.clock,
+        clock: if sim.overtime {
+            OVERTIME_FLAG | sim.overtime_ticks
+        } else {
+            sim.clock
+        },
         pads_spent: pads.iter().filter(|&&t| t != 0).count() as u32,
         bodies: [
             GateBody::from_parts(sim.car.p, sim.car.v),

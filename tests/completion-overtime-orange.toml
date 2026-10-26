@@ -1,0 +1,177 @@
+name = "nitroxide-overtime-orange"
+title = "NitroXide: overtime won by the second player, results and return"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+pad2 = "analog"
+max_ticks = 7500
+
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+# Up wraps the initial car row to the rule row. Right moves default 5:00 to timed-tie.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["left"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+checkpoint = "timed-tie-selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+other = { press = ["cross"] }
+hold = 4
+wait = 0
+[[step]]
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 186
+checkpoint = "timed-kickoff"
+golden = false
+[[step.assert]]
+kind = "not_dark"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "between"
+value = 3580
+value_hi = 3600
+# Level at 0:00: the match goes to overtime. The published clock then carries
+# the overtime flag (0x40000000) and the ticks of live overtime play.
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 40, op = "ge", value = 1073741824 }
+timeout = 4800
+[[step]]
+wait = 20
+checkpoint = "overtime-start"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "zero"
+each = { count = 2, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "gt"
+value = 0
+# The countdown runs out and the overtime clock counts up.
+[[step]]
+wait = 190
+checkpoint = "overtime-clock"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "between"
+value = 1073741834
+value_hi = 1073741904
+# Player two drives into the pads and scores: the golden goal goes to orange.
+[[step]]
+press = ["triangle"]
+other = { press = ["r2", "circle"] }
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 28, op = "eq", value = 1 }
+timeout = 600
+[[step]]
+checkpoint = "golden-goal"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "ge"
+value = 1073741824
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 400
+[[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
+checkpoint = "overtime-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "ge"
+value = 1073741824
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 20
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 28
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "zero"
+[[step]]
+press = ["start"]
+hold = 4
+wait = 20
+[[step]]
+checkpoint = "returned-title"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 1

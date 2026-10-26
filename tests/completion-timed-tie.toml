@@ -1,9 +1,9 @@
 name = "nitroxide-timed-tie"
-title = "NitroXide: normal timed-tie match, celebration, results and return"
+title = "NitroXide: level timed match, overtime, golden goal, results and return"
 disc = ["build/gate/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
 pad2 = "analog"
-max_ticks = 6100
+max_ticks = 7500
 
 [[step]]
 wait = 440
@@ -57,14 +57,39 @@ offset = 40
 op = "between"
 value = 3580
 value_hi = 3600
+# Level at 0:00: the match goes to overtime. The published clock then carries
+# the overtime flag (0x40000000) and the ticks of live overtime play.
 [[step]]
-wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 40, op = "ge", value = 1073741824 }
 timeout = 4800
 [[step]]
-# The tile sweep into the results hides the screen for half a second.
 wait = 20
+checkpoint = "overtime-start"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "zero"
+each = { count = 2, stride = 4 }
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "gt"
+value = 0
+# The countdown runs out and the overtime clock counts up.
 [[step]]
-checkpoint = "timed-results"
+wait = 190
+checkpoint = "overtime-clock"
 golden = false
 [[step.assert]]
 kind = "not_flat"
@@ -72,7 +97,53 @@ kind = "not_flat"
 kind = "ram"
 sym = "NITRO_GATE_STATE"
 offset = 40
-op = "zero"
+op = "between"
+value = 1073741834
+value_hi = 1073741904
+# Player one drives into the pads and scores: the golden goal.
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 1 }
+timeout = 600
+[[step]]
+checkpoint = "golden-goal"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "ge"
+value = 1073741824
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 400
+[[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
+checkpoint = "overtime-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 40
+op = "ge"
+value = 1073741824
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_GATE_STATE"
@@ -83,8 +154,13 @@ value = 1
 kind = "ram"
 sym = "NITRO_GATE_STATE"
 offset = 24
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 28
 op = "zero"
-each = { count = 2, stride = 4 }
 [[step]]
 press = ["start"]
 hold = 4

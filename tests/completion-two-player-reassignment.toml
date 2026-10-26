@@ -140,38 +140,50 @@ offset = 68
 op = "gt"
 value = 0
 signed = true
+# Nobody scores, so the level match goes to overtime at 0:00 rather than ending.
 [[step]]
-wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 40, op = "ge", value = 1073741824 }
 timeout = 4800
 [[step]]
-# The tile sweep into the results hides the screen for half a second.
-wait = 20
-[[step]]
-checkpoint = "timed-results"
+wait = 30
+checkpoint = "overtime-reached"
 golden = false
 [[step.assert]]
 kind = "not_flat"
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_GATE_STATE"
-offset = 40
-op = "zero"
-[[step.assert]]
-kind = "ram"
-sym = "NITRO_GATE_STATE"
-offset = 20
+offset = 16
 op = "eq"
-value = 1
+value = 3
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_GATE_STATE"
 offset = 24
 op = "zero"
 each = { count = 2, stride = 4 }
+# Leave through the pause menu: Quit, and Yes.
 [[step]]
 press = ["start"]
 hold = 4
-wait = 20
+wait = 34
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+repeat = 5
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
+press = ["down"]
+hold = 4
+wait = 8
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 34
 [[step]]
 checkpoint = "returned-title"
 golden = false
