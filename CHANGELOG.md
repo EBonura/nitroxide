@@ -35,7 +35,7 @@ of light with dashes that turn with them. The attract demo now starts after a
 minute without a press rather than thirty seconds.
 
 The match gives more feedback. An arrow on the rim of the view points at the ball
-when it is off screen, and a dotted drop line with a ring runs from the ball to the
+when it is off screen (below the scoreboard in the top view), and a dotted drop line with a ring runs from the ball to the
 pitch when it is in the air. A boosting car leaves a
 trail in its own colour, a supersonic one gets speed lines at the rim of the view,
 a car on a wall throws sparks, a hard landing raises dust, and a pad taken gives a

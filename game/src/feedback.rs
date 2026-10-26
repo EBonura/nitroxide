@@ -26,6 +26,9 @@ const BANNER_TICKS: u8 = 130;
 const MINUTE_TICKS: u32 = 60 * 60;
 /// Ball height, uu, above which the drop line is drawn.
 const DROP_HEIGHT: i32 = 260;
+/// Lowest line, from the top of the screen, a ball arrow may be centred on in
+/// the top view: the open scoreboard (18 lines) plus the arrow's half size.
+const SCOREBOARD_CLEAR: i32 = 32;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -351,6 +354,10 @@ impl NitroXide {
         };
         let k = sx.min(sy);
         let (ex, ey) = (cx + (dx * k >> 10), cy + (dy * k >> 10));
+        // The scoreboard hangs from the top of the screen (18 lines when
+        // open): in the top view the arrow stays below it, so it never sits
+        // on the clock. The lower view of a split has no board.
+        let ey = if vp.y == 0 { ey.max(SCOREBOARD_CLEAR) } else { ey };
         arrow(gpu, (ex, ey), (dx, dy), self.fb.tick);
     }
 }
