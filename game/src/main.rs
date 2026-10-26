@@ -184,7 +184,7 @@ const SKIP_BUTTONS: [u16; 12] = [
 
 /// Ticks of no input on a menu page before the attract demo starts:
 /// thirty seconds, about where WipEout's sits.
-const DEMO_IDLE_TICKS: u32 = 30 * 60;
+const DEMO_IDLE_TICKS: u32 = 60 * 60;
 /// A demo match that has not scored by now moves on anyway. None of the
 /// picked seeds gets near it (`DEMO_MATCHES` records when each scores); it is
 /// there so a physics change cannot leave the demo running forever.
@@ -627,6 +627,10 @@ struct NitroXide {
     /// Highlighted menu row, and the tick it last moved on, which is what the
     /// highlight sweeps from.
     menu: usize,
+    /// The row the selection bar has come from, and the tick the title opened
+    /// on, which its logo slides in from.
+    menu_prev: usize,
+    title_at: u32,
     menu_at: u32,
     /// Triangle toggles between the ordinary chase camera and ball cam, per
     /// seat: in a split game each player owns their own view and one pad must
@@ -718,6 +722,8 @@ struct NitroXide {
     confirm_yes: bool,
     /// The tick the pause selection last moved on: the cyan bar sweeps from it.
     pause_at: u32,
+    /// The pause row the selection bar has come from.
+    pause_prev: usize,
 }
 
 /// The now-playing disc's three fans as rim offsets from its centre, in
@@ -827,6 +833,8 @@ impl NitroXide {
             sim: Sim::new(),
             cars: [0, 1],
             menu: 0,
+            menu_prev: 0,
+            title_at: 0,
             menu_at: 0,
             ball_cam: [CAM_BALL_DEFAULT; 2],
             two_player: false,
@@ -861,6 +869,7 @@ impl NitroXide {
             pause_confirm: None,
             confirm_yes: false,
             pause_at: 0,
+            pause_prev: 0,
             demo: DemoState {
                 show: 0,
                 t: 0,
@@ -1515,6 +1524,8 @@ impl NitroXide {
     fn to_title(&mut self, tick: u32) {
         self.kick_intro = 0;
         self.menu_at = tick;
+        self.menu_prev = self.menu;
+        self.title_at = tick;
         self.idle = 0;
         self.settings = None;
         self.phase = Phase::Title;
@@ -1556,7 +1567,12 @@ impl NitroXide {
     fn stage_cars(&mut self, tick: u32, pair: bool) {
         // Three-quarter view that drifts rather than spins, so the flank and
         // the nose are both readable at rest.
-        let spin = (1500 + ((tick * 3) & 0xfff) / 5) as u16;
+        // The select screen is a turntable, a steady turn about every eight seconds.
+        let spin = if self.phase == Phase::Select {
+            (1500 + tick * 17 / 2) as u16 & 4095
+        } else {
+            (1500 + ((tick * 3) & 0xfff) / 5) as u16
+        };
         for seat in 0..2 {
             let car = if seat == 0 {
                 &mut self.sim.car
@@ -1905,11 +1921,14 @@ impl NitroXide {
         // Two offset copies under it, not one. The title sits over the pitch
         // now rather than over a dark plane, and a single one-pixel shadow at
         // 1.375x leaves the light strokes of this face reading as grass.
+        // It slides in from the left when the title opens.
+        let k = fx::ease_out(tick.wrapping_sub(self.title_at).min(24) as i32 * fx::ONE / 24);
+        let lx = 10 - (220 * (fx::ONE - k) >> 12) as i16;
         for (dx, dy) in [(3, 3), (2, 2)] {
-            font.draw_text_scaled_q8(10 + dx, 10 + dy, "NITROXIDE", 352, 352, (0, 0, 0));
+            font.draw_text_scaled_q8(lx + dx, 10 + dy, "NITROXIDE", 352, 352, (0, 0, 0));
         }
         font.draw_text_scaled_q8(
-            10,
+            lx,
             10,
             "NITROXIDE",
             352,
@@ -2876,10 +2895,12 @@ impl Scene for NitroXide {
                 // show from any row, since it is always on screen and gating
                 // that behind the garage row would only add a step.
                 if ctx.just_pressed(button::UP) {
+                    self.menu_prev = self.menu;
                     self.menu = (self.menu + draw::MENU_ROWS - 1) % draw::MENU_ROWS;
                     self.menu_at = ctx.sim_tick.as_u32();
                     audio::ui(audio::Ui::Move);
                 } else if ctx.just_pressed(button::DOWN) {
+                    self.menu_prev = self.menu;
                     self.menu = (self.menu + 1) % draw::MENU_ROWS;
                     self.menu_at = ctx.sim_tick.as_u32();
                     audio::ui(audio::Ui::Move);
@@ -3067,6 +3088,7 @@ impl Scene for NitroXide {
                 // A question is up: Yes or No, and nothing else.
                 if let Some(ask) = self.pause_confirm {
                     if up || down {
+                        self.pause_prev = usize::from(!self.confirm_yes);
                         self.confirm_yes = !self.confirm_yes;
                         audio::ui(audio::Ui::Move);
                         self.pause_at = tick;
@@ -3086,6 +3108,9 @@ impl Scene for NitroXide {
                         }));
                     }
                     return;
+                }
+                if up || down {
+                    self.pause_prev = self.pause_row;
                 }
                 if up {
                     self.pause_row = (self.pause_row + rows.len() - 1) % rows.len();
@@ -3123,6 +3148,7 @@ impl Scene for NitroXide {
                         ask @ (PauseRow::Restart | PauseRow::Quit) => {
                             self.pause_confirm = Some(ask);
                             self.confirm_yes = false;
+                            self.pause_prev = 1;
                             self.pause_at = tick;
                             audio::ui(audio::Ui::Open);
                         }
@@ -3138,6 +3164,7 @@ impl Scene for NitroXide {
                     self.pause_t = 0;
                     self.pause_closing = false;
                     self.pause_confirm = None;
+                    self.pause_prev = 0;
                     self.pause_at = ctx.sim_tick.as_u32();
                     return;
                 }
@@ -3385,9 +3412,11 @@ impl Scene for NitroXide {
                     draw::FrontPanels::Title(draw::MenuRows {
                         selected: self.menu,
                         rows: draw::MENU_ROWS,
+                        prev: self.menu_prev,
                         fill: draw::menu_sweep(tick.wrapping_sub(self.menu_at)),
                     }),
                     false,
+                    Some(tick),
                     buffer_y,
                 )
             }
@@ -3421,6 +3450,7 @@ impl Scene for NitroXide {
                         pair,
                     }),
                     pair,
+                    None,
                     buffer_y,
                 )
             }
@@ -3581,7 +3611,11 @@ impl NitroXide {
                     }
                 }
             }
-            Phase::Select => self.draw_select(display, hud, ctx.sim_tick.as_u32()),
+            Phase::Select => {
+                let tick = ctx.sim_tick.as_u32();
+                self.draw_turntable(Gpu::from_dma_mut(ctx.gpu_dma()), tick);
+                self.draw_select(display, hud, ctx.sim_tick.as_u32());
+            }
             Phase::Play => {
                 let tick = ctx.sim_tick.as_u32();
                 self.draw_hud(Gpu::from_dma_mut(ctx.gpu_dma()), hud, tick);

@@ -696,3 +696,68 @@ impl Feedback {
         let _ = x;
     }
 }
+
+impl NitroXide {
+    /// The car-select turntable: a ring of light on the pitch under each staged
+    /// car with a few brighter dashes that turn the way the car does.
+    pub(crate) fn draw_turntable(&self, gpu: &mut Gpu, tick: u32) {
+        use psx_math::sincos::{cos_q12, sin_q12};
+        let solo = self.select_solo();
+        let seats = if solo { 1 } else { 2 };
+        const SEGS: i32 = 24;
+        const RADIUS: i32 = 115;
+        fx::additive(gpu);
+        for seat in 0..seats {
+            let cx = if solo {
+                0
+            } else {
+                draw::stage_car_x(seat, true)
+            };
+            let turn = (tick / 3) as i32;
+            let mut prev: Option<(i32, i32)> = None;
+            let mut first = (0, 0);
+            for i in 0..=SEGS {
+                let a = (i % SEGS * 4096 / SEGS) as u16;
+                let p = (
+                    cx + ((sin_q12(a) * RADIUS) >> 12),
+                    0,
+                    draw::STAGE_Z + ((cos_q12(a) * RADIUS) >> 12),
+                );
+                let Some(s) = draw::project_seat(0, p) else {
+                    return;
+                };
+                if s.depth < 20 {
+                    prev = None;
+                    continue;
+                }
+                let here = (s.x, s.y);
+                if i == 0 {
+                    first = here;
+                }
+                if let Some(from) = prev {
+                    // Dashes of two segments in six, turning with the car.
+                    let lit = (i + turn).rem_euclid(6) < 2;
+                    let c = if lit { (150, 225, 255) } else { (52, 104, 136) };
+                    fx::quad_blended(
+                        gpu,
+                        [from, (from.0 + 2, from.1), here, (here.0 + 2, here.1)],
+                        c,
+                    );
+                    fx::quad_blended(
+                        gpu,
+                        [
+                            (from.0, from.1 + 1),
+                            (from.0 + 1, from.1 + 1),
+                            (here.0, here.1 + 1),
+                            (here.0 + 1, here.1 + 1),
+                        ],
+                        fx::dim(c, 160),
+                    );
+                }
+                prev = Some(here);
+            }
+            let _ = first;
+        }
+        fx::opaque(gpu);
+    }
+}

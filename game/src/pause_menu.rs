@@ -124,28 +124,24 @@ impl NitroXide {
         let rows = self.pause_rows();
         let step = if rows.len() > 5 { 19 } else { 21 };
         let elapsed = tick.wrapping_sub(self.pause_at);
-        if let Some(ask) = self.pause_confirm {
+        let mut labels: [&str; 6] = [""; 6];
+        let (count, selected, base, from) = if let Some(ask) = self.pause_confirm {
             let (line, sub) = match ask {
                 PauseRow::Restart => ("RESTART THE MATCH?", "THE SCORE AND CLOCK START OVER"),
                 _ => ("QUIT TO MENU?", "THE MATCH WILL BE LOST"),
             };
             Self::centred(display, (PX + PW / 2) as i16, (top + 2) as i16, line, LIT);
             Self::centred(hud, (PX + PW / 2) as i16, (top + 20) as i16, sub, IDLE);
-            for (i, label) in ["YES", "NO"].into_iter().enumerate() {
-                let lit = (i == 0) == self.confirm_yes;
-                button(
-                    gpu,
-                    display,
-                    top + 38 + i as i32 * step,
-                    step - 3,
-                    label,
-                    lit,
-                    elapsed,
-                );
-            }
+            labels[..2].copy_from_slice(&["YES", "NO"]);
+            (
+                2,
+                if self.confirm_yes { 0 } else { 1 },
+                top + 38,
+                self.pause_prev.min(1),
+            )
         } else {
-            for (i, row) in rows.iter().enumerate() {
-                let label = match row {
+            for (slot, row) in labels.iter_mut().zip(rows.iter()) {
+                *slot = match row {
                     PauseRow::Resume => "RESUME",
                     PauseRow::Swap if self.swap_seats => "SIDES: P2 P1",
                     PauseRow::Swap => "SIDES: P1 P2",
@@ -154,17 +150,29 @@ impl NitroXide {
                     PauseRow::Restart => "RESTART MATCH",
                     PauseRow::Quit => "QUIT TO MENU",
                 };
-                let lit = i == self.pause_row;
-                button(
-                    gpu,
-                    display,
-                    top + i as i32 * step,
-                    step - 3,
-                    label,
-                    lit,
-                    elapsed,
-                );
             }
+            (
+                rows.len(),
+                self.pause_row,
+                top,
+                self.pause_prev.min(rows.len() - 1),
+            )
+        };
+        let h = step - 3;
+        for i in 0..count {
+            plate(gpu, base + i as i32 * step, h);
+        }
+        // One bar, sliding from the row it left to the one it is on.
+        let k = fx::ease_out(draw::menu_sweep(elapsed));
+        let (y0, y1) = (base + from as i32 * step, base + selected as i32 * step);
+        bar(
+            gpu,
+            y0 + ((y1 - y0) * k >> 12),
+            h,
+            draw::menu_sweep(elapsed),
+        );
+        for (i, label) in labels[..count].iter().enumerate() {
+            text(display, base + i as i32 * step, h, label, i == selected);
         }
     }
 
@@ -223,28 +231,32 @@ impl NitroXide {
     }
 }
 
-/// One slanted button: the dark plate, and when it is the selected one the cyan
-/// bar sweeping in from the left and the gold nib.
-fn button(
-    gpu: &mut Gpu,
-    display: &FontAtlas,
-    y: i32,
-    h: i32,
-    label: &str,
-    lit: bool,
-    elapsed: u32,
-) {
+/// The dark plate of one button.
+fn plate(gpu: &mut Gpu, y: i32, h: i32) {
     let x = PX + 18;
     let w = PW - 18 - 14 - SLANT;
     fx::slanted_gradient(gpu, (x, y, w, h), SLANT, (40, 46, 66), (24, 28, 44));
-    if lit {
-        let sweep = (w * draw::menu_sweep(elapsed)) >> 12;
-        fx::slanted_gradient(gpu, (x, y, sweep, h), SLANT, CYAN_HI, CYAN_LO);
-        fx::slanted(gpu, x, y, 5, h, SLANT, NIB);
+}
+
+/// The selection bar at `y`, with a band of light crossing it as `sweep` (Q12)
+/// runs from nothing to one, and the gold nib on its end.
+fn bar(gpu: &mut Gpu, y: i32, h: i32, sweep: i32) {
+    let x = PX + 18;
+    let w = PW - 18 - 14 - SLANT;
+    fx::slanted_gradient(gpu, (x, y, w, h), SLANT, CYAN_HI, CYAN_LO);
+    let at = x - 20 + ((w + 40) * sweep >> 12);
+    let (l, r) = (at.max(x), (at + 18).min(x + w));
+    if r > l {
+        fx::slanted(gpu, l, y, r - l, h, SLANT, (214, 246, 255));
     }
+    fx::slanted(gpu, x, y, 5, h, SLANT, NIB);
+}
+
+/// A button's label: the display face at three quarters, so the longest fits.
+fn text(display: &FontAtlas, y: i32, h: i32, label: &str, lit: bool) {
+    let x = PX + 18;
     let ink = if lit { LIT } else { IDLE };
     let (lx, ly) = ((x + 20) as i16, (y + (h - 8) / 2) as i16);
-    // The display face at three quarters, so the longest label fits its bar.
     let tint = (ink.0.div_ceil(2), ink.1.div_ceil(2), ink.2.div_ceil(2));
     display.draw_text_scaled_q8(lx + 1, ly + 1, label, LABEL_Q8, LABEL_Q8, (0, 0, 0));
     display.draw_text_scaled_q8(lx, ly, label, LABEL_Q8, LABEL_Q8, tint);

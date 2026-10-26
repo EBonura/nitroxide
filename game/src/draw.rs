@@ -8229,7 +8229,10 @@ pub fn menu_sweep(elapsed: u32) -> i32 {
 pub struct MenuRows {
     pub selected: usize,
     pub rows: usize,
-    /// How far the highlight has swept across the selected row, Q12.
+    /// The row the highlight has come from, and how far along the slide to the
+    /// selected one it is, Q12: the bar moves between rows rather than
+    /// appearing on the new one.
+    pub prev: usize,
     pub fill: i32,
 }
 
@@ -8291,35 +8294,57 @@ fn menu_panels(b: &mut Builder<'_>, menu: &MenuRows) {
             ],
             [(40, 46, 66), (40, 46, 66), (24, 28, 44), (24, 28, 44)],
         );
-        if row != menu.selected {
-            continue;
-        }
-        // The highlight fills in from the left. Both edges advance together,
-        // so the sweep's leading edge keeps the panel's own slant instead of
-        // running up it.
-        let w = (MENU_W as i32 * menu.fill.clamp(0, 4096) / 4096) as i16;
-        let (a, c) = ((92, 200, 242), (46, 138, 190));
-        b.screen_quad(
-            UI_FILL_SLOT,
-            [
-                (MENU_X + MENU_SLANT, y),
-                (MENU_X + w + MENU_SLANT, y),
-                (MENU_X, y + h),
-                (MENU_X + w, y + h),
-            ],
-            [a, a, c, c],
-        );
+    }
+    // One bar, which slides from the row it left to the row it is on, with a
+    // band of light running along it as it goes.
+    let h = MENU_ROW_H;
+    let k = crate::fx::ease_out(menu.fill.clamp(0, 4096));
+    let (y0, y1) = (
+        i32::from(menu_row_y(menu.prev.min(MENU_ROWS - 1))),
+        i32::from(menu_row_y(menu.selected.min(MENU_ROWS - 1))),
+    );
+    let y = (y0 + ((y1 - y0) * k >> 12)) as i16;
+    let (a, c) = ((92, 200, 242), (46, 138, 190));
+    b.screen_quad(
+        UI_FILL_SLOT,
+        [
+            (MENU_X + MENU_SLANT, y),
+            (MENU_X + MENU_W + MENU_SLANT, y),
+            (MENU_X, y + h),
+            (MENU_X + MENU_W, y + h),
+        ],
+        [a, a, c, c],
+    );
+    // The light: a pale slanted band crossing the bar once, clipped to it.
+    let travel = i32::from(MENU_W) + 40;
+    let bx = i32::from(MENU_X) - 20 + (travel * menu.fill.clamp(0, 4096) >> 12);
+    let (l, r) = (
+        bx.max(i32::from(MENU_X)),
+        (bx + 18).min(i32::from(MENU_X + MENU_W)),
+    );
+    if r > l {
+        let pale = (214, 246, 255);
         b.screen_quad(
             UI_NIB_SLOT,
             [
-                (MENU_X + MENU_SLANT, y),
-                (MENU_X + MENU_SLANT + 5, y),
-                (MENU_X, y + h),
-                (MENU_X + 5, y + h),
+                (l as i16 + MENU_SLANT, y),
+                (r as i16 + MENU_SLANT, y),
+                (l as i16, y + h),
+                (r as i16, y + h),
             ],
-            [(255, 232, 150); 4],
+            [pale; 4],
         );
     }
+    b.screen_quad(
+        UI_NIB_SLOT,
+        [
+            (MENU_X + MENU_SLANT, y),
+            (MENU_X + MENU_SLANT + 5, y),
+            (MENU_X, y + h),
+            (MENU_X + 5, y + h),
+        ],
+        [(255, 232, 150); 4],
+    );
 }
 
 /// Two separate option bars per player, using the title menu's shear, gradient,
@@ -8525,18 +8550,43 @@ pub fn stage_car_x(seat: usize, pair: bool) -> i32 {
 /// side and the car on the other rather than centring either. Title rows use
 /// the left-hand list; the select screen uses a mirrored card beneath each
 /// staged car.
-pub fn render_menu(s: &Sim, cars: [usize; SEATS], panels: FrontPanels, pair: bool, buffer_y: u16) {
+pub fn render_menu(
+    s: &Sim,
+    cars: [usize; SEATS],
+    panels: FrontPanels,
+    pair: bool,
+    orbit: Option<u32>,
+    buffer_y: u16,
+) {
     // The camera always looks straight down the pitch from the middle. On the
     // title that puts the one staged car in the right-hand third, clear of the
     // row list, without swinging the lens off it and foreshortening it into a
     // wedge.
     let _ = pair;
     use_plane(MENU_PROJ_H);
-    let view = look_from(
-        (0, -STAGE_CAM_UP, STAGE_Z - STAGE_CAM_BACK),
-        0,
-        STAGE_CAM_PITCH,
-    );
+    let view = match orbit {
+        // The title's camera circles the car, a turn in about fifty seconds,
+        // looking at it from a little to one side so it stays in the right
+        // third beside the row list.
+        Some(tick) => {
+            let a = ((tick * 11) >> 3) as u16 & 4095;
+            let r = isqrt_i32(STAGE_CAM_BACK * STAGE_CAM_BACK + STAGE_SOLO_X * STAGE_SOLO_X);
+            let eye = (
+                STAGE_SOLO_X + ((sin_q12(a) * r) >> 12),
+                -STAGE_CAM_UP,
+                STAGE_Z - ((cos_q12(a) * r) >> 12),
+            );
+            let yaw = (4096 - i32::from(a) - 182).rem_euclid(4096) as u16;
+            look_from(eye, yaw, STAGE_CAM_PITCH)
+        }
+        None => look_from(
+            (0, -STAGE_CAM_UP, STAGE_Z - STAGE_CAM_BACK),
+            0,
+            STAGE_CAM_PITCH,
+        ),
+    };
+    // The overlay places things on the stage through this camera too.
+    unsafe { SEAT_VIEWS[0] = Some((view, Viewport::FULL)) };
     enter_view(Viewport::FULL, buffer_y);
     unsafe {
         PENDING = false;

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+The menus move. On the title the logo slides in, the camera circles the staged car
+in a slow turn (about fifty seconds), and the selection bar slides from one row to
+the next with a band of light crossing it, in the pause menu too. The car-select
+screen is a turntable: the cars turn steadily, about every eight seconds, on a ring
+of light with dashes that turn with them. The attract demo now starts after a
+minute without a press rather than thirty seconds.
+
 The match gives more feedback. An arrow on the rim of the view points at the ball
 when it is off screen, and a dotted drop line with a ring runs from the ball to the
 pitch when it is in the air. Small slanted tags in the team colours pop up for a

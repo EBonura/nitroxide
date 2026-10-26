@@ -132,7 +132,10 @@ op = "zero"
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+# The title camera circles now; this tick of it puts three pixels of a floor edge
+# where the hardware renderer and the CPU rasteriser disagree, so look a few
+# ticks later.
+wait = 24
 [[step]]
 checkpoint = "returned-title"
 golden = false
