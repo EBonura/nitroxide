@@ -163,8 +163,6 @@ const PAUSE_TICKS: u8 = 20;
 /// Half of it: tiles cover the panel's area for this long, the panel is swapped
 /// in or out under them, and they uncover it for as long again.
 const PAUSE_HALF: u8 = PAUSE_TICKS / 2;
-/// How much the match is darkened behind the pause menu, of 255.
-const PAUSE_DIM: i32 = 80;
 /// What cuts the fly-over short: every button but Start (which pauses) and
 /// Select (the controls page).
 const SKIP_BUTTONS: [u16; 12] = [

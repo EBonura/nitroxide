@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! In-match feedback drawn over the finished frame: an arrow to the ball when it
-//! is off screen and a drop line under it in the air, event tags (SHOT ON GOAL,
-//! SAVE, EPIC SAVE, DEMOLITION, AERIAL GOAL), a boost trail in the car's colour,
+//! is off screen and a drop line under it in the air, a boost trail in the car's
+//! colour,
 //! supersonic speed streaks, sparks on a wall, dust on a landing, a flash where a
 //! pad was taken, the respawn count of a demolished car and the one minute
 //! banner.
 //!
-//! Nothing here touches the sim: the events are read off its state after each
-//! tick (`update`), and the particles live in world space in a small ring that
+//! Nothing here touches the sim: the cars' state is read after each tick
+//! (`update`), and the particles live in world space in a small ring that
 //! is projected through the same cameras the frame was drawn with (`draw`).
 
-use nitroxide_sim::{Car, Sim, Team, DEMO_RESPAWN, FP, GOAL_H, GOAL_HALF_W, HALF_Z};
+use nitroxide_sim::{Car, Sim, DEMO_RESPAWN, FP};
 use psx_font::FontAtlas;
 use psx_gpu::Gpu;
 
@@ -20,17 +20,10 @@ use crate::NitroXide;
 
 /// Particles alive at once, over both views.
 const PARTS: usize = 40;
-/// Event tags on screen at once.
-const TAGS: usize = 3;
-/// Ticks a tag stays up, and how long it takes to slide in and out.
-const TAG_LIFE: u8 = 110;
-const TAG_SLIDE: u8 = 8;
 /// Ticks the one minute banner stays up.
 const BANNER_TICKS: u8 = 130;
 /// Ticks of clock at which the banner fires: sixty seconds.
 const MINUTE_TICKS: u32 = 60 * 60;
-/// The ball must be this fast off a touch, in uu per second, to be a shot.
-const SHOT_SPEED: i32 = 950;
 /// Ball height, uu, above which the drop line is drawn.
 const DROP_HEIGHT: i32 = 260;
 
@@ -69,27 +62,10 @@ impl Particle {
     };
 }
 
-#[derive(Clone, Copy)]
-struct Tag {
-    text: &'static str,
-    /// The team the tag is for, which is the colour it wears.
-    team: u8,
-    age: u8,
-}
-
-/// A shot the ball is on, for a save to answer.
-#[derive(Clone, Copy)]
-struct Shot {
-    /// The seat that struck it.
-    by: u8,
-    age: u16,
-}
-
 /// What the last tick left of each car, to see what changed.
 #[derive(Clone, Copy)]
 struct Memo {
     grounded: bool,
-    wrecked: bool,
     vy: i32,
 }
 
@@ -98,9 +74,6 @@ struct Memo {
 pub struct Feedback {
     parts: [Particle; PARTS],
     next: usize,
-    tags: [Option<Tag>; TAGS],
-    shot: Option<Shot>,
-    shot_cool: u16,
     memo: [Memo; 2],
     tick: u32,
     banner: u8,
@@ -114,12 +87,8 @@ impl Feedback {
         Self {
             parts: [Particle::DEAD; PARTS],
             next: 0,
-            tags: [None; TAGS],
-            shot: None,
-            shot_cool: 0,
             memo: [Memo {
                 grounded: true,
-                wrecked: false,
                 vy: 0,
             }; 2],
             tick: 0,
@@ -134,33 +103,10 @@ impl Feedback {
         self.next = (self.next + 1) % PARTS;
     }
 
-    fn push_tag(&mut self, text: &'static str, team: u8) {
-        // A newer tag takes the first free place, or the oldest one's.
-        let slot = self
-            .tags
-            .iter()
-            .position(Option::is_none)
-            .unwrap_or_else(|| {
-                (0..TAGS)
-                    .max_by_key(|&i| self.tags[i].map_or(0, |t| t.age))
-                    .unwrap_or(0)
-            });
-        self.tags[slot] = Some(Tag { text, team, age: 0 });
-    }
-
     /// Read the sim after a tick: events, and the particles those and the cars'
     /// own state call for.
     pub fn update(&mut self, sim: &Sim, two_player: bool) {
         self.tick = self.tick.wrapping_add(1);
-        self.shot_cool = self.shot_cool.saturating_sub(1);
-        for tag in self.tags.iter_mut().flatten() {
-            tag.age = tag.age.saturating_add(1);
-        }
-        for slot in self.tags.iter_mut() {
-            if slot.is_some_and(|t| t.age > TAG_LIFE) {
-                *slot = None;
-            }
-        }
         if self.banner > 0 {
             self.banner -= 1;
         }
@@ -187,7 +133,6 @@ impl Feedback {
         };
         self.widen += (target - self.widen) / 6;
 
-        self.events(sim);
         for seat in 0..2 {
             let car = car_of(sim, seat);
             self.car_effects(seat, car);
@@ -196,66 +141,6 @@ impl Feedback {
             self.pad_flash(sim);
         }
         self.advance();
-    }
-
-    fn events(&mut self, sim: &Sim) {
-        // A car that has just been wrecked: the other team did it.
-        for seat in 0..2 {
-            let wrecked = car_of(sim, seat).wrecked();
-            if wrecked && !self.memo[seat].wrecked {
-                self.push_tag("DEMOLITION", 1 - seat as u8);
-            }
-            self.memo[seat].wrecked = wrecked;
-        }
-        // A goal: was it scored out of the air?
-        if sim.goal_freeze == nitroxide_sim::GOAL_FREEZE_TICKS {
-            let scorer = match sim.last_scorer {
-                Team::Blue => 0,
-                Team::Orange => 1,
-            };
-            if !car_of(sim, scorer).grounded && sim.ball.p.y >> FP > 280 {
-                self.push_tag("AERIAL GOAL", scorer as u8);
-            }
-            self.shot = None;
-        }
-        if let Some(shot) = &mut self.shot {
-            shot.age += 1;
-            if shot.age > 240 {
-                self.shot = None;
-            }
-        }
-        // A touch: who made it, and where the ball is going now.
-        if sim.hit != 0 && sim.goal_freeze == 0 {
-            let toucher = if dist2(sim.car.p, sim.ball.p) <= dist2(sim.opponent.p, sim.ball.p) {
-                0
-            } else {
-                1
-            };
-            if let Some(shot) = self.shot {
-                if usize::from(shot.by) != toucher {
-                    let near = (HALF_Z - (sim.ball.p.z >> FP).abs()).abs() < 1000;
-                    let fast = ball_speed(sim) > 1700;
-                    self.push_tag(
-                        if near || fast { "EPIC SAVE" } else { "SAVE" },
-                        toucher as u8,
-                    );
-                    self.shot = None;
-                    self.shot_cool = 90;
-                    return;
-                }
-            }
-            if self.shot_cool == 0 && heading_in(sim, toucher) {
-                self.shot = Some(Shot {
-                    by: toucher as u8,
-                    age: 0,
-                });
-                self.shot_cool = 120;
-                self.push_tag("SHOT ON GOAL", toucher as u8);
-            } else if self.shot.is_some_and(|s| usize::from(s.by) == toucher) {
-                // The same side touching it again: that shot is over.
-                self.shot = None;
-            }
-        }
     }
 
     fn car_effects(&mut self, seat: usize, car: &Car) {
@@ -385,41 +270,6 @@ fn car_of(sim: &Sim, seat: usize) -> &Car {
     }
 }
 
-fn dist2(a: nitroxide_sim::V3, b: nitroxide_sim::V3) -> i32 {
-    let (dx, dy, dz) = ((a.x - b.x) >> 4, (a.y - b.y) >> 4, (a.z - b.z) >> 4);
-    dx.saturating_mul(dx)
-        .saturating_add(dy.saturating_mul(dy))
-        .saturating_add(dz.saturating_mul(dz))
-}
-
-/// The ball's speed, uu per second.
-fn ball_speed(sim: &Sim) -> i32 {
-    sim.ball.v.len() * 60 >> FP
-}
-
-/// Is the ball, as it leaves a touch by `seat`, bound for that seat's
-/// opponent's goal, fast enough and on target?
-fn heading_in(sim: &Sim, seat: usize) -> bool {
-    let b = &sim.ball;
-    // Seat 0 attacks +Z, seat 1 -Z.
-    let goal_z = if seat == 0 { HALF_Z } else { -HALF_Z };
-    let (bx, by, bz) = (b.p.x >> FP, b.p.y >> FP, b.p.z >> FP);
-    let dz = goal_z - bz;
-    if dz.signum() != b.v.z.signum() || b.v.z == 0 {
-        return false;
-    }
-    // Per tick in 1/64 uu, so a thousand uu a second is about 1070.
-    if (b.v.z.abs() * 60 >> FP) < SHOT_SPEED {
-        return false;
-    }
-    let ticks = ((dz << FP) / b.v.z).clamp(1, 240);
-    let x = bx + ((b.v.x * ticks) >> FP);
-    // Gravity pulls it down by half g t squared on the way.
-    let drop = (ticks * ticks * 104 / 9 / 2) >> FP;
-    let y = by + ((b.v.y * ticks) >> FP) - drop;
-    x.abs() < GOAL_HALF_W + 90 && y > 0 && y < GOAL_H + 140
-}
-
 // ---- drawing ---------------------------------------------------------------
 
 impl NitroXide {
@@ -445,7 +295,6 @@ impl NitroXide {
                 respawn_count(display, hud, vp, car);
             }
         }
-        fb.draw_tags(gpu, hud, seats.len() > 1);
         fb.draw_banner(gpu, display, seats.len() > 1);
     }
 
@@ -629,45 +478,6 @@ impl Feedback {
             fx::rect_blended(gpu, s.x - px / 2, s.y - px / 2, px, px, fx::dim(colour, a));
         }
         fx::opaque(gpu);
-    }
-
-    fn draw_tags(&self, gpu: &mut Gpu, hud: &FontAtlas, split: bool) {
-        let mut row = 0;
-        for tag in self.tags.iter().flatten() {
-            let tw = i32::from(hud.text_width(tag.text));
-            let (w, h, slant) = (tw + 30, 14, 5);
-            // In from the right, out the same way.
-            let age = i32::from(tag.age);
-            let life = i32::from(TAG_LIFE);
-            let slide = i32::from(TAG_SLIDE);
-            let k = if age < slide {
-                fx::ease_out(age * ONE / slide)
-            } else if age > life - slide {
-                ONE - fx::ease_in((age - (life - slide)) * ONE / slide)
-            } else {
-                ONE
-            };
-            let target = 160 - w / 2;
-            let x = target + ((320 - target) * (ONE - k) >> 12);
-            let y = if split { 100 + row * 17 } else { 84 + row * 17 };
-            row += 1;
-            let team = seat_signal(usize::from(tag.team));
-            fx::slanted(gpu, x, y, w, h, slant, (10, 12, 22));
-            fx::slanted_gradient(
-                gpu,
-                (x + 1, y + 1, w - 2, h - 2),
-                slant,
-                team,
-                fx::mix(team, (0, 0, 0), 110),
-            );
-            NitroXide::shadowed(
-                hud,
-                (x + 14) as i16,
-                (y + 3) as i16,
-                tag.text,
-                (255, 255, 255),
-            );
-        }
     }
 
     fn draw_banner(&self, gpu: &mut Gpu, display: &FontAtlas, split: bool) {
