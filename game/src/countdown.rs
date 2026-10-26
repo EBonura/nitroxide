@@ -10,6 +10,8 @@
 
 use nitroxide_sim::Sim;
 use psx_font::FontAtlas;
+use psx_gpu::material::{BlendMode, TextureMaterial};
+use psx_gpu::prim::QuadTexturedMaterial;
 use psx_gpu::Gpu;
 use psx_math::sincos::{cos_q12, sin_q12};
 
@@ -18,6 +20,8 @@ use crate::fx::{self, Rgb, ONE};
 
 /// Ticks of live play the GO! burst stays up for.
 const GO_TICKS: u32 = 8;
+/// Ticks a leaving number's echo takes to grow and fade.
+const ECHO_TICKS: i32 = 10;
 /// The plate behind a number and what the ends of it are made of.
 const PLATE: Rgb = (13, 20, 48);
 const RULE: Rgb = (226, 232, 244);
@@ -50,6 +54,11 @@ fn draw_in(gpu: &mut Gpu, font: &FontAtlas, sim: &Sim, cx: i32, cy: i32, split: 
         let punch = punch_in(age);
         let fade = if age > 52 { 256 - (age - 52) * 30 } else { 256 };
         plate(gpu, cx, cy, punch, 0, split, fade);
+        // As each number leaves, its echo swells behind the one that replaces it.
+        if digit < 3 && age < ECHO_TICKS {
+            let gone = ["", "2", "3"][digit as usize];
+            echo(gpu, font, gone, cx, cy, rest, age * ONE / ECHO_TICKS);
+        }
         big_text(
             font,
             text,
@@ -104,21 +113,133 @@ fn plate(gpu: &mut Gpu, cx: i32, cy: i32, punch: i32, extra: i32, split: bool, f
     fx::slanted(gpu, x, y + h - 2, w, 2, slant, rule);
 }
 
-/// Centred outlined text at `scale` (Q8 of the font's own size).
+/// The drawn pixels of `text` in the font's own units, from the left of its
+/// first glyph cell and the top of the line: `(left, right, top, bottom)`, the
+/// far edges one past the last pixel. Glyphs are placed by advance, so this
+/// follows them along; a space or a glyph the font lacks draws nothing.
+fn ink(font: &FontAtlas, text: &str) -> (i32, i32, i32, i32) {
+    let face = font.font();
+    let (mut l, mut r, mut t, mut b) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+    let mut cursor = 0;
+    for ch in text.chars() {
+        if let Some(i) = face.glyph_index(ch) {
+            for row in 0..face.glyph_h {
+                let bits = face.glyph_row_packed(i, row);
+                if bits != 0 {
+                    l = l.min(cursor + bits.trailing_zeros() as i32);
+                    r = r.max(cursor + 32 - bits.leading_zeros() as i32);
+                    t = t.min(i32::from(row));
+                    b = b.max(i32::from(row) + 1);
+                }
+            }
+        }
+        cursor += i32::from(face.glyph_advance(ch));
+    }
+    if l > r {
+        return (0, 0, 0, 0);
+    }
+    (l, r, t, b)
+}
+
+/// Where the top left of `text` goes so that the middle of its drawn pixels, not
+/// of its cell and advances, falls on (`cx`, `cy`) at `scale` (Q8).
+fn ink_origin(font: &FontAtlas, text: &str, cx: i32, cy: i32, scale: i32) -> (i32, i32) {
+    let (l, r, t, b) = ink(font, text);
+    // The GPU puts a scaled texel half a texel up and to the left of where its
+    // cell says (measured: two pixels at four times size), so the origin moves
+    // back by half a font pixel.
+    let half = (scale + 256) >> 9;
+    (
+        cx - ((l + r) * scale >> 9) + half,
+        cy - ((t + b) * scale >> 9) + half,
+    )
+}
+
+/// Centred outlined text at `scale` (Q8 of the font's own size), placed by its
+/// ink.
 fn big_text(font: &FontAtlas, text: &str, cx: i32, cy: i32, scale: i32, tint: Rgb) {
-    let scale = scale.clamp(16, 2000) as u16;
-    let w = i32::from(font.text_width(text)) * i32::from(scale) / 256;
-    let h = i32::from(font.line_height()) * i32::from(scale) / 256;
-    // The advance of the last glyph ends in a gap, which is not ink: shift the
-    // word back by half of it (measured at about 5 pixels at four times size).
-    let gap = i32::from(scale) * 5 / 2048;
-    let (x, y) = ((cx - w / 2 + gap) as i16, (cy - h / 2) as i16);
+    let scale = scale.clamp(16, 2000);
+    let (x, y) = ink_origin(font, text, cx, cy, scale);
+    let (x, y, q) = (x as i16, y as i16, scale as u16);
     let ink = (tint.0.div_ceil(2), tint.1.div_ceil(2), tint.2.div_ceil(2));
     let o = if scale > 600 { 2 } else { 1 };
-    for (dx, dy) in [(o, o)] {
-        font.draw_text_scaled_q8(x + dx, y + dy, text, scale, scale, (0, 0, 0));
+    font.draw_text_scaled_q8(x + o, y + o, text, q, q, (0, 0, 0));
+    font.draw_text_scaled_q8(x, y, text, q, q, ink);
+}
+
+/// The echo of a number that has just left: the same word in the same colour,
+/// swelling from its own size to about one and a half times it while it fades out,
+/// added to what is behind it. `progress` runs from 0 to one (Q12) over its life.
+fn echo(gpu: &mut Gpu, font: &FontAtlas, text: &str, cx: i32, cy: i32, rest: i32, progress: i32) {
+    let k = fx::ease_out(progress);
+    let scale = rest * (256 + (154 * k >> 12)) >> 8;
+    let alpha = 256 - (256 * progress >> 12);
+    let tint = fx::dim((255, 232, 130), alpha);
+    let (x, y) = ink_origin(font, text, cx, cy, scale);
+    additive_text(
+        gpu,
+        font,
+        text,
+        x,
+        y,
+        scale,
+        (tint.0 / 2, tint.1 / 2, tint.2 / 2),
+    );
+}
+
+/// `text` scaled by `scale` (Q8) and drawn additively from the display face's
+/// atlas, laid out the way the atlas's own scaled drawing lays it out (the SDK
+/// has no scaled blended text). The atlas sits at the page's origin, in cells of
+/// the glyph width rounded up to four texels.
+fn additive_text(
+    gpu: &mut Gpu,
+    font: &FontAtlas,
+    text: &str,
+    x: i32,
+    y: i32,
+    scale: i32,
+    tint: Rgb,
+) {
+    let face = font.font();
+    let cell = (u16::from(face.glyph_w).max(1)).div_ceil(4) * 4;
+    let per_row = face.glyph_count.min((256 / cell).max(1)).max(1);
+    let (gw, gh) = (i32::from(face.glyph_w), i32::from(face.glyph_h));
+    let (sw, sh) = (
+        ((gw * scale + 128) >> 8).max(1),
+        ((gh * scale + 128) >> 8).max(1),
+    );
+    let material = TextureMaterial::blended(
+        crate::DISPLAY_CLUT.uv_word(),
+        crate::DISPLAY_TPAGE.uv_word(0),
+        tint,
+        BlendMode::Add,
+    );
+    let mut cursor = x << 8;
+    for ch in text.chars() {
+        let at = ((cursor + 128) >> 8) as i16;
+        cursor += i32::from(face.glyph_advance(ch)) * scale;
+        let Some(i) = face.glyph_index(ch) else {
+            continue;
+        };
+        let (u, v) = (
+            (i % per_row) * cell,
+            (i / per_row) * u16::from(face.glyph_h),
+        );
+        let (u0, v0) = (u as u8, v as u8);
+        let (u1, v1) = (
+            u0.saturating_add(face.glyph_w),
+            v0.saturating_add(face.glyph_h),
+        );
+        let (x0, y0) = (at, y as i16);
+        let verts = [
+            (x0, y0),
+            (x0 + sw as i16, y0),
+            (x0, y0 + sh as i16),
+            (x0 + sw as i16, y0 + sh as i16),
+        ];
+        let uvs = [(u0, v0), (u1, v0), (u0, v1), (u1, v1)];
+        gpu.draw(&QuadTexturedMaterial::with_material(verts, uvs, material));
     }
-    font.draw_text_scaled_q8(x, y, text, scale, scale, ink);
 }
 
 /// GO!: the word pops, a flash sweeps the plate's colours across the screen and
@@ -135,6 +256,9 @@ fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32
     };
     if t < 3 {
         plate(gpu, cx, cy, scale.min(300) * 3 / 4 + 70, 90, split, fade);
+    }
+    if t < ECHO_TICKS {
+        echo(gpu, font, "1", cx, cy, rest, t * ONE / GO_TICKS as i32);
     }
     big_text(
         font,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+The countdown's numerals and the GO! are centred by the pixels they draw rather than
+by their font cell (the 1 sat to one side), in single player and in each split half;
+the left and right margins between the ink and the ends of the navy plate agree within
+a pixel. As each number leaves, an echo of it swells to about one and a half times its
+size and fades out over ten ticks behind the next, added to what is behind it in the
+same colour (the 1 echoes through the GO!), on overtime kickoffs too.
+
 A timed match that is level when the clock runs out now goes to overtime instead of
 ending in a draw: the ball and both cars go back to their kickoff spots, three, two,
 one, and the next goal wins, after its celebration. An OVERTIME banner opens out
