@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 | 2026-10-26
 
 The loading screen is the slanted-cell boost bar on its own, larger and centred. It
 fills with the load's real progress (the lighting bake, the arena texture read and the

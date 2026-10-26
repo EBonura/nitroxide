@@ -393,6 +393,17 @@ explicitly with `PSOXIDE_FROM`.
 
 ## Recent changes
 
+**0.5.0: air control, new cars, music, kickoffs, overtime and moving menus.** A car in
+the air steers with Rocket League's own torque and damping, and a flip is a real
+angular impulse. There are nine cars (six new from Pavel 3D's pack), six tracks of
+music inside the disc's data track, and stereo sound effects with a sound for every
+menu action. Every kickoff opens with a camera fly-over and a big 3, 2, 1, GO!, a timed
+match that ends level goes to golden-goal overtime, and the menus move: an orbiting
+title, a sliding selection bar, a car turntable and a rebuilt pause menu. The match
+shows an arrow to the ball, boost trails, speed lines, sparks and dust, the boost dial
+is a bar of slanted cells, the loading screen is that bar filling, and Save Settings
+no longer freezes the game. Full notes are in `CHANGELOG.md`.
+
 **0.4.1: the ball rolls the same both ways.** A ball rolling toward one end
 or side no longer stops sooner than the same ball rolling the other way, so
 mirrored shots and rolls match. The attract demo has four new matches picked

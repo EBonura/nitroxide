@@ -1,16 +1,23 @@
-NitroXide (PSX)  -  v0.4.1
+NitroXide (PSX)  -  v0.5.0
 ==========================
 
 A Rocket League-style rocket-car soccer game for the original PlayStation:
 drive, boost and score against the CPU, or with a friend in split-screen.
-New in 0.4.1: the ball rolls the same in every direction, the attract demo has
-four new matches, and tyre tracks are wider, darker and last longer. New in
-0.4.0: an attract demo of bot-against-bot matches (leave a menu alone for 30
-seconds, or pick DEMO), rounded arena corners and smaller end wall ramps, a
-panelled ball, glowing explosions and tyre tracks, and a split screen that
-holds 30 fps. It keeps the 0.3.0 arena and HUD overhaul: team colours, lit
-goals, boost pads as pools of light, goal boxes and arcs on the pitch, a crowd
-behind the cage, and a scoreboard that tucks into a tab while you play.
+New in 0.5.0: Rocket League-style air control and flips, six new cars (nine in
+all), six tracks of music, stereo sound effects with a sound for every menu
+action, a camera fly-over and a big 3, 2, 1, GO! at every kickoff, golden-goal
+overtime for a timed match that ends level, moving menus (an orbiting title, a
+sliding selection bar, a car turntable), a rebuilt pause menu, more feedback in
+the match (an arrow to the ball, boost trails, speed lines, sparks, dust), a
+slanted-cell boost bar and a boost-bar loading screen, and Save Settings that no
+longer freezes the game. New in 0.4.1: the ball rolls the same in every
+direction, the attract demo has four new matches, and tyre tracks are wider,
+darker and last longer. 0.4.0 added an attract demo of bot-against-bot
+matches, rounded arena corners and smaller end wall ramps, a panelled ball,
+glowing explosions and tyre tracks, and a split screen that holds 30 fps. It
+keeps the 0.3.0 arena and HUD overhaul: team colours, lit goals, boost pads as
+pools of light, goal boxes and arcs on the pitch, a crowd behind the cage, and a
+scoreboard that tucks into a tab while you play.
 
 To run:
   - Boot NitroXide.cue in a PS1 emulator (PSoXide, DuckStation, or
