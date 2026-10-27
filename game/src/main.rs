@@ -2003,53 +2003,55 @@ impl NitroXide {
     }
 
     /// The skip hint in the bottom-right corner, inside the title-safe area the
-    /// boost meter keeps to: the ring that fills clockwise while X is held, the X
-    /// button's glyph, and "HOLD TO SKIP", left to right and right-aligned.
+    /// boost meter keeps to: the ring that fills clockwise while X is held with the X
+    /// button's glyph inside it, and "HOLD TO SKIP" to its right, right-aligned.
     /// `over_meter` lifts it above the meter's tag, for the fly-over, which shows
     /// the HUD.
     fn draw_skip_hint(&self, gpu: &mut Gpu, hud: &FontAtlas, over_meter: bool) {
         const TEXT: &str = "HOLD TO SKIP";
-        const RING: i32 = 16;
+        // The ring's inner and outer radius: the X button sits inside it.
+        const IN: i32 = 9;
+        const OUT: i32 = 12;
         const GLYPH: i32 = 11;
-        const GAP: i32 = 4;
+        const GAP: i32 = 5;
         // The meter's own margins (`boost_meter::Layout`): 14 in from the right,
         // its foot 18 up, its tag reaching to 41 above the bottom in a full view
-        // and 34 in a split half. The hint's text sits 4 above that or, alone, at
-        // the same foot as the meter.
+        // and 34 in a split half. The hint's foot is the meter's foot or, with the
+        // meter up, 4 above its tag.
         let (right, foot) = (
             i32::from(draw::SCREEN_W) - 14,
             i32::from(draw::SCREEN_H) - 18,
         );
-        let top = if !over_meter {
-            foot - 11
+        let bottom = if !over_meter {
+            foot
         } else if self.two_player {
-            i32::from(draw::SCREEN_H) - 34 - 4 - 11
+            i32::from(draw::SCREEN_H) - 34 - 4
         } else {
-            i32::from(draw::SCREEN_H) - 41 - 4 - 11
+            i32::from(draw::SCREEN_H) - 41 - 4
         };
         let width = hud.text_width(TEXT) as i32;
-        let left = right - (RING + GAP + GLYPH + GAP + width);
+        let left = right - (2 * OUT + GAP + width);
         fx::opaque(gpu);
-        let (cx, cy) = (left + RING / 2, top + 5);
+        let (cx, cy) = (left + OUT, bottom - OUT);
         let filled = self.skip.q12();
         // A dark edge, the track, then what has filled of it.
-        fx::arc(gpu, (cx, cy), (3, 8), 0, fx::ONE, (0, 0, 0));
-        fx::arc(gpu, (cx, cy), (4, 7), filled, fx::ONE, (52, 60, 82));
-        fx::arc(gpu, (cx, cy), (4, 7), 0, filled, (110, 215, 255));
-        // The X button: a dark plate in a pale edge with the cross in its blue.
-        let gx = left + RING + GAP;
-        let gy = top;
+        fx::arc(gpu, (cx, cy), (IN - 1, OUT + 1), 0, fx::ONE, (0, 0, 0));
+        fx::arc(gpu, (cx, cy), (IN, OUT), filled, fx::ONE, (52, 60, 82));
+        fx::arc(gpu, (cx, cy), (IN, OUT), 0, filled, (110, 215, 255));
+        // The X button inside it: a dark plate in a pale edge with the cross in
+        // its blue, the plate's middle and the cross's ink both on the ring's.
+        let (gx, gy) = (cx - GLYPH / 2, cy - GLYPH / 2);
         fx::rect(gpu, gx, gy, GLYPH, GLYPH, (150, 165, 205));
         fx::rect(gpu, gx + 1, gy + 1, GLYPH - 2, GLYPH - 2, (24, 30, 54));
         for i in 0..6 {
-            fx::rect(gpu, gx + 3 + i, gy + 3 + i, 2, 2, (120, 175, 255));
-            fx::rect(gpu, gx + 7 - i, gy + 3 + i, 2, 2, (120, 175, 255));
+            fx::rect(gpu, gx + 2 + i, gy + 2 + i, 2, 2, (120, 175, 255));
+            fx::rect(gpu, gx + 7 - i, gy + 2 + i, 2, 2, (120, 175, 255));
         }
         let lit = self.skip.ticks() > 0;
         Self::shadowed(
             hud,
-            (gx + GLYPH + GAP) as i16,
-            top as i16,
+            (left + 2 * OUT + GAP) as i16,
+            (cy - 5) as i16,
             TEXT,
             if lit {
                 (255, 255, 255)
@@ -2714,13 +2716,8 @@ impl Scene for NitroXide {
         #[cfg(feature = "boot-results")]
         {
             self.start_match();
-            self.sim.score_blue = 3;
-            self.sim.score_orange = 1;
-            self.sim.stats.team[0].shots = 9;
-            self.sim.stats.team[1].shots = 4;
-            self.sim.stats.team[0].top_speed = 2100;
             self.phase = Phase::Results;
-            self.begin_victory();
+            self.stage_variant(0);
         }
         #[cfg(feature = "boot-overtime")]
         {

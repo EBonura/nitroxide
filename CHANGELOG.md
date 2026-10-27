@@ -44,8 +44,10 @@ presses of the match do not choose for you. A loss or a draw gets the same panel
 calmer scene with no cup. The sim now keeps the match's shots, saves, boost burned, top speed
 and time in the air (`MatchStats`).
 
-The HOLD TO SKIP hint, with its ring and the X button, moved to the bottom-right corner,
-inside the title-safe area and above the boost meter when the meter is up (the fly-over).
+The HOLD TO SKIP hint is a larger ring with the X button drawn inside it, centred, and the words
+to its right, in the bottom-right corner inside the title-safe area (above the boost meter when
+the meter is up, in the fly-over). On the results, the OVERTIME note shares the score's line and
+the line is centred on the slanted plate, so it stays inside it.
 The HUD font's K, which drew as a short-armed H ("SKIP" read as "SHIP"), is redrawn.
 
 To make room the car models' tables are sized for what the cars need (320 vertices and faces

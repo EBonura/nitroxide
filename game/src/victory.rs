@@ -39,6 +39,9 @@ const GOLD: Rgb = (255, 214, 80);
 const DEFEAT: Rgb = (240, 130, 130);
 const DRAW: Rgb = (230, 230, 150);
 
+#[cfg(feature = "boot-results")]
+static mut VARIANT: u32 = 0;
+
 /// How the match came out.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Verdict {
@@ -168,8 +171,34 @@ impl NitroXide {
         draw::set_lite(false);
     }
 
+    /// Dev (`boot-results`): stage variant `n` of the results, to look at each
+    /// header: bit 0 two players, bit 1 overtime, and the rest who won (0 blue,
+    /// 1 orange, 2 a draw). The screen steps to the next every 170 ticks.
+    #[cfg(feature = "boot-results")]
+    pub(crate) fn stage_variant(&mut self, n: u32) {
+        unsafe { VARIANT = n };
+        self.two_player = n & 1 != 0;
+        self.sim.overtime = n & 2 != 0;
+        let (b, o) = match n >> 2 {
+            0 => (3, 1),
+            1 => (1, 3),
+            _ => (2, 2),
+        };
+        self.sim.score_blue = b;
+        self.sim.score_orange = o;
+        self.sim.stats.team[0].shots = 9;
+        self.sim.stats.team[1].shots = 4;
+        self.sim.stats.team[0].top_speed = 2100;
+        self.end_victory();
+        self.begin_victory();
+    }
+
     /// One tick of the results screen.
     pub(crate) fn update_victory(&mut self, ctx: &mut Ctx) {
+        #[cfg(feature = "boot-results")]
+        if self.victory.as_ref().is_some_and(|v| v.t >= 170) {
+            self.stage_variant((unsafe { VARIANT } + 1) % 12);
+        }
         let two = self.two_player;
         if two {
             ctx.refresh_second_pad();
@@ -340,7 +369,10 @@ impl NitroXide {
                 colour,
                 mix(colour, (0, 0, 0), 120),
             );
-            let mid = x + PW / 2 + SLANT / 4;
+            // The plate leans: a row `r` down it starts `SLANT * (h - r) / h` to the
+            // right of its foot, so each line is centred on the middle of its own row.
+            let mid_at = |r: i32| x + (PW - SLANT) / 2 + SLANT * (h - r) / h;
+            let mid = mid_at(20);
             let vx = (mid - display.text_width(verdict) as i32 * 300 / 256 / 2) as i16;
             display.draw_text_scaled_q8(vx + 1, (y + 15) as i16, verdict, 300, 300, (0, 0, 0));
             display.draw_text_scaled_q8(vx, (y + 14) as i16, verdict, 300, 300, Self::ink(colour));
@@ -348,19 +380,28 @@ impl NitroXide {
             let n = score_line(&mut line, s.score_blue as u32, s.score_orange as u32);
             // SAFETY: ASCII.
             let text = unsafe { core::str::from_utf8_unchecked(&line[..n]) };
+            // The score, and after a gap OVERTIME in its colour when the match went
+            // there: one line, centred as a whole, so it stays inside the plate.
+            let wa = hud.text_width(text) as i32;
+            let wb = if s.overtime {
+                hud.text_width("OVERTIME") as i32 + 8
+            } else {
+                0
+            };
+            let mid2 = mid_at(35);
+            let start = mid2 - (wa + wb) / 2;
             hud.draw_text(
-                (mid - hud.text_width(text) as i32 / 2) as i16,
+                start as i16,
                 (y + 29) as i16,
                 text,
                 Self::ink((226, 232, 244)),
             );
             if s.overtime {
-                Self::shadowed(
-                    hud,
-                    (x + PW - 52) as i16,
+                hud.draw_text(
+                    (start + wa + 8) as i16,
                     (y + 29) as i16,
                     "OVERTIME",
-                    crate::OVERTIME_INK,
+                    Self::ink(crate::OVERTIME_INK),
                 );
             }
         }
