@@ -53,6 +53,9 @@ boot-goal-aerial = []
 # Dev: a goal to replay that is a long shot: the ball is struck from our own
 # end and rolls the length of the pitch, its touch long out of the replay's ring.
 boot-goal-long = []
+# Dev: boot straight into the victory scene of a 3-1 win, with some stats on the
+# table, for the frame-time and screenshot runs.
+boot-results = []
 # Dev: boot-goal with the opponent left on its AI, so the goal and the kickoff
 # after it are seen with a car that was driving when the ball went in.
 boot-goal-ai = []

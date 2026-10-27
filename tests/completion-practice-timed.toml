@@ -95,9 +95,17 @@ sym = "NITRO_GATE_STATE"
 offset = 40
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["start"]
 hold = 4
-wait = 26
+wait = 48
 [[step]]
 checkpoint = "returned-title"
 golden = false

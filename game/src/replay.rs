@@ -165,6 +165,13 @@ impl Replay {
     }
 }
 
+/// The scratch world's slot, for the results screen to stage its scene in once
+/// the replay is over.
+pub fn scratch() -> &'static mut Option<Sim> {
+    // SAFETY: the game is single-threaded.
+    unsafe { &mut *core::ptr::addr_of_mut!(SCRATCH) }
+}
+
 /// The scratch world, for the renderer.
 pub fn world() -> Option<&'static Sim> {
     // SAFETY: the game is single-threaded.

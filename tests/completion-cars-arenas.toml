@@ -67,7 +67,7 @@ op = "eq"
 value = 3
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 200
+timeout = 700
 [[step]]
 # The tile sweep into the results hides the screen for half a second.
 wait = 20
@@ -94,9 +94,17 @@ sym = "NITRO_GATE_STATE"
 offset = 32
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "car-0-night-returned-title"
 golden = false
@@ -175,7 +183,7 @@ op = "eq"
 value = 3
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 200
+timeout = 700
 [[step]]
 # The tile sweep into the results hides the screen for half a second.
 wait = 20
@@ -202,9 +210,17 @@ sym = "NITRO_GATE_STATE"
 offset = 32
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "car-1-day-returned-title"
 golden = false
@@ -283,7 +299,7 @@ op = "eq"
 value = 3
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 200
+timeout = 700
 [[step]]
 # The tile sweep into the results hides the screen for half a second.
 wait = 20
@@ -310,9 +326,17 @@ sym = "NITRO_GATE_STATE"
 offset = 32
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "car-2-sunset-returned-title"
 golden = false

@@ -19,7 +19,7 @@ use psx_display::Label;
 use psx_engine::{
     button, ActionBinding, ActionMap, App, Config, Ctx, Deadzone, PadState, Scene, VisualPacing,
 };
-use psx_font::fonts::{KENNEY_PIXEL, KENNEY_ROCKET};
+use psx_font::fonts::KENNEY_ROCKET;
 use psx_font::FontAtlas;
 use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
 use psx_gpu::Gpu;
@@ -46,6 +46,7 @@ mod draw;
 mod feedback;
 mod fx;
 mod gate_state;
+mod hud_font;
 mod loader;
 mod music;
 #[allow(dead_code)]
@@ -53,6 +54,7 @@ mod music_map;
 mod pause_menu;
 mod replay;
 mod sweep;
+mod victory;
 
 /// Whether a match starts in ball cam. Off, as shipped: a dev option
 /// (`cam-ball-default`) for judging it, not a decision.
@@ -705,6 +707,8 @@ struct NitroXide {
     kick_intro: u16,
     /// How far X has been held to skip the fly-over or the goal replay.
     pub skip: SkipHold,
+    /// The results screen's scene, while the match is over and it is up.
+    victory: Option<victory::Victory>,
     /// The goal replay in progress, if one is: the sim stands still while it
     /// runs and the renderer is handed the replay's own world.
     replay: Option<replay::Replay>,
@@ -862,6 +866,7 @@ impl NitroXide {
             meters: boost_meter::Meters::new(),
             kick_intro: 0,
             skip: SkipHold::new(),
+            victory: None,
             replay: None,
             fb: feedback::Feedback::new(),
             pause_t: 0,
@@ -1368,6 +1373,7 @@ impl NitroXide {
         replay::new_match();
         self.replay = None;
         self.skip = SkipHold::new();
+        self.end_victory();
         // The previous match is over: forget it, and say go.
         audio::new_match();
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
@@ -1537,7 +1543,10 @@ impl NitroXide {
                 self.start_match();
                 self.fly_over_began_under_the_tiles();
             }
-            sweep::Change::Results => self.phase = Phase::Results,
+            sweep::Change::Results => {
+                self.phase = Phase::Results;
+                self.begin_victory();
+            }
         }
     }
 
@@ -1568,7 +1577,18 @@ impl NitroXide {
         // over where the cars are, and the fly-over opens.
         draw::reset_cameras();
         self.fb.reset();
-        self.kick_intro = KICK_INTRO_TICKS;
+        if self.sim.finished() {
+            self.to_results();
+        } else {
+            self.kick_intro = KICK_INTRO_TICKS;
+        }
+    }
+
+    /// The match is over: the whistle, and the tile sweep to the results.
+    fn to_results(&mut self) {
+        audio::stop_all();
+        audio::match_end();
+        self.sweep = Some(sweep::Sweep::new(sweep::Change::Results));
     }
 
     /// One tick of the hold-X-to-skip ring, on either pad in a two-player game:
@@ -1588,6 +1608,7 @@ impl NitroXide {
     fn to_title(&mut self, tick: u32) {
         self.kick_intro = 0;
         self.skip = SkipHold::new();
+        self.end_victory();
         if let Some(r) = self.replay.take() {
             r.finish(true);
         }
@@ -1978,30 +1999,57 @@ impl NitroXide {
             fx::rect(gpu, 10, 11, 6, 6, (230, 50, 50));
         }
         Self::shadowed(hud, 20, 8, "REPLAY", (240, 240, 240));
-        self.draw_skip_hint(gpu, hud);
+        self.draw_skip_hint(gpu, hud, false);
     }
 
-    /// "HOLD X SKIP" at the foot of the screen with the ring beside it that fills
-    /// clockwise while X is held.
-    fn draw_skip_hint(&self, gpu: &mut Gpu, hud: &FontAtlas) {
-        const TEXT: &str = "HOLD X SKIP";
+    /// The skip hint in the bottom-right corner, inside the title-safe area the
+    /// boost meter keeps to: the ring that fills clockwise while X is held, the X
+    /// button's glyph, and "HOLD TO SKIP", left to right and right-aligned.
+    /// `over_meter` lifts it above the meter's tag, for the fly-over, which shows
+    /// the HUD.
+    fn draw_skip_hint(&self, gpu: &mut Gpu, hud: &FontAtlas, over_meter: bool) {
+        const TEXT: &str = "HOLD TO SKIP";
         const RING: i32 = 16;
-        const GAP: i32 = 5;
-        let y = draw::SCREEN_H - 22;
+        const GLYPH: i32 = 11;
+        const GAP: i32 = 4;
+        // The meter's own margins (`boost_meter::Layout`): 14 in from the right,
+        // its foot 18 up, its tag reaching to 41 above the bottom in a full view
+        // and 34 in a split half. The hint's text sits 4 above that or, alone, at
+        // the same foot as the meter.
+        let (right, foot) = (
+            i32::from(draw::SCREEN_W) - 14,
+            i32::from(draw::SCREEN_H) - 18,
+        );
+        let top = if !over_meter {
+            foot - 11
+        } else if self.two_player {
+            i32::from(draw::SCREEN_H) - 34 - 4 - 11
+        } else {
+            i32::from(draw::SCREEN_H) - 41 - 4 - 11
+        };
         let width = hud.text_width(TEXT) as i32;
-        let left = 160 - (RING + GAP + width) / 2;
+        let left = right - (RING + GAP + GLYPH + GAP + width);
         fx::opaque(gpu);
-        let (cx, cy) = (left + RING / 2, i32::from(y) + 4);
+        let (cx, cy) = (left + RING / 2, top + 5);
         let filled = self.skip.q12();
         // A dark edge, the track, then what has filled of it.
         fx::arc(gpu, (cx, cy), (3, 8), 0, fx::ONE, (0, 0, 0));
         fx::arc(gpu, (cx, cy), (4, 7), filled, fx::ONE, (52, 60, 82));
         fx::arc(gpu, (cx, cy), (4, 7), 0, filled, (110, 215, 255));
+        // The X button: a dark plate in a pale edge with the cross in its blue.
+        let gx = left + RING + GAP;
+        let gy = top;
+        fx::rect(gpu, gx, gy, GLYPH, GLYPH, (150, 165, 205));
+        fx::rect(gpu, gx + 1, gy + 1, GLYPH - 2, GLYPH - 2, (24, 30, 54));
+        for i in 0..6 {
+            fx::rect(gpu, gx + 3 + i, gy + 3 + i, 2, 2, (120, 175, 255));
+            fx::rect(gpu, gx + 7 - i, gy + 3 + i, 2, 2, (120, 175, 255));
+        }
         let lit = self.skip.ticks() > 0;
         Self::shadowed(
             hud,
-            (left + RING + GAP) as i16,
-            y,
+            (gx + GLYPH + GAP) as i16,
+            top as i16,
             TEXT,
             if lit {
                 (255, 255, 255)
@@ -2577,42 +2625,6 @@ impl NitroXide {
             );
         }
     }
-
-    fn draw_results(&self, font: &FontAtlas, small: &FontAtlas) {
-        let s = &self.sim;
-        let (verdict, color) = if s.score_blue > s.score_orange {
-            ("WINNER", (140, 240, 160))
-        } else if s.score_blue < s.score_orange {
-            ("DEFEAT", (240, 130, 130))
-        } else {
-            ("DRAW", (230, 230, 150))
-        };
-        // Over the last match frame, which is often bright grass: the
-        // headline gets the goal banner's outline and the rest the HUD's
-        // shadow, or the true (dimmer) colours wash out.
-        Self::outlined(font, 96, 48, verdict, 448, color);
-        if s.overtime {
-            Self::centred(small, 160, 96, "WON IN OVERTIME", OVERTIME_INK);
-        }
-        let mut dec = [0u8; U32_DEC_MAX];
-        Self::shadowed(small, 84, 120, "GOALS", (160, 175, 205));
-        Self::shadowed(
-            small,
-            200,
-            120,
-            u32_dec(&mut dec, s.score_blue as u32),
-            (245, 245, 190),
-        );
-        Self::shadowed(small, 84, 144, "CONCEDED", (160, 175, 205));
-        Self::shadowed(
-            small,
-            200,
-            144,
-            u32_dec(&mut dec, s.score_orange as u32),
-            (245, 245, 190),
-        );
-        Self::shadowed(small, 92, 206, "PRESS START", (230, 230, 160));
-    }
 }
 
 impl Scene for NitroXide {
@@ -2675,7 +2687,7 @@ impl Scene for NitroXide {
             DISPLAY_TPAGE,
             DISPLAY_CLUT,
         ));
-        self.hud = Some(FontAtlas::upload(&KENNEY_PIXEL, HUD_TPAGE, HUD_CLUT));
+        self.hud = Some(FontAtlas::upload(&hud_font::HUD_FONT, HUD_TPAGE, HUD_CLUT));
         let mut blend_clut = [0u16; 16];
         blend_clut[1] = 0xffff;
         psx_vram::upload_16bpp(
@@ -2698,6 +2710,17 @@ impl Scene for NitroXide {
         #[cfg(feature = "boot-play")]
         {
             self.phase = Phase::Play;
+        }
+        #[cfg(feature = "boot-results")]
+        {
+            self.start_match();
+            self.sim.score_blue = 3;
+            self.sim.score_orange = 1;
+            self.sim.stats.team[0].shots = 9;
+            self.sim.stats.team[1].shots = 4;
+            self.sim.stats.team[0].top_speed = 2100;
+            self.phase = Phase::Results;
+            self.begin_victory();
         }
         #[cfg(feature = "boot-overtime")]
         {
@@ -3407,7 +3430,12 @@ impl Scene for NitroXide {
                 replay::record(&self.sim);
                 // The tick a goal's celebration ends the cars are back on their
                 // spots and the countdown is armed: fly over the arena first.
-                if was_celebrating && self.sim.goal_freeze == 0 && self.sim.kickoff_hold > 0 {
+                // The goal that wins the match is replayed too, and the results
+                // follow the replay.
+                if was_celebrating
+                    && self.sim.goal_freeze == 0
+                    && (self.sim.kickoff_hold > 0 || self.sim.finished())
+                {
                     // The goal replay first, when the ring has one; then the
                     // same fly-over.
                     match replay::Replay::begin(&self.sim) {
@@ -3416,6 +3444,7 @@ impl Scene for NitroXide {
                             self.skip = SkipHold::new();
                             self.fb.reset();
                         }
+                        None if self.sim.finished() => {}
                         None => self.kick_intro = KICK_INTRO_TICKS,
                     }
                 }
@@ -3511,18 +3540,11 @@ impl Scene for NitroXide {
                         }
                     }
                 }
-                if self.sim.finished() {
-                    audio::stop_all();
-                    audio::match_end();
-                    self.sweep = Some(sweep::Sweep::new(sweep::Change::Results));
+                if self.sim.finished() && self.replay.is_none() {
+                    self.to_results();
                 }
             }
-            Phase::Results => {
-                if ctx.just_pressed(button::START) || ctx.just_pressed(button::CROSS) {
-                    audio::ui(audio::Ui::Back);
-                    self.to_title(ctx.sim_tick.as_u32());
-                }
-            }
+            Phase::Results => self.update_victory(ctx),
             Phase::Demo => {
                 // Any press on either pad hands the game back at once.
                 ctx.refresh_second_pad();
@@ -3676,6 +3698,13 @@ impl Scene for NitroXide {
                 // The replay is one full view, in a split game too, of its own
                 // world.
                 if let Some(world) = replay::world() {
+                    draw::render(world, self.cars, false, buffer_y)
+                }
+            }
+            // The victory scene is one full view of its own world, in a split
+            // game too.
+            Phase::Results if self.victory.is_some() => {
+                if let Some(world) = self.victory_world() {
                     draw::render(world, self.cars, false, buffer_y)
                 }
             }
@@ -3865,7 +3894,7 @@ impl NitroXide {
                     self.draw_now_playing(hud, ctx.sim_tick.as_u32());
                 }
                 if self.kick_intro > 0 && !self.paused && self.sweep.is_none() {
-                    self.draw_skip_hint(Gpu::from_dma_mut(ctx.gpu_dma()), hud);
+                    self.draw_skip_hint(Gpu::from_dma_mut(ctx.gpu_dma()), hud, true);
                 }
                 if self.kick_intro == 0 {
                     let views = self.view_seats();
@@ -3878,7 +3907,7 @@ impl NitroXide {
                 }
                 return;
             }
-            Phase::Results => self.draw_results(display, hud),
+            Phase::Results => self.draw_results(ctx, display, hud),
             Phase::Demo if self.demo.cut > 0 => return,
             Phase::Demo => {
                 let tick = ctx.sim_tick.as_u32();

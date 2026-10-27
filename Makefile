@@ -60,7 +60,7 @@ STEPS  ?= 120000000
 PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
-.PHONY: help test assets assets-pavel textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx recordings \
+.PHONY: help test assets trophy assets-pavel textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx recordings \
 	pgo-collect pgo-choose pgo-order demo-check
 
 help:
@@ -97,8 +97,19 @@ test:
 # independently before the Rust cooker sees it. The old importer-wide vertex
 # cluster welded overlapping wheels and bodywork together.
 BLENDER ?= /Applications/Blender.app/Contents/MacOS/Blender
+# The trophy is built with Blender 5.2 (tools/make_trophy.py).
+TROPHY_BLENDER ?= /Applications/Blender 5.2.app/Contents/MacOS/Blender
+TROPHY_DIR := $(ROOT)/build/trophy
 BAKED   := $(ROOT)/build/baked
 CARS    := sedan hatchback hatchback2 truck truck_2
+
+# The victory trophy: built headless in Blender, cooked as a prop, and the two
+# blobs it leaves (trophy.psxm and its all-rigid trophy.psxw) are committed.
+trophy:
+	@mkdir -p "$(TROPHY_DIR)/out"
+	"$(TROPHY_BLENDER)" --background --python "$(ROOT)/tools/make_trophy.py" -- "$(TROPHY_DIR)/trophy.glb" 2>&1 | grep -E 'TROPHY|Error|Traceback'
+	cd $(COOK) && cargo run --release -- "$(TROPHY_DIR)" "$(TROPHY_DIR)/out"
+	cp "$(TROPHY_DIR)/out/trophy.psxm" "$(TROPHY_DIR)/out/trophy.psxw" "$(GAME)/assets/"
 
 assets:
 	@mkdir -p "$(PREPARED)"

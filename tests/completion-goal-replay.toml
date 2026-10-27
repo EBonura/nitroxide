@@ -354,7 +354,7 @@ wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", v
 timeout = 400
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 300
+timeout = 700
 [[step]]
 wait = 20
 [[step]]
@@ -373,7 +373,7 @@ kind = "ram"
 sym = "NITRO_REPLAY_STATE"
 offset = 24
 op = "eq"
-value = 2
+value = 3
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_REPLAY_STATE"

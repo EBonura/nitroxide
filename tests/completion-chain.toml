@@ -67,7 +67,7 @@ op = "eq"
 value = 3
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 200
+timeout = 700
 [[step]]
 # The tile sweep into the results hides the screen for half a second.
 wait = 20
@@ -94,9 +94,17 @@ sym = "NITRO_GATE_STATE"
 offset = 32
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "first-to-one-returned-title"
 golden = false
@@ -214,7 +222,7 @@ wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", v
 timeout = 400
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 200
+timeout = 700
 [[step]]
 # The tile sweep into the results hides the screen for half a second.
 wait = 20
@@ -241,9 +249,17 @@ sym = "NITRO_GATE_STATE"
 offset = 32
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "first-to-three-returned-title"
 golden = false
@@ -406,7 +422,7 @@ wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", v
 timeout = 400
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 200
+timeout = 700
 [[step]]
 # The tile sweep into the results hides the screen for half a second.
 wait = 20
@@ -433,9 +449,17 @@ sym = "NITRO_GATE_STATE"
 offset = 32
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "first-to-five-returned-title"
 golden = false
@@ -516,9 +540,17 @@ sym = "NITRO_GATE_STATE"
 offset = 40
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["start"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "timed-one-returned-title"
 golden = false
@@ -597,9 +629,17 @@ sym = "NITRO_GATE_STATE"
 offset = 40
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["start"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "timed-three-returned-title"
 golden = false
@@ -678,9 +718,17 @@ sym = "NITRO_GATE_STATE"
 offset = 40
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["start"]
 hold = 4
-wait = 30
+wait = 52
 [[step]]
 checkpoint = "timed-five-returned-title"
 golden = false
@@ -780,9 +828,17 @@ sym = "NITRO_GATE_STATE"
 offset = 40
 op = "zero"
 [[step]]
+# The results scene builds in, then the buttons answer.
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
+timeout = 400
+[[step]]
+press = ["down"]
+hold = 4
+wait = 12
+[[step]]
 press = ["start"]
 hold = 4
-wait = 20
+wait = 42
 [[step]]
 checkpoint = "practice-timed-returned-title"
 golden = false

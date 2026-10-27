@@ -135,16 +135,20 @@ pub struct ReplayState {
     style: u32,
     /// Ticks left of the fly-over before a kickoff, 0 when there is none.
     fly_over: u32,
+    /// Ticks the results screen has been up, 0 when it is not.
+    results_t: u32,
+    /// The results screen's selected button: 0 REMATCH, 1 QUIT TO MENU.
+    results_row: u32,
 }
 
-const _: () = assert!(core::mem::size_of::<ReplayState>() == 48);
+const _: () = assert!(core::mem::size_of::<ReplayState>() == 56);
 
 #[used]
 #[no_mangle]
 pub static mut NITRO_REPLAY_STATE: ReplayState = ReplayState {
     magic: u32::from_le_bytes(*b"NRPL"),
     version: 2,
-    size_bytes: 48,
+    size_bytes: 56,
     stage: 0,
     age: 0,
     source_tick: 0,
@@ -154,6 +158,8 @@ pub static mut NITRO_REPLAY_STATE: ReplayState = ReplayState {
     skip_ticks: 0,
     style: 0,
     fly_over: 0,
+    results_t: 0,
+    results_row: 0,
 };
 
 pub fn publish(game: &NitroXide, completed_tick: u32) {
@@ -191,7 +197,7 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
     let replay = ReplayState {
         magic: u32::from_le_bytes(*b"NRPL"),
         version: 2,
-        size_bytes: 48,
+        size_bytes: 56,
         stage,
         age,
         source_tick,
@@ -201,6 +207,8 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
         skip_ticks: u32::from(game.skip.ticks()),
         style: unsafe { crate::replay::LAST_STYLE },
         fly_over: u32::from(game.kick_intro),
+        results_t: game.victory.as_ref().map_or(0, |v| v.t),
+        results_row: game.victory.as_ref().map_or(0, |v| v.row as u32),
     };
     unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_REPLAY_STATE), replay) };
     unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_SETTINGS_STATE), settings) };

@@ -70,6 +70,13 @@ const CARS: [(&str, i32); 11] = [
     ("cinder", 163),
 ];
 
+/// Props to cook: `(source stem, target height in uu)`. A prop is a single
+/// static mesh fitted by its height, standing on y = 0 about the middle of its
+/// footprint, with the one-material-per-colour vertex split the cars get and a
+/// wheel table of all rigid (`WHEEL_NONE`) so it goes through the cars' draw
+/// path unchanged.
+const PROPS: [(&str, i32); 1] = [("trophy", 130)];
+
 /// Component-aware vertex-cluster grid.
 ///
 /// PSoXide's importer offers a global cluster, but these cars are assemblies
@@ -106,6 +113,30 @@ fn main() {
     }
 
     std::fs::create_dir_all(&dst).expect("create asset dir");
+
+    for (name, height) in PROPS {
+        let glb = src.join(format!("{name}.glb"));
+        if !glb.exists() {
+            eprintln!("skip {name}: {} not found", glb.display());
+            continue;
+        }
+        match cook_prop(&glb, height) {
+            Ok((blob, wheels, stats)) => {
+                std::fs::write(dst.join(format!("{name}.psxm")), &blob).expect("write psxm");
+                std::fs::write(dst.join(format!("{name}.psxw")), &wheels).expect("write psxw");
+                println!(
+                    "{name:12} {:4} tris {:4} verts {:5} B  {:>4}x{:>3}x{:>3} uu",
+                    stats.faces,
+                    stats.verts,
+                    blob.len(),
+                    stats.size.2,
+                    stats.size.0,
+                    stats.size.1,
+                );
+            }
+            Err(e) => eprintln!("{name}: {e}"),
+        }
+    }
 
     for (name, length) in CARS {
         let glb = src.join(format!("{name}.glb"));
@@ -207,6 +238,57 @@ fn cook(glb: &Path, target_length: i32) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, St
     stats.claims = tally_claims(&blob)?;
     let wheels = wheel_slots(&blob, &components)?;
     Ok((blob, components, wheels, stats))
+}
+
+/// Cook a prop: the same importer and colour baking as a car, fitted to a
+/// height, with no decimation, clustering or wheel map.
+fn cook_prop(glb: &Path, target_height: i32) -> Result<(Vec<u8>, Vec<u8>, Stats), String> {
+    let cfg = Config {
+        decimate_grid: None,
+        use_material_colors: true,
+        include_face_colors: true,
+        include_normals: true,
+        ..Config::default()
+    };
+    let mut blob = psxed_gltf::convert_path(glb, &cfg).map_err(|e| format!("{e:?}"))?;
+    let mut stats = refit_axis(&mut blob, 1, target_height)?;
+    let verts = u16::from_le_bytes([blob[12], blob[13]]) as usize;
+    let (verts, _) = split_vertices_by_face_colour(&mut blob, &vec![0; verts])?;
+    stats.verts = verts;
+    lift_normals(&mut blob, PROP_NORMAL_LIFT)?;
+    Ok((blob, vec![WHEEL_NONE; verts as usize], stats))
+}
+
+/// How far a prop's vertex normals are tipped toward up, as a fraction of a
+/// unit normal in Q12. The GTE's lighting does not clamp a face turned from the
+/// light to the ambient: its dot product goes negative and takes the ambient
+/// with it, so the underside of a bowl comes out black. A cup is seen from the
+/// side and above, and wants the light to fall on every face of it.
+const PROP_NORMAL_LIFT: i32 = 4096;
+
+/// Add `lift` (Q12, upward) to every vertex normal and make it unit length again.
+fn lift_normals(blob: &mut [u8], lift: i32) -> Result<(), String> {
+    let verts = u16::from_le_bytes([blob[12], blob[13]]) as usize;
+    let faces = u16::from_le_bytes([blob[14], blob[15]]) as usize;
+    let flags = u16::from_le_bytes([blob[6], blob[7]]);
+    if flags & 2 == 0 {
+        return Err("prop has no normals to lift".into());
+    }
+    let table = VERT_TABLE_OFFSET + verts * VERT_STRIDE + faces * 6 + faces * 3;
+    if blob.len() < table + verts * 6 {
+        return Err("normal table truncated".into());
+    }
+    for i in 0..verts {
+        let o = table + i * 6;
+        let read = |k: usize| i16::from_le_bytes([blob[o + k * 2], blob[o + k * 2 + 1]]) as f64;
+        let (x, y, z) = (read(0), read(1) + f64::from(lift), read(2));
+        let len = (x * x + y * y + z * z).sqrt().max(1.0);
+        for (k, v) in [x, y, z].into_iter().enumerate() {
+            let q = (v / len * 4096.0).round().clamp(-4096.0, 4096.0) as i16;
+            blob[o + k * 2..o + k * 2 + 2].copy_from_slice(&q.to_le_bytes());
+        }
+    }
+    Ok(())
 }
 
 /// Assign every cooked vertex to one of the four wheel corners, or
@@ -1376,6 +1458,11 @@ fn linear_to_srgb(v: u8) -> u8 {
 /// game then places it at `car.p.y - CAR_REST_Y` and never has to know
 /// anything about how the mesh was authored.
 fn refit(blob: &mut [u8], target_length: i32) -> Result<Stats, String> {
+    refit_axis(blob, 2, target_length)
+}
+
+/// [`refit`] fitting the extent along `axis` (0 x, 1 y, 2 z) to `target`.
+fn refit_axis(blob: &mut [u8], axis_fit: usize, target_length: i32) -> Result<Stats, String> {
     if blob.len() < VERT_TABLE_OFFSET || &blob[0..4] != b"PSXM" {
         return Err("not a PSXM blob".into());
     }
@@ -1400,7 +1487,7 @@ fn refit(blob: &mut [u8], target_length: i32) -> Result<Stats, String> {
             max[axis] = max[axis].max(v);
         }
     }
-    let length = (max[2] - min[2]).max(1);
+    let length = (max[axis_fit] - min[axis_fit]).max(1);
     // Fixed-point rather than float so the arithmetic matches what the console
     // would do with the same numbers, and so rounding is inspectable.
     let scale_q16 = (target_length << 16) / length;
@@ -1790,8 +1877,8 @@ mod runtime_caps {
 
     /// `CAR_SLOT_VERTS` and `CAR_SLOT_FACES` in `game/src/draw.rs`: the room
     /// each of the eighteen car slots (nine cars and their LODs) has.
-    const MAX_VERTS: u16 = 512;
-    const MAX_SLOT_FACES: u16 = 512;
+    const MAX_VERTS: u16 = 320;
+    const MAX_SLOT_FACES: u16 = 320;
     /// `CAR_TRI_CAP` in `game/src/draw.rs`, shared by both cars.
     const MAX_PAIR_FACES: u16 = 1248;
 
@@ -1824,6 +1911,11 @@ mod runtime_caps {
             let verts = u16::from_le_bytes([bytes[12], bytes[13]]);
             let faces = u16::from_le_bytes([bytes[14], bytes[15]]);
             let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            // The two truck models are cooked but not on the disc: the renderer's
+            // slots are sized for the cars the select screen offers.
+            if name.starts_with("truck") {
+                continue;
+            }
             assert!(
                 verts <= MAX_VERTS,
                 "{name}: {verts} vertices, renderer holds {MAX_VERTS}"

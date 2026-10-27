@@ -1,0 +1,197 @@
+name = "nitroxide-victory-rematch"
+title = "NitroXide: the winning goal is replayed, the victory scene builds in, a press before it is ready does nothing, REMATCH starts the same match again"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 6000
+
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+# Up wraps the initial car row to the rule row. Right moves default 5:00 to first-to-one.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+[[step]]
+checkpoint = "first-to-one-selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+# The tile sweep, then the fly-over (skipped by holding X), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 62
+wait = 0
+[[step]]
+wait = 180
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 1 }
+timeout = 400
+[[step]]
+checkpoint = "final-goal-celebration"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 700
+[[step]]
+# The tile sweep into the results hides the screen for half a second.
+wait = 20
+[[step]]
+checkpoint = "first-to-one-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 28
+op = "eq"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 32
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 24
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 48
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 52
+op = "zero"
+[[step]]
+# Before the buttons answer a press is ignored: the match's last presses are still landing.
+press = ["down"]
+hold = 4
+wait = 4
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 4
+[[step]]
+checkpoint = "victory-press-too-early"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 4
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 52
+op = "zero"
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 110 }
+timeout = 400
+[[step]]
+# Down then up: the selection moves to QUIT TO MENU and back.
+press = ["down"]
+hold = 4
+wait = 6
+[[step]]
+checkpoint = "victory-quit-selected"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 52
+op = "eq"
+value = 1
+[[step]]
+press = ["up"]
+hold = 4
+wait = 6
+[[step]]
+checkpoint = "victory-rematch-selected"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 52
+op = "zero"
+[[step.assert]]
+kind = "not_flat"
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 50
+[[step]]
+checkpoint = "victory-rematch"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 28
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 48
+op = "zero"

@@ -40,6 +40,9 @@ pub mod ink;
 pub mod playlist;
 pub mod replay;
 pub mod skip;
+mod stats;
+pub mod victory;
+pub use stats::{MatchStats, TeamStats};
 
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
@@ -1524,6 +1527,8 @@ pub struct Sim {
     /// Index into [`KICKOFF_SPOTS`] for every kickoff of this match. Zero,
     /// back centre, except in the attract demo.
     pub kickoff_spot: usize,
+    /// The match so far, side by side: shots, saves, boost, speed, air time.
+    pub stats: MatchStats,
     /// Both bots jump at lofted balls and flip into the ball (see
     /// [`Sim::flair`]). The attract demo's, so it shows what the game can do;
     /// off for the opponent a player faces.
@@ -1588,6 +1593,7 @@ impl Sim {
             },
             bot_flair: false,
             kickoff_spot: 0,
+            stats: MatchStats::default(),
         };
         sim.kickoff();
         sim
@@ -1602,6 +1608,7 @@ impl Sim {
     /// cannot ride across a goal the way `slide` once did, which a list of
     /// fields to clear could not promise.
     pub fn kickoff(&mut self) {
+        self.tally_kickoff();
         self.ball = Ball {
             p: V3::new(0, uu(BALL_R), 0),
             // Spin zero too, or the ball rolls itself off the spot: a
@@ -2239,6 +2246,7 @@ impl Sim {
         };
         // A wrecked car sits out the tick entirely: no driving, no pads, no
         // touching the ball. All it does is count down.
+        let boosts = [self.car.boost, self.opponent.boost];
         let gravity = self.gravity_step();
         for (team, (car, input)) in [
             (Team::Blue, (&mut self.car, input)),
@@ -2266,6 +2274,7 @@ impl Sim {
         self.hit = a.max(b);
         self.hit_by = u8::from(a > 0) | u8::from(b > 0) << 1;
         self.collide_cars();
+        self.tally(boosts);
         // The whistle with the score level, and no goal being celebrated.
         if matches!(self.win_condition, WinCondition::TimeLimit(_))
             && self.clock == 0
@@ -3135,6 +3144,7 @@ impl Sim {
             Team::Orange => self.score_orange += 1,
         }
         self.last_scorer = team;
+        self.tally_goal(team);
         self.goal_freeze = GOAL_FREEZE_TICKS;
         // On the line, not wherever the ball ended up. A hard shot is a long
         // way into the net by the tick it registers, and a blast measured from

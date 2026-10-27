@@ -26,6 +26,31 @@ Under the hood the match is recorded as it is played into a 15 KB ring of the la
 seconds (ball and both cars, to the unit, and who touched the ball), and the replay draws
 from a scratch copy of the world, so it cannot touch the match in progress.
 
+The match-winning goal gets its replay too, and then the results are a scene instead of a
+caption. The winning car stands on the centre spot, slowly turning, under a camera that
+orbits it and keeps it in frame (the car sits left of centre to leave the right for the
+panels). A gold trophy, a low-poly cup of 120 triangles built in Blender 5.2 by
+`tools/make_trophy.py` and cooked through the model path like the cars, fades up above it
+with a burst of light and floats there, while confetti in the winner's colours falls through
+the arena, flashes pop in the stands and the corner lights breathe. A short sting plays over
+the music (a horn and a rising chime for a win, a low falling pair for a loss).
+
+Beside it, panels in the menus' slanted style slide in one after another: the verdict in the
+winner's colour (WINNER, DEFEAT, DRAW, or P1 WINS and P2 WINS in a two-player game) with the
+score, a stats table for both sides (goals, shots, saves, boost used, top speed, air time)
+with the better figure lit, and REMATCH or QUIT TO MENU on the sliding selection bar.
+REMATCH starts the same match again; the buttons wake a second and a half in, so the last
+presses of the match do not choose for you. A loss or a draw gets the same panels over a
+calmer scene with no cup. The sim now keeps the match's shots, saves, boost burned, top speed
+and time in the air (`MatchStats`).
+
+The HOLD TO SKIP hint, with its ring and the X button, moved to the bottom-right corner,
+inside the title-safe area and above the boost meter when the meter is up (the fly-over).
+The HUD font's K, which drew as a short-armed H ("SKIP" read as "SHIP"), is redrawn.
+
+To make room the car models' tables are sized for what the cars need (320 vertices and faces
+a slot, 512 before) and the trophy shares the last car LOD's slot while the results are up.
+
 ## 0.5.1 | 2026-10-27
 
 The boost looks and feels faster. The exhaust flame is a layered, flickering jet that

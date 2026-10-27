@@ -811,6 +811,45 @@ pub fn match_end() {
     duck_now();
 }
 
+/// The results screen's sting, `t` ticks in: a horn and a rising chime arpeggio
+/// that lands on the cheer for a win, a low falling pair and the crowd's gasp
+/// for a loss or a draw. Silent when muted. The music carries on under it.
+pub fn victory_sting(t: u32, win: bool) {
+    if unsafe { MUTED } {
+        return;
+    }
+    if win {
+        match t {
+            2 => {
+                let _ = flat(Snd::Horn, L_HORN, UNITY);
+                let _ = flat(Snd::UiChime, L_UI_CHIME, ratio(16));
+            }
+            9 => {
+                let _ = flat(Snd::UiChime, L_UI_CHIME, ratio(20));
+            }
+            16 => {
+                let _ = flat(Snd::UiChime, L_UI_CHIME, ratio(24));
+            }
+            26 => {
+                let _ = flat(Snd::UiChime, L_UI_CHIME, ratio(32));
+                let _ = flat(Snd::Cheer, L_CHEER, UNITY);
+            }
+            _ => {}
+        }
+    } else {
+        match t {
+            2 => {
+                let _ = flat(Snd::UiChime, L_UI_CHIME, ratio(14));
+                let _ = flat(Snd::Gasp, L_GASP, UNITY);
+            }
+            14 => {
+                let _ = flat(Snd::UiChime, L_UI_CHIME, ratio(11));
+            }
+            _ => {}
+        }
+    }
+}
+
 // ---- the match ----------------------------------------------------------------
 
 /// Fuel under one tick's burn (`BOOST_DRAIN` in the sim) is an empty tank.

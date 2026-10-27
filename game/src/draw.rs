@@ -3373,6 +3373,96 @@ pub fn set_replay_cam(cam: Option<((i32, i32, i32), (i32, i32, i32))>) {
     unsafe { REPLAY_CAM = cam };
 }
 
+/// The results scene leaves the boost pads and the roof lamps undrawn: the
+/// camera is on the middle of the pitch, and they are cost (about 20k cycles)
+/// the scene has none to spare for.
+static mut LITE: bool = false;
+
+/// Switch the lighter world on or off.
+pub fn set_lite(on: bool) {
+    // SAFETY: the game is single-threaded.
+    unsafe { LITE = on };
+}
+
+/// The victory scene's trophy: where its foot stands (world, Y up, uu), its yaw
+/// and how lit it is, Q12.
+#[derive(Copy, Clone)]
+pub struct Trophy {
+    pub pos: (i32, i32, i32),
+    pub yaw: u16,
+    pub fade: i32,
+}
+
+static mut TROPHY: Option<Trophy> = None;
+/// Put the trophy's geometry and colours in its borrowed slot.
+pub fn load_trophy() {
+    car_materials_for(TROPHY_BLOB, unsafe { &mut CAR_MATERIALS[TROPHY_SLOT] });
+    decode_car_geometry(TROPHY_BLOB, TROPHY_SLOT);
+}
+
+/// Give the slot back to the car LOD it belongs to, and the table of seat paints
+/// the trophy borrowed to be repainted.
+pub fn unload_trophy() {
+    let blob = CAR_BLOBS[TROPHY_SLOT];
+    car_materials_for(blob, unsafe { &mut CAR_MATERIALS[TROPHY_SLOT] });
+    decode_car_geometry(blob, TROPHY_SLOT);
+    unsafe { PAINTED_FOR = [None; SEATS] };
+}
+
+/// Stand the victory trophy up, or take it away with `None`.
+pub fn set_trophy(trophy: Option<Trophy>) {
+    // SAFETY: the game is single-threaded.
+    unsafe { TROPHY = trophy };
+}
+
+/// One thing the victory scene throws into the world: a streak of confetti from
+/// `tail` to `head`, or a glow of `radius` uu at `head`.
+#[derive(Copy, Clone)]
+pub struct VictoryBit {
+    pub head: (i32, i32, i32),
+    pub tail: (i32, i32, i32),
+    pub tint: Rgb,
+    /// Zero for a streak, else the glow's radius.
+    pub radius: i32,
+}
+
+const MAX_VICTORY_BITS: usize = 64;
+static mut VICTORY_BITS: [VictoryBit; MAX_VICTORY_BITS] = [VictoryBit {
+    head: (0, 0, 0),
+    tail: (0, 0, 0),
+    tint: (0, 0, 0),
+    radius: 0,
+}; MAX_VICTORY_BITS];
+static mut VICTORY_COUNT: usize = 0;
+/// The light burst at the trophy: where, how many ticks old and in what colour.
+static mut VICTORY_BURST: Option<((i32, i32, i32), i32, Rgb)> = None;
+
+/// Forget what the victory scene was throwing.
+pub fn victory_clear() {
+    // SAFETY: the game is single-threaded.
+    unsafe {
+        VICTORY_COUNT = 0;
+        VICTORY_BURST = None;
+    }
+}
+
+/// Add one confetti streak or glow to this frame's victory scene (world, Y up).
+pub fn victory_add(bit: VictoryBit) {
+    // SAFETY: the game is single-threaded.
+    unsafe {
+        if VICTORY_COUNT < MAX_VICTORY_BITS {
+            VICTORY_BITS[VICTORY_COUNT] = bit;
+            VICTORY_COUNT += 1;
+        }
+    }
+}
+
+/// The trophy's burst of light at `origin` (world, Y up), `age` ticks old.
+pub fn victory_burst(origin: (i32, i32, i32), age: i32, colour: Rgb) {
+    // SAFETY: the game is single-threaded.
+    unsafe { VICTORY_BURST = Some((origin, age, colour)) };
+}
+
 /// Start, move or end the kickoff fly-over. `None` hands the cameras back.
 pub fn set_intro(progress: Option<i32>) {
     // SAFETY: the game is single-threaded.
@@ -3637,6 +3727,14 @@ static CAR_BLOBS: [&[u8]; CAR_SLOTS] = [
 
 /// Every cooked car mesh: the select-screen cars, then their LODs.
 const CAR_SLOTS: usize = CAR_COUNT * 2;
+/// The victory trophy goes through the cars' own tables, in the slot of the
+/// last car's far LOD, which nothing draws while the results are up (the car is
+/// close, and there is one view). The room for a ninth-and-a-half model would
+/// not fit in the image. [`load_trophy`] puts it there and [`unload_trophy`]
+/// puts the LOD back.
+const TROPHY_SLOT: usize = CAR_SLOTS - 1;
+static TROPHY_BLOB: &[u8] = include_bytes!("../assets/trophy.psxm");
+static TROPHY_WHEELS: &[u8] = include_bytes!("../assets/trophy.psxw");
 
 /// A full-screen view swaps a car to its 60-face LOD once it is this many
 /// pixels long or less on screen, and back to the full mesh above
@@ -3946,8 +4044,8 @@ const CAR_VERT_CAP: usize = 1344;
 /// sized to the biggest committed car, not to the pair budget above: the
 /// heaviest is 268 vertices and 255 faces, and `cook-models`' runtime_caps test
 /// fails a blob that outgrows these.
-const CAR_SLOT_VERTS: usize = 512;
-const CAR_SLOT_FACES: usize = 512;
+const CAR_SLOT_VERTS: usize = 320;
+const CAR_SLOT_FACES: usize = 320;
 
 /// One projected, lit car vertex, kept in the words the GTE hands back and
 /// the GPU packet takes: `SXY` (x low, y high), the lit `RGB` (code byte
@@ -6542,6 +6640,25 @@ impl Builder<'_> {
         );
     }
 
+    /// The victory scene's confetti, glows and the burst of light at the
+    /// trophy, all in the world and sorted with it.
+    #[inline(never)]
+    fn victory_fx(&mut self) {
+        if let Some((origin, age, colour)) = unsafe { VICTORY_BURST } {
+            self.burst((origin.0, -origin.1, origin.2), age, colour, 4096 * 3);
+        }
+        for i in 0..unsafe { VICTORY_COUNT } {
+            let bit = unsafe { VICTORY_BITS[i] };
+            let head = (bit.head.0, -bit.head.1, bit.head.2);
+            if bit.radius > 0 {
+                self.fx_sprite(head, bit.radius, 40, bit.tint, GLOW_PACKET, 0);
+            } else {
+                let tail = (bit.tail.0, -bit.tail.1, bit.tail.2);
+                self.fx_streak(head, tail, 7, bit.tint);
+            }
+        }
+    }
+
     /// The boost exhaust: soft round puffs in the world at the cars' tails,
     /// sorted into the ordering table with everything else, so a puff behind a
     /// car is behind it from any camera. They swell as they age and cool from
@@ -8647,6 +8764,62 @@ fn draw_cars<'a>(
             on_scratchpad(|| submit_car_faces(faces, projected, &mut tris, ot))
         });
     }
+    if let Some(trophy) = unsafe { TROPHY } {
+        draw_trophy(trophy, &cull, view, &mut tris, ot, lights);
+    }
+}
+
+/// Draw the victory trophy through the cars' own path: one rigid mesh, lit by
+/// the rig, its colours scaled by `fade` so it comes up out of the dark.
+fn draw_trophy<'a>(
+    trophy: Trophy,
+    cull: &Cull,
+    view: &View,
+    tris: &mut PrimitiveArena<'a, TriGouraud>,
+    ot: &mut OtFrame<'a, OT_DEPTH>,
+    lights: &LightRig,
+) {
+    let which = TROPHY_SLOT;
+    let ground = (trophy.pos.0, -trophy.pos.1, trophy.pos.2);
+    if trophy.fade <= 0 || !cull.visible((ground.0, ground.1 - 100, ground.2), (260, 260, 260)) {
+        return;
+    }
+    // The cooked colours at full strength, scaled for this frame, in the second
+    // seat's far-car paint table, which nothing draws while the results are up
+    // (`unload_trophy` has it repainted). The gold is held under the lights'
+    // clip so it keeps its hue.
+    let painted = unsafe { &mut PAINTED_LOD[1] };
+    for (out, &c) in painted
+        .iter_mut()
+        .zip(unsafe { CAR_MATERIALS[which].iter() })
+    {
+        let k = trophy.fade * 7 / 8;
+        *out = rgbc((
+            (c.0 as i32 * k >> 12) as u8,
+            (c.1 as i32 * k >> 12) as u8,
+            (c.2 as i32 * k >> 12) as u8,
+        ));
+    }
+    let (s, c) = (sin_q12(trophy.yaw) as i32, cos_q12(trophy.yaw) as i32);
+    let e = |v: i32| v.clamp(-32767, 32767) as i16;
+    // Yaw about the up axis, in render space (Y down).
+    let world = Mat3I16 {
+        m: [[e(c), 0, e(s)], [0, -4096, 0], [e(-s), 0, e(c)]],
+    };
+    let view_rot = view.v.mul(&world);
+    let t = view.camera_space(ground);
+    ActorTransform::at(Vec3World::from_raw(t.0, t.1, t.2))
+        .with_rotation(view_rot)
+        .load_gte();
+    lights.for_object(&view_rot).load();
+    let n = on_scratchpad(|| project_car_animated(which, painted, TROPHY_WHEELS));
+    let projected = unsafe { &mut CAR_PROJ[..n] };
+    let faces = if n == unsafe { CAR_VERT_COUNT[which] } as usize {
+        unsafe { &CAR_FACES[which][..CAR_FACE_COUNT[which] as usize] }
+    } else {
+        &[]
+    };
+    on_scratchpad(|| submit_car_faces(faces, projected, tris, ot));
 }
 
 /// How many rows the front end has, and where they sit on screen.
@@ -9364,12 +9537,20 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
             });
             b.draw_pieces(&cull);
         });
-        staged!(S_PADS, { on_scratchpad(|| b.pads(s, &cull)) });
+        staged!(S_PADS, {
+            on_scratchpad(|| {
+                if !unsafe { LITE } {
+                    b.pads(s, &cull)
+                }
+            })
+        });
         staged!(S_WALLS, {
             on_scratchpad(|| {
                 b.walls(&cull);
                 b.stands(&cull);
-                b.lamps(&cull);
+                if !unsafe { LITE } {
+                    b.lamps(&cull);
+                }
             });
             b.draw_pieces(&cull);
         });
@@ -9424,6 +9605,7 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
         });
         // Off the scratchpad stack: the clip needs more frame than it has.
         b.flush_goal_jobs(&cull);
+        on_scratchpad(|| b.victory_fx());
 
         staged!(S_BALL, { on_scratchpad(|| b.ball(s, &view)) });
         on_scratchpad(|| {
