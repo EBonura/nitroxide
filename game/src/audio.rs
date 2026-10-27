@@ -699,13 +699,30 @@ const DUCK_WHISTLE: u16 = 2048;
 const DUCK_ATTACK: u16 = 4096;
 const DUCK_RELEASE: u16 = 128;
 
+/// A second duck, the game's own, over the sounds': the goal replay's slow
+/// motion, Q12 (`4096` is none). Taken with the mixer's when the music is set.
+static mut REPLAY_DUCK: u16 = 4096;
+
+/// Duck the music to `gain` (Q12) under the replay's slow motion.
+pub fn duck_music(gain: u16) {
+    // SAFETY: the game is single-threaded.
+    unsafe {
+        if REPLAY_DUCK != gain {
+            REPLAY_DUCK = gain;
+            sync_music();
+        }
+    }
+}
+
 /// The CD volume last written, so an unchanged music level costs no writes.
 static mut MUSIC_LEVEL: i16 = 0;
 
 /// Write the music level (the music master times the duck) to the CD volume
 /// when it has changed.
 fn sync_music() {
-    let level = mixer().master().music_level_q15();
+    let level = ((i32::from(mixer().master().music_level_q15())
+        * i32::from(unsafe { REPLAY_DUCK }))
+        >> 12) as i16;
     unsafe {
         if level != MUSIC_LEVEL {
             MUSIC_LEVEL = level;

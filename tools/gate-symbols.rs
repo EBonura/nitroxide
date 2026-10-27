@@ -82,6 +82,14 @@ fn main() {
                     std::process::exit(1);
                 }
             }
+            match block_address(Path::new(&exe), b"NRPL", 1, 36, "NITRO_REPLAY_STATE") {
+                Ok(replay) => writeln!(std::io::stdout(), "{replay:#010x} NITRO_REPLAY_STATE")
+                    .expect("write replay address"),
+                Err(error) => {
+                    eprintln!("gate-symbols: {error}");
+                    std::process::exit(1);
+                }
+            }
         }
         Err(error) => {
             eprintln!("gate-symbols: {error}");

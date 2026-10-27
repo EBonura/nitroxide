@@ -1,0 +1,267 @@
+name = "nitroxide-goal-replay"
+title = "NitroXide: goal replay, GOAL banner, slow motion, a watched replay and a skipped one"
+disc = ["build/gate/NitroXide.cue"]
+symbols = ["build/gate-symbols.txt"]
+max_ticks = 9000
+
+[[step]]
+wait = 440
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 120
+# Up wraps the initial car row to the rule row. Right moves default 5:00 to first-to-three.
+[[step]]
+press = ["up"]
+hold = 4
+wait = 8
+[[step]]
+press = ["right"]
+hold = 4
+wait = 8
+repeat = 2
+[[step]]
+checkpoint = "first-to-three-selection"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 2
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+wait = 34
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait = 180
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 1 }
+timeout = 400
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 1 }
+timeout = 300
+[[step]]
+checkpoint = "goal-banner"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 12
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 24
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "gt"
+value = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 2 }
+timeout = 80
+[[step]]
+checkpoint = "replay-playing"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 12
+op = "eq"
+value = 2
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 20
+op = "lt"
+value = -60
+signed = true
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 20, op = "gt", value = -60, signed = true }
+timeout = 400
+[[step]]
+wait = 60
+[[step]]
+checkpoint = "replay-slow-motion"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 12
+op = "eq"
+value = 2
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 20
+op = "gt"
+value = -46
+signed = true
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 20
+op = "lt"
+value = -34
+signed = true
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 0 }
+timeout = 500
+[[step]]
+checkpoint = "replay-finished"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 28
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 32
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "eq"
+value = 1
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 190
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 2 }
+timeout = 400
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 1 }
+timeout = 300
+[[step]]
+wait = 12
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 0 }
+timeout = 30
+[[step]]
+checkpoint = "replay-skipped"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 24
+op = "eq"
+value = 2
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 28
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 32
+op = "eq"
+value = 1
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 36
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+op = "eq"
+value = 3
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 190
+[[step]]
+press = ["r2", "circle"]
+hold = 160
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 24, op = "eq", value = 3 }
+timeout = 400
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
+timeout = 300
+[[step]]
+wait = 20
+[[step]]
+checkpoint = "goal-replay-results"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 24
+op = "eq"
+value = 3
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 24
+op = "eq"
+value = 2
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 12
+op = "eq"
+value = 0

@@ -50,6 +50,7 @@ mod music;
 #[allow(dead_code)]
 mod music_map;
 mod pause_menu;
+mod replay;
 mod sweep;
 
 /// Whether a match starts in ball cam. Off, as shipped: a dev option
@@ -718,6 +719,9 @@ struct NitroXide {
     /// Ticks left of the camera fly-over before a kickoff's countdown starts.
     /// The sim stands still while it runs, and any button ends it.
     kick_intro: u16,
+    /// The goal replay in progress, if one is: the sim stands still while it
+    /// runs and the renderer is handed the replay's own world.
+    replay: Option<replay::Replay>,
     /// The in-match feedback layer: event tags, particles, banners.
     fb: feedback::Feedback,
     /// Ticks into the pause panel's tile sweep, `0..=PAUSE_TICKS`; it rests at
@@ -871,6 +875,7 @@ impl NitroXide {
             sweep: None,
             meters: boost_meter::Meters::new(),
             kick_intro: 0,
+            replay: None,
             fb: feedback::Feedback::new(),
             pause_t: 0,
             pause_closing: false,
@@ -1371,6 +1376,9 @@ impl NitroXide {
     /// versus game; one pad makes it a match against the AI, or free play with
     /// the opponent parked if PRACTICE was the row.
     fn start_match(&mut self) {
+        // The last match's goals are not this one's to replay.
+        replay::clear();
+        self.replay = None;
         // The previous match is over: forget it, and say go.
         audio::new_match();
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
@@ -1553,9 +1561,36 @@ impl NitroXide {
         self.kick_intro = self.kick_intro.saturating_sub(sweep::SWAP_TICK as u16);
     }
 
+    /// One tick of the goal replay. The sim does not move: the replay plays its
+    /// own recording. X skips straight to the kickoff.
+    fn update_replay(&mut self, ctx: &mut Ctx) {
+        if self.two_player {
+            ctx.refresh_second_pad();
+        }
+        let skipped = ctx.just_pressed(button::CROSS)
+            || (self.two_player && ctx.just_pressed_for(1, button::CROSS));
+        let Some(mut replay) = self.replay else {
+            return;
+        };
+        if !skipped && replay.tick() {
+            self.replay = Some(replay);
+            return;
+        }
+        replay.finish(skipped);
+        self.replay = None;
+        // Back to the kickoff the sim is standing at: the chase cameras start
+        // over where the cars are, and the fly-over opens.
+        draw::reset_cameras();
+        self.fb.reset();
+        self.kick_intro = KICK_INTRO_TICKS;
+    }
+
     /// Back to the front end, with the highlight sweeping in from scratch.
     fn to_title(&mut self, tick: u32) {
         self.kick_intro = 0;
+        if let Some(r) = self.replay.take() {
+            r.finish(true);
+        }
         self.menu_at = tick;
         self.menu_prev = self.menu;
         self.title_at = tick;
@@ -1931,6 +1966,50 @@ impl NitroXide {
             y: 34,
             q8: grow,
             parts: [(x, text, color), (after, " SCORED", (240, 240, 220))],
+        }
+    }
+
+    /// The goal replay's overlay: a GOAL banner in the scoring team's colour over
+    /// the first moments, then a REPLAY mark in the corner, and the way out.
+    fn draw_replay_overlay(&self, ctx: &mut Ctx, display: &FontAtlas, hud: &FontAtlas) {
+        let Some(replay) = self.replay else {
+            return;
+        };
+        let tick = ctx.sim_tick.as_u32();
+        let gpu = Gpu::from_dma_mut(ctx.gpu_dma());
+        let seat = usize::from(replay.scorer == Team::Orange);
+        let colour = draw::seat_signal(seat);
+        let age = i32::from(replay.age);
+        let hold = i32::from(replay::BANNER_TICKS);
+        if age <= hold {
+            // The plate slides in from the left, holds, and slides out; the
+            // word is the team's colour, outlined, centred by its ink.
+            let slide = 10;
+            let k = if age < slide {
+                fx::ease_out(age * fx::ONE / slide)
+            } else if hold - age < slide {
+                fx::ease_out((hold - age) * fx::ONE / slide)
+            } else {
+                fx::ONE
+            };
+            let (w, h) = (236, 64);
+            let ow = w * k >> 12;
+            let (x, y) = (160 - ow / 2 - 6, 88);
+            fx::slanted(gpu, x, y, ow, h, 12, (13, 20, 48));
+            fx::slanted(gpu, x, y + h - 3, ow, 3, 12, colour);
+            fx::slanted(gpu, x, y, ow, 3, 12, colour);
+            if k > 3000 {
+                let (tx, ty) = fx::ink_origin(display, "GOAL", 2 * 160, 2 * (y + h / 2), 640);
+                Self::outlined(display, tx, ty, "GOAL", 640, colour);
+            }
+        }
+        // The mark: a red dot that breathes, and the word.
+        if (tick / 20) % 2 == 0 {
+            fx::rect(gpu, 10, 11, 6, 6, (230, 50, 50));
+        }
+        Self::shadowed(hud, 20, 8, "REPLAY", (240, 240, 240));
+        if age > hold {
+            Self::centred(hud, 160, draw::SCREEN_H - 22, "X SKIP", (190, 200, 222));
         }
     }
 
@@ -3252,6 +3331,10 @@ impl Scene for NitroXide {
                 }
             }
             Phase::Play => {
+                if self.replay.is_some() {
+                    self.update_replay(ctx);
+                    return;
+                }
                 if ctx.just_pressed(button::START) {
                     audio::stop_all();
                     audio::ui(audio::Ui::Open);
@@ -3300,10 +3383,19 @@ impl Scene for NitroXide {
                 } else {
                     self.sim.tick(&input);
                 }
+                replay::record(&self.sim);
                 // The tick a goal's celebration ends the cars are back on their
                 // spots and the countdown is armed: fly over the arena first.
                 if was_celebrating && self.sim.goal_freeze == 0 && self.sim.kickoff_hold > 0 {
-                    self.kick_intro = KICK_INTRO_TICKS;
+                    // The goal replay first, when the ring has one; then the
+                    // same fly-over.
+                    match replay::Replay::begin(&self.sim) {
+                        Some(r) => {
+                            self.replay = Some(r);
+                            self.fb.reset();
+                        }
+                        None => self.kick_intro = KICK_INTRO_TICKS,
+                    }
                 }
                 draw::track_tick(&self.sim);
                 #[cfg(feature = "diag-meter")]
@@ -3488,7 +3580,7 @@ impl Scene for NitroXide {
         for seat in 0..2 {
             draw::set_fov_widen(
                 seat,
-                if self.phase == Phase::Play {
+                if self.phase == Phase::Play && self.replay.is_none() {
                     self.fb.widen[seat]
                 } else {
                     0
@@ -3558,6 +3650,13 @@ impl Scene for NitroXide {
             // Nothing but the clear colour during a demo cut.
             Phase::Demo if self.demo.cut > 0 => draw::drop_pending(),
             // Keep the last world frame behind the results overlay.
+            Phase::Play if self.replay.is_some() => {
+                // The replay is one full view, in a split game too, of its own
+                // world.
+                if let Some(world) = replay::world() {
+                    draw::render(world, self.cars, false, buffer_y)
+                }
+            }
             Phase::Play | Phase::Results | Phase::Demo => {
                 if self.two_player {
                     draw::render_split(
@@ -3716,6 +3815,10 @@ impl NitroXide {
                 let tick = ctx.sim_tick.as_u32();
                 let _ = tick;
                 self.draw_select(display, hud, ctx.sim_tick.as_u32());
+            }
+            Phase::Play if self.replay.is_some() => {
+                self.draw_replay_overlay(ctx, display, hud);
+                return;
             }
             Phase::Play => {
                 let tick = ctx.sim_tick.as_u32();

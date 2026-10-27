@@ -113,6 +113,40 @@ pub static mut NITRO_GATE_STATE: GateState = GateState {
     pad_remaining: [0; PADS.len()],
 };
 
+/// The goal replay, for a journey that scores and watches or skips it. Words,
+/// little-endian: magic, version, size in bytes, the stage (0 none, 1 the GOAL
+/// banner, 2 the replay), ticks since it began, the source tick it is showing
+/// relative to the ball crossing the line (signed), then how many replays have
+/// begun, been skipped and played to the end.
+#[repr(C)]
+pub struct ReplayState {
+    magic: u32,
+    version: u32,
+    size_bytes: u32,
+    stage: u32,
+    age: u32,
+    source_tick: i32,
+    started: u32,
+    skipped: u32,
+    finished: u32,
+}
+
+const _: () = assert!(core::mem::size_of::<ReplayState>() == 36);
+
+#[used]
+#[no_mangle]
+pub static mut NITRO_REPLAY_STATE: ReplayState = ReplayState {
+    magic: u32::from_le_bytes(*b"NRPL"),
+    version: 1,
+    size_bytes: 36,
+    stage: 0,
+    age: 0,
+    source_tick: 0,
+    started: 0,
+    skipped: 0,
+    finished: 0,
+};
+
 pub fn publish(game: &NitroXide, completed_tick: u32) {
     let settings = SettingsState {
         magic: u32::from_le_bytes(*b"NSET"),
@@ -137,6 +171,30 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
         },
         sfx_volume: game.profile.sfx_volume as u32,
     };
+    let (stage, age, source_tick) = match game.replay {
+        Some(r) => (
+            if r.age <= crate::replay::BANNER_TICKS {
+                1
+            } else {
+                2
+            },
+            u32::from(r.age),
+            r.source_tick(),
+        ),
+        None => (0, 0, 0),
+    };
+    let replay = ReplayState {
+        magic: u32::from_le_bytes(*b"NRPL"),
+        version: 1,
+        size_bytes: 36,
+        stage,
+        age,
+        source_tick,
+        started: unsafe { crate::replay::STARTED },
+        skipped: unsafe { crate::replay::SKIPPED },
+        finished: unsafe { crate::replay::FINISHED },
+    };
+    unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_REPLAY_STATE), replay) };
     unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_SETTINGS_STATE), settings) };
     let sim: &Sim = &game.sim;
     let phase = match game.phase {

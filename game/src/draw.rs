@@ -3252,6 +3252,12 @@ fn camera(
     camera_slot: usize,
 ) -> View {
     let camera_slot = camera_slot.min(1);
+    // The goal replay aims every view itself, from where it has put the camera,
+    // and leaves the chase cameras as the live match left them.
+    if let Some((eye, target)) = unsafe { REPLAY_CAM } {
+        unsafe { INTRO_ABOVE_ROOF = false };
+        return look_at(eye, target);
+    }
     let now = unsafe { CAMERA_TICK };
     let request = sim::camera::Request {
         rig: &CAM_RIG,
@@ -3343,6 +3349,16 @@ static mut INTRO: Option<i32> = None;
 /// lamps are not drawn: seen from above they are a net laid over the whole
 /// pitch and boxes in the way of it. Set with each view's camera.
 static mut INTRO_ABOVE_ROOF: bool = false;
+
+/// The goal replay's camera, eye and target (world, Y up): while it is set every
+/// view is aimed from it (see `camera`) and the chase cameras are left alone.
+static mut REPLAY_CAM: Option<((i32, i32, i32), (i32, i32, i32))> = None;
+
+/// Aim the cameras for the goal replay, or hand them back with `None`.
+pub fn set_replay_cam(cam: Option<((i32, i32, i32), (i32, i32, i32))>) {
+    // SAFETY: the game is single-threaded.
+    unsafe { REPLAY_CAM = cam };
+}
 
 /// Start, move or end the kickoff fly-over. `None` hands the cameras back.
 pub fn set_intro(progress: Option<i32>) {

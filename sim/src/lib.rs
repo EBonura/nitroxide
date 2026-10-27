@@ -38,6 +38,7 @@ pub mod camera;
 mod camera_tests;
 pub mod ink;
 pub mod playlist;
+pub mod replay;
 
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};

@@ -172,7 +172,12 @@ value = 3
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Any button skips the fly-over before the countdown.
+# A goal is followed by its replay, which a press skips, then the fly-over,
+# which any press skips before the countdown.
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
 press = ["cross"]
 hold = 4
 wait = 0
@@ -189,7 +194,12 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Any button skips the fly-over before the countdown.
+# A goal is followed by its replay, which a press skips, then the fly-over,
+# which any press skips before the countdown.
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
 press = ["cross"]
 hold = 4
 wait = 0
@@ -310,7 +320,12 @@ value = 3
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Any button skips the fly-over before the countdown.
+# A goal is followed by its replay, which a press skips, then the fly-over,
+# which any press skips before the countdown.
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
 press = ["cross"]
 hold = 4
 wait = 0
@@ -327,7 +342,12 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Any button skips the fly-over before the countdown.
+# A goal is followed by its replay, which a press skips, then the fly-over,
+# which any press skips before the countdown.
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
 press = ["cross"]
 hold = 4
 wait = 0
@@ -344,7 +364,12 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Any button skips the fly-over before the countdown.
+# A goal is followed by its replay, which a press skips, then the fly-over,
+# which any press skips before the countdown.
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
 press = ["cross"]
 hold = 4
 wait = 0
@@ -361,7 +386,12 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Any button skips the fly-over before the countdown.
+# A goal is followed by its replay, which a press skips, then the fly-over,
+# which any press skips before the countdown.
+press = ["cross"]
+hold = 4
+wait = 8
+[[step]]
 press = ["cross"]
 hold = 4
 wait = 0
