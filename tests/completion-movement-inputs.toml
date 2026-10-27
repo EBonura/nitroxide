@@ -96,7 +96,7 @@ wait = 8
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 34
+wait = 37
 [[step]]
 checkpoint = "quit-to-title"
 golden = false
