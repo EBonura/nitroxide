@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+The boost exhaust is a plume of soft round puffs that swell and cool from the car's
+colour to grey smoke as they fade, no longer a column of squares. Taking a boost pad
+now bursts in the world, in the boost's amber: a flash on the orb, a ring that runs
+out over the pitch and a quicker one facing the camera, and sparks thrown up and out,
+sorted with the scene instead of laid over it as squares.
+
+The kickoff fly-over is a high swing above the roof, looking down on the pitch with the
+roof cover and the lamps left out until the camera comes down under them, so it no
+longer squeezes between the walls and the stands.
+
+The title's orbiting camera no longer leaves holes in the pitch: the front end clips the
+pitch tiles that reach behind the lens the way a split-screen view does.
+
+Split screen tessellates the pitch with the same distance bands as a single view. They
+were set in August for 160-pixel-wide views and left at (400, 900) uu when the views
+became 320 by 120, so the pitch beyond 900 uu was one 1,024 uu quad and its mown stripes
+bent into kinks.
+
+The arena atlas is read into the idle textured-quad packet sets instead of a 100 KB
+array on the boot stack. That stack reached the end of `.bss` once the image grew by
+about two kilobytes, and zeroed the pad handler's stack and the VBlank counter under
+it, so the boot waited for a vblank that never came.
+
 ## 0.5.0 | 2026-10-26
 
 The loading screen is the slanted-cell boost bar on its own, larger and centred. It

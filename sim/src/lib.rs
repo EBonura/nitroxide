@@ -464,7 +464,7 @@ impl Pad {
     }
 
     /// Ticks it stays dead after being taken (RL: 10 s and 4 s).
-    const fn respawn(&self) -> u16 {
+    pub const fn respawn(&self) -> u16 {
         if self.big {
             600
         } else {

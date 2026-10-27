@@ -222,6 +222,10 @@ struct SpadView {
     /// and it is drawn twice, so the finest band is paid for twice to be seen
     /// half as well.
     split: bool,
+    /// Clip the pitch against the lens: true in a half-width view, and in the
+    /// front end, whose camera sits a hand above the grass. A full match view
+    /// keeps its old unclipped pitch pass (see [`near_sz`]).
+    near_clip: bool,
 }
 
 /// Byte offset of the current view's [`Builder`] in the scratchpad.
@@ -247,6 +251,7 @@ pub fn init_view() {
             half_w: (SCREEN_W / 2 + EDGE_SLACK) as i32,
             half_h: (SCREEN_H / 2 + EDGE_SLACK) as i32,
             split: false,
+            near_clip: false,
         });
     }
 }
@@ -265,6 +270,12 @@ fn view_half_w() -> i32 {
 #[inline(always)]
 fn view_half_h() -> i32 {
     unsafe { (*spad_view()).half_h }
+}
+
+/// Does the pitch pass clip the tiles that reach the lens?
+#[inline]
+fn near_clip() -> bool {
+    unsafe { (*spad_view()).near_clip }
 }
 
 /// Is the pass being drawn a half-width one?
@@ -586,6 +597,7 @@ fn enter_view_cpu(vp: Viewport) {
         (*v).max_y = vp.y + vp.h + EDGE_SLACK;
         (*v).half_h = (vp.h / 2 + EDGE_SLACK) as i32;
         (*v).split = vp.w < SCREEN_W || vp.h < SCREEN_H;
+        (*v).near_clip = (*v).split;
     }
     scene::set_screen_offset(
         ((vp.x + vp.w / 2) as i32) << 16,
@@ -2749,6 +2761,27 @@ static mut TEX_QUADS_SETS: [[QuadTexturedGouraud; MAX_TEX_QUADS]; SET_COUNT] =
 const TEX_INIT: [QuadTexturedGouraud; MAX_TEX_QUADS] =
     [const { QuadTexturedGouraud::EMPTY }; MAX_TEX_QUADS];
 
+/// `words` words of RAM nothing draws into until the first frame is built: the
+/// textured quads' packet sets, 150 KB that stay idle through the boot. The
+/// arena atlas is read off the disc into this rather than into a buffer on the
+/// stack, where its hundred kilobytes sat just under the top of RAM and met the
+/// end of `.bss` once the image grew a couple of kilobytes (the pad
+/// handler's private stack and the VBlank counter, last in `.bss`, were
+/// zeroed under it and the boot waited for a vblank that never came).
+///
+/// Only the boot calls it, once, before any view is built.
+pub fn boot_buffer(words: usize) -> &'static mut [u32] {
+    assert!(words * 4 <= core::mem::size_of_val(unsafe { &*core::ptr::addr_of!(TEX_QUADS_SETS) }));
+    // SAFETY: the sets are one static, `QuadTexturedGouraud` is plain words, the
+    // length fits it, and nothing else reads or writes it before the first frame.
+    unsafe {
+        core::slice::from_raw_parts_mut(
+            core::ptr::addr_of_mut!(TEX_QUADS_SETS).cast::<u32>(),
+            words,
+        )
+    }
+}
+
 /// An additive light packet: the textured quad, then a GP0(E1) that puts the
 /// draw mode back to the arena's average blend.
 ///
@@ -3221,6 +3254,8 @@ fn camera(
         Some(progress) => intro_pose(progress, pose),
         None => pose,
     };
+    // SAFETY: the game is single-threaded.
+    unsafe { INTRO_ABOVE_ROOF = INTRO.is_some() && pose.eye.1 > sim::CEIL };
     #[cfg(feature = "diag-log")]
     crate::diaglog::fill!(cam;
         now as i32,
@@ -3260,6 +3295,11 @@ fn camera(
 /// none when they follow their cars.
 static mut INTRO: Option<i32> = None;
 
+/// Is the fly-over's camera above the roof? Then the roof's cover and the
+/// lamps are not drawn: seen from above they are a net laid over the whole
+/// pitch and boxes in the way of it. Set with each view's camera.
+static mut INTRO_ABOVE_ROOF: bool = false;
+
 /// Start, move or end the kickoff fly-over. `None` hands the cameras back.
 pub fn set_intro(progress: Option<i32>) {
     // SAFETY: the game is single-threaded.
@@ -3274,8 +3314,8 @@ fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
     // How far out and how high the swing is, how far round it goes, and what it
     // looks at, all in uu (the angle in Q12). The ring stays inside the
     // chamfered corners and under the roof.
-    const RADIUS: i32 = 3300;
-    const HEIGHT: i32 = 1500;
+    const RADIUS: i32 = 3000;
+    const HEIGHT: i32 = 2900;
     const SPAN: i32 = 2300;
     const TARGET_Y: i32 = 250;
     // Where in the swing the descent onto the chase camera starts, Q12.
@@ -3356,6 +3396,17 @@ pub fn project_seat(seat: usize, p: (i32, i32, i32)) -> Option<SeatPoint> {
 pub fn plane() -> i32 {
     proj_h()
 }
+
+/// What the overlay needs to draw the glow tile flat on the screen (see
+/// `fx::glow`): the glow palette's and the base page's words, then the
+/// tile's corner and size in texels.
+pub(crate) const GLOW_TILE: (u16, u16, u8, u8, u8) = (
+    GLOW_CLUT.uv_word(),
+    TEX_TPAGE.uv_word(0),
+    GLOW_U0,
+    GLOW_V0,
+    GLOW_W,
+);
 
 /// A camera at `pos` looking along `yaw` with `pitch` below the horizontal.
 ///
@@ -4959,34 +5010,31 @@ impl Builder<'_> {
     /// built by hand and never go through it, hence doing it here.
     fn floor_split(distance: i32) -> i32 {
         // The near band is where the camera sits and where the near-plane
-        // clipper does most of its work. Keep a four-way core in a half-width
-        // view too: a two-way cell directly under the eye exceeds the PS1
-        // rasteriser's safe screen extent and disappears even though its
-        // wireframe edges still reach the screen. Past that core the narrower
-        // viewport can safely use two-way cells and retain its performance win.
+        // clipper does most of its work: a two-way cell directly under the eye
+        // exceeds the PS1 rasteriser's safe screen extent and disappears even
+        // though its wireframe edges still reach the screen.
         //
-        // Full-view bands tuned 2026-08-08 against the deterministic drive
-        // route: widening near to 2200 and mid to 4000 straightens the last
-        // visible stripe kinks for +39k cycles at the p90 frame (685k -> 724k
-        // of the 1,127k budget, zero deadline misses). Split screen keeps the
-        // old bands: it was already missing deadlines before this change, so
-        // it has no headroom to spend on quality.
-        let near = 4;
-        // Split's mid band pulled from 2600 to 1800 on 2026-08-09: the
-        // split kickoff, with both views down the long axis, was the one
-        // scene missing its deadline, and a 160-pixel-wide view cannot show
-        // the two-way tessellation past 1800 that it is paying twice for.
-        // A half-height view shows a tile 900 uu out at a dozen pixels tall,
-        // where the two-way cells stop being visible; the top-and-bottom
-        // kickoff, both views down the long axis, is the scene that needs it.
-        let (near_distance, mid_distance) = if split_view() {
-            (400, 900)
-        } else {
-            (2200, 4000)
-        };
+        // Bands tuned 2026-08-08 against the deterministic drive route:
+        // widening near to 2200 and mid to 4000 straightens the last visible
+        // stripe kinks for +39k cycles at the p90 frame (685k -> 724k of the
+        // 1,127k budget, zero deadline misses). A half-height split view keeps
+        // four-way cells only to 1600: a tile is half as many pixels tall
+        // there, and the two-way cells past that were measured straight.
+        //
+        // Split screen kept tighter bands, (400, 900), from August, when its
+        // views were 160 pixels wide and a tile past 900 uu was a dozen
+        // pixels across. They are 320 by 120 now: as wide as a full view, with
+        // the pitch at the same grazing angle, so a tile at a given distance
+        // spans as many pixels across and warps as much. With one 1,024 uu
+        // quad for all the pitch beyond 900 uu, the mown stripes bent into
+        // kinks a full view does not show. Both use these bands. Finer wall
+        // spans are not dearer for it in a split view: a coarse wall quad near
+        // a car is more often one that straddles the lens and has to be cut
+        // (`clip_piece`).
+        let near = if split_view() { 1600 } else { 2200 };
         match distance {
-            d if d < near_distance => near,
-            d if d < mid_distance => 2.min(near),
+            d if d < near => 4,
+            d if d < 4000 => 2,
             _ => 1,
         }
     }
@@ -5380,9 +5428,13 @@ impl Builder<'_> {
             if unsafe { WALL_JOB_COUNT } != 0 {
                 self.draw_wall_jobs(cull);
             }
-            return;
+            // The front end clips its pitch like a split view does.
+            if !near_clip() {
+                return;
+            }
+        } else {
+            Self::sweep_wall_jobs();
         }
-        Self::sweep_wall_jobs();
         for k in 0..unsafe { PIECE_JOB_COUNT } {
             let job = unsafe { PIECE_JOBS[k] };
             let w = job.world;
@@ -6333,6 +6385,113 @@ impl Builder<'_> {
         );
     }
 
+    /// The pickup effect of every pad taken in the last [`PAD_FX_LIFE`] ticks.
+    /// Stateless: a pad's age since it was taken is its respawn time less what
+    /// its timer has left.
+    fn pad_bursts(&mut self, s: &Sim) {
+        for (i, pad) in sim::PADS.iter().enumerate() {
+            let timer = s.pad_timers[i];
+            if timer == 0 {
+                continue;
+            }
+            let age = i32::from(pad.respawn()) - i32::from(timer);
+            if (0..PAD_FX_LIFE).contains(&age) {
+                self.pad_burst(pad, age);
+            }
+        }
+    }
+
+    /// One pad's pickup: a flash on the orb, a ring that runs out over the
+    /// pitch and a quicker one that faces the camera, and sparks thrown up and
+    /// out, all in the boost's amber. The explosion's sprites and streaks, at a
+    /// pad's size and for a third of an explosion's life.
+    #[inline(never)]
+    fn pad_burst(&mut self, pad: &sim::Pad, age: i32) {
+        let half = split_view();
+        let big = pad.big;
+        let (px, pz) = (pad.x, pad.z);
+        let lift = if big { 78 } else { 58 };
+        let centre = (px, -lift, pz);
+        // Everything scales with the pad: the big ones are the ones worth
+        // crossing the pitch for.
+        let k = if big { 3 } else { 2 };
+        let cap = if big { 40 } else { 28 };
+
+        // The flash: a white core in a wide amber bloom, gone in a few ticks.
+        if age < PAD_FLASH_LIFE {
+            let grow = (age + 2) * 4096 / PAD_FLASH_LIFE;
+            let r0 = (k * 48 * grow) >> 12;
+            let dim = PAD_FLASH_LIFE - age;
+            self.fx_sprite(
+                centre,
+                r0 * 2,
+                cap,
+                shade(mix(PAD_FX_COLOUR, FX_HOT, 6), dim, PAD_FLASH_LIFE),
+                GLOW_PACKET,
+                -40,
+            );
+            self.fx_sprite(
+                centre,
+                r0,
+                cap,
+                shade(FX_HOT, dim, PAD_FLASH_LIFE),
+                GLOW_PACKET,
+                -50,
+            );
+        }
+
+        // The ring over the pitch: out fast and slowing, thin, fading.
+        if age < PAD_RING_LIFE {
+            let t = age * 4096 / PAD_RING_LIFE;
+            let ease = 4096 - (((4096 - t) * (4096 - t)) >> 12);
+            let rad = k * 20 + ((k * 80 * ease) >> 12);
+            let tint = shade(
+                mix(FX_HOT, PAD_FX_COLOUR, 8),
+                PAD_RING_LIFE - age,
+                PAD_RING_LIFE,
+            );
+            let (y, x0, x1, z0, z1) = (-6, px - rad, px + rad, pz - rad, pz + rad);
+            self.glow_quad(
+                [(x0, y, z0), (x1, y, z0), (x0, y, z1), (x1, y, z1)],
+                tint,
+                -20,
+                FX_RING_PACKET,
+            );
+            // The quicker ring at the orb, facing the camera.
+            if age < PAD_RING_LIFE / 2 {
+                let t = age * 8192 / PAD_RING_LIFE;
+                let ease = 4096 - (((4096 - t) * (4096 - t)) >> 12);
+                let rad = k * 16 + ((k * 56 * ease) >> 12);
+                let tint = shade(PAD_FX_COLOUR, PAD_RING_LIFE / 2 - age, PAD_RING_LIFE / 2);
+                self.fx_sprite(centre, rad, cap, tint, FX_RING_PACKET, -30);
+            }
+        }
+
+        // Sparks, on the explosion's directions: up and out, light, short.
+        let sparks = if half { 5 } else { 10 };
+        for i in 0..sparks {
+            let tab = unsafe { &*core::ptr::addr_of!(BURST) };
+            let life = 14 + (i * 5) % 9;
+            let t = age;
+            if t >= life {
+                continue;
+            }
+            let dir = tab.spark[half as usize][i as usize];
+            let speed = k * (6 + ((i * 7) & 7)) / 2 + 6;
+            let at = |t: i32| {
+                let travel = speed * t * ((2 * life) - t) / (2 * life);
+                let drop = (t * t * 24) >> 8;
+                (
+                    centre.0 + ((dir.0 * travel) >> 12),
+                    centre.1 + 10 - ((dir.1 * travel) >> 12) + drop,
+                    centre.2 + ((dir.2 * travel) >> 12),
+                )
+            };
+            let tint = shade(mix(PAD_FX_COLOUR, FX_HOT, 6), life - t, life);
+            self.fx_streak(at(t), at((t - 3).max(0)), 4, tint);
+        }
+    }
+
     /// The arena's cross-section, from the floor edge up and over to the
     /// ceiling edge, as `(inset from the wall, height)` pairs in uu.
     ///
@@ -6840,6 +6999,9 @@ impl Builder<'_> {
     /// the game by a wide margin, which is the point: nothing else in the
     /// frame occupies the top of the range.
     fn lamps(&mut self, cull: &Cull) {
+        if unsafe { INTRO_ABOVE_ROOF } {
+            return;
+        }
         for l in LAMPS.iter().take(8) {
             let p = (
                 l.p.0 << LAMP_SHIFT,
@@ -7028,6 +7190,11 @@ impl Builder<'_> {
 
     /// The translucent cover over the roof.
     fn ceiling(&mut self, cull: &Cull) {
+        // The kickoff fly-over looks down on the pitch from above the roof:
+        // the cover and the lamps stay out of its way until it is under them.
+        if unsafe { INTRO_ABOVE_ROOF } {
+            return;
+        }
         let (x, z) = (ROOF_HALF_X, ROOF_HALF_Z);
         // The old pitch threshold omitted the roof whenever a wall-climbing
         // camera looked level, even with the ceiling plainly inside the right
@@ -8609,6 +8776,8 @@ pub fn render_menu(
     // The overlay places things on the stage through this camera too.
     unsafe { SEAT_VIEWS[0] = Some((view, Viewport::FULL)) };
     enter_view(Viewport::FULL, buffer_y);
+    // The camera is a hand above the grass: pitch tiles reach behind the lens.
+    unsafe { (*spad_view()).near_clip = true };
     unsafe {
         PENDING = false;
         SPLIT_PENDING = false;
@@ -8890,7 +9059,7 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
         let cull = view.cull();
         staged!(S_FLOOR, {
             on_scratchpad(|| {
-                if split_view() {
+                if near_clip() {
                     b.floor::<true>(&cull);
                 } else {
                     b.floor::<false>(&cull);
@@ -8922,6 +9091,7 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
                     // `boost_meter`).
                     b.goal_burst(s);
                     b.demo_burst(s);
+                    b.pad_bursts(s);
                 }
                 b.ceiling(&cull);
                 b.goals(&view);
@@ -9646,6 +9816,14 @@ const FX_NEAR: i32 = 700;
 /// White-hot, then the flame colour fire cools through.
 const FX_HOT: Rgb = (255, 246, 214);
 const FX_FLAME: Rgb = (240, 128, 34);
+
+/// A pad taken: everything is over by `PAD_FX_LIFE` ticks, the flash by
+/// `PAD_FLASH_LIFE` and the rings by `PAD_RING_LIFE`. The colour is the boost
+/// meter's amber.
+const PAD_FX_LIFE: i32 = 30;
+const PAD_FLASH_LIFE: i32 = 7;
+const PAD_RING_LIFE: i32 = 22;
+const PAD_FX_COLOUR: Rgb = (255, 170, 44);
 
 /// What a blast works out from its particle's index and nothing else, done
 /// once at boot: the trigonometry of every direction and the divisions by a

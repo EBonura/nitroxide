@@ -8,8 +8,9 @@ use crate::draw;
 /// `game/assets/disc/chunk_1.psxt`, assigned by its `psx-pack` filename.
 const ARENA_TEXTURE_CHUNK: u32 = 1;
 /// The cooked atlas is currently 98,460 bytes. Leave a little authoring room
-/// without reserving it permanently: this buffer lives only on the boot stack
-/// and is reclaimed as soon as the upload to VRAM finishes.
+/// without reserving it permanently: the buffer is RAM the frame's packet sets
+/// are about to take over (`draw::boot_buffer`), not a hundred kilobytes of
+/// stack, which reached `.bss` once the image grew by a couple of kilobytes.
 const ARENA_TEXTURE_CAPACITY: usize = 100 * 1024;
 const ARENA_TEXTURE_WORDS: usize = ARENA_TEXTURE_CAPACITY.div_ceil(4);
 
@@ -22,13 +23,15 @@ pub fn load_arena_texture() -> bool {
     let saved_irq_mask = psx_io::irq::mask();
     let mut reader = SectorReader::new();
     let mut scratch = [0u32; SECTOR_WORDS];
-    let mut data = [0u32; ARENA_TEXTURE_WORDS];
+    let data = draw::boot_buffer(ARENA_TEXTURE_WORDS);
+    // The buffer holds whatever the packet sets last held: `load_chunk` writes
+    // the sector payload it loads and `byte_len` bounds what is read back.
     let loaded = load_chunk(
         &mut reader,
         WORLD_PACK_DEFAULT_LBA,
         ARENA_TEXTURE_CHUNK,
         &mut scratch,
-        &mut data,
+        data,
     );
     psx_io::irq::set_mask(saved_irq_mask);
 

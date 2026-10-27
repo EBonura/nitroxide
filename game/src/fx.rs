@@ -3,7 +3,7 @@
 //! cubic ease, colour scaling and the additive draw mode.
 
 use psx_gpu::material::{BlendMode, TextureMaterial};
-use psx_gpu::prim::{QuadFlat, QuadGouraud};
+use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedMaterial};
 use psx_gpu::Gpu;
 
 /// A colour as the GPU takes it.
@@ -177,5 +177,26 @@ pub fn slanted_gradient(
     gpu.draw(&QuadGouraud::new(
         slanted_corners(x, y, w, h, slant),
         [top, top, bottom, bottom],
+    ));
+}
+
+/// A soft round light: the arena atlas's glow tile, a disc of light falling
+/// away to nothing at its rim, drawn flat on the screen with the additive
+/// blend. `half` is the disc's radius in pixels; `tint` scales the tile, 0x80
+/// being its own brightness and more overdriving it. Call it between
+/// [`additive`] and [`opaque`].
+pub fn glow(gpu: &mut Gpu, x: i32, y: i32, half: i32, tint: Rgb) {
+    let (clut, tpage, u0, v0, w) = crate::draw::GLOW_TILE;
+    let material = TextureMaterial::blended(clut, tpage, tint, BlendMode::Add).with_dither(true);
+    let (x0, y0, x1, y1) = (
+        (x - half) as i16,
+        (y - half) as i16,
+        (x + half) as i16,
+        (y + half) as i16,
+    );
+    gpu.draw(&QuadTexturedMaterial::with_material(
+        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)],
+        [(u0, v0), (u0 + w, v0), (u0, v0 + w), (u0 + w, v0 + w)],
+        material,
     ));
 }

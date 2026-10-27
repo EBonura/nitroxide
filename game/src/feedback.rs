@@ -36,10 +36,6 @@ enum Kind {
     Trail,
     Spark,
     Dust,
-    /// A bright ring segment where a pad was taken.
-    Ring,
-    /// The pad's flash, one big soft square.
-    Flash,
 }
 
 #[derive(Clone, Copy)]
@@ -140,9 +136,8 @@ impl Feedback {
             let car = car_of(sim, seat);
             self.car_effects(seat, car);
         }
-        if sim.pad_taken {
-            self.pad_flash(sim);
-        }
+        // A pad taken is drawn by the renderer, in the world (draw.rs
+        // `pad_bursts`), from the pad's own timer.
         self.advance();
     }
 
@@ -156,12 +151,16 @@ impl Feedback {
                 // From the tail, a little behind it.
                 let back = |a: i32, f: i32| a - (f * CAR_TAIL >> 12);
                 let p = (back(pos.0, fwd.x), back(pos.1, fwd.y), back(pos.2, fwd.z));
+                // Each puff drifts a little off the exhaust line and rises, so
+                // the trail spreads into a plume instead of a column.
+                let wobble =
+                    |n: u32| (fx::scatter(self.tick, n * 7 + seat as u32) as i16 - 128) >> 3;
                 self.spawn(Particle {
                     p,
                     v: (
-                        (-(fwd.x >> 9)) as i16,
-                        (-(fwd.y >> 9)) as i16,
-                        (-(fwd.z >> 9)) as i16,
+                        (-(fwd.x >> 9)) as i16 + wobble(1),
+                        (-(fwd.y >> 9)) as i16 + 5 + wobble(2).abs() / 2,
+                        (-(fwd.z >> 9)) as i16 + wobble(3),
                     ),
                     life: 16,
                     life0: 16,
@@ -207,39 +206,6 @@ impl Feedback {
         }
         self.memo[seat].grounded = car.grounded;
         self.memo[seat].vy = car.v.y;
-    }
-
-    fn pad_flash(&mut self, sim: &Sim) {
-        // The pad that was just taken holds its full respawn time.
-        let taken = nitroxide_sim::PADS
-            .iter()
-            .zip(sim.pad_timers.iter())
-            .position(|(pad, t)| *t == if pad.big { 600 } else { 240 });
-        let Some(i) = taken else { return };
-        let pad = &nitroxide_sim::PADS[i];
-        self.spawn(Particle {
-            p: (pad.x, 40, pad.z),
-            v: (0, 0, 0),
-            life: 10,
-            life0: 10,
-            kind: Kind::Flash,
-            seat: 0,
-        });
-        for k in 0..6 {
-            let a = (k * 683) as u16;
-            self.spawn(Particle {
-                p: (pad.x, 30, pad.z),
-                v: (
-                    (psx_math::sincos::sin_q12(a) >> 7) as i16,
-                    4,
-                    (psx_math::sincos::cos_q12(a) >> 7) as i16,
-                ),
-                life: 12,
-                life0: 12,
-                kind: Kind::Ring,
-                seat: 0,
-            });
-        }
     }
 
     fn advance(&mut self) {
@@ -357,7 +323,11 @@ impl NitroXide {
         // The scoreboard hangs from the top of the screen (18 lines when
         // open): in the top view the arrow stays below it, so it never sits
         // on the clock. The lower view of a split has no board.
-        let ey = if vp.y == 0 { ey.max(SCOREBOARD_CLEAR) } else { ey };
+        let ey = if vp.y == 0 {
+            ey.max(SCOREBOARD_CLEAR)
+        } else {
+            ey
+        };
         arrow(gpu, (ex, ey), (dx, dy), self.fb.tick);
     }
 }
@@ -472,17 +442,26 @@ impl Feedback {
             // Fades out over its life.
             let a = i32::from(p.life) * 256 / i32::from(p.life0);
             let (size_uu, colour): (i32, Rgb) = match p.kind {
-                Kind::Trail => (
-                    14 + (256 - a) / 20,
-                    fx::mix(seat_signal(usize::from(p.seat)), (255, 255, 255), 50),
-                ),
+                // A puff of exhaust: a soft round sprite that swells as it
+                // ages and cools from the car's colour, hot-white at the
+                // tail, to a dim grey-blue smoke as it fades.
+                Kind::Trail => {
+                    let hot = fx::mix(seat_signal(usize::from(p.seat)), (255, 255, 255), 90);
+                    let radius = (12 + (256 - a) * 30 / 256) * plane / s.depth;
+                    let smoke = fx::mix((70, 80, 104), hot, a);
+                    fx::glow(
+                        gpu,
+                        s.x,
+                        s.y,
+                        radius.clamp(2, 20),
+                        fx::dim(smoke, a * 3 / 4 + 40),
+                    );
+                    continue;
+                }
                 Kind::Spark => (7, (255, 170, 70)),
                 Kind::Dust => (28 + (256 - a) / 6, (62, 56, 44)),
-                Kind::Ring => (14, (255, 214, 110)),
-                Kind::Flash => (110 + (256 - a) / 2, (150, 130, 80)),
             };
             let px = (size_uu * plane / s.depth).clamp(1, 28);
-            let a = if p.kind == Kind::Trail { a * 3 / 5 } else { a };
             fx::rect_blended(gpu, s.x - px / 2, s.y - px / 2, px, px, fx::dim(colour, a));
         }
         fx::opaque(gpu);
