@@ -25,3 +25,5 @@ psx-settings = { path = "../.psoxide/sdk/crates/psx-settings", default-features 
 
 [dev-dependencies]
 psx-pad = { path = "../.psoxide/sdk/crates/psx-pad" }
+# The real HUD fonts, for the ink placement tests.
+psx-font = { path = "../.psoxide/sdk/crates/psx-font" }

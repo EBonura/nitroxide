@@ -1746,11 +1746,16 @@ impl NitroXide {
             .zip([s.score_blue, s.score_orange])
         {
             let text = u32_dec(&mut dec, score as u32);
-            let w = font.text_width(text) as i16;
+            // The digits' ink centred in the team block, both ways; the shadow
+            // is left out of the measure and falls in the lower margin.
+            let q8 = if board.big { 512 } else { 256 };
+            let (x, y) =
+                fx::ink_origin(font, text, 2 * i32::from(cx), i32::from(board.block_h), q8);
             if board.big {
-                Self::shadowed_big(font, cx - w, board.score_y, text, white);
+                font.draw_text_scaled_q8(x + 1, y + 1, text, 512, 512, (0, 0, 0));
+                font.draw_text_scaled_q8(x, y, text, 512, 512, Self::ink(white));
             } else {
-                Self::shadowed(font, cx - w / 2, board.score_y, text, white);
+                Self::shadowed(font, x, y, text, white);
             }
         }
 
@@ -1792,31 +1797,49 @@ impl NitroXide {
                     let age = ((60 - s.clock % 60) % 60) as i32;
                     let pop = if age < 20 { 160 * (20 - age) / 20 } else { 0 };
                     let q = (256 + pop) as u16;
-                    let w = i32::from(cw) * i32::from(q) / 256;
-                    let x = draw::HUD_CENTRE_X - (w / 2) as i16;
-                    let y = board.clock_y - (i32::from(font.line_height()) * pop / 512) as i16;
+                    // Centred in the plate by its ink at whatever size it has.
+                    let (x, y) = fx::ink_origin(
+                        font,
+                        clock,
+                        2 * i32::from(draw::HUD_CENTRE_X),
+                        i32::from(board.plate_h),
+                        i32::from(q),
+                    );
                     font.draw_text_scaled_q8(x + 1, y + 1, clock, q, q, (0, 0, 0));
                     font.draw_text_scaled_q8(x, y, clock, q, q, Self::ink(tint));
                 } else {
-                    Self::shadowed(
+                    let (x, y) = fx::ink_origin(
                         font,
-                        draw::HUD_CENTRE_X - cw / 2,
-                        board.clock_y,
                         clock,
-                        tint,
+                        2 * i32::from(draw::HUD_CENTRE_X),
+                        i32::from(board.plate_h),
+                        256,
                     );
+                    Self::shadowed(font, x, y, clock, tint);
                 }
             }
             WinCondition::GoalLimit(target) => {
                 let prefix = "TO ";
                 let target = u32_dec(&mut dec, target as u32);
-                let x = draw::HUD_CENTRE_X
-                    - (font.text_width(prefix) + font.text_width(target)) as i16 / 2;
-                Self::shadowed(font, x, board.clock_y, prefix, pale);
+                // The whole "TO 3" centred by its ink in the plate.
+                let mut whole = [0u8; 8];
+                let n = prefix.len() + target.len();
+                whole[..prefix.len()].copy_from_slice(prefix.as_bytes());
+                whole[prefix.len()..n].copy_from_slice(target.as_bytes());
+                // SAFETY: ASCII bytes.
+                let whole = unsafe { core::str::from_utf8_unchecked(&whole[..n]) };
+                let (x, y) = fx::ink_origin(
+                    font,
+                    whole,
+                    2 * i32::from(draw::HUD_CENTRE_X),
+                    i32::from(board.plate_h),
+                    256,
+                );
+                Self::shadowed(font, x, y, prefix, pale);
                 Self::shadowed(
                     font,
                     x + font.text_width(prefix) as i16,
-                    board.clock_y,
+                    y,
                     target,
                     (255, 220, 120),
                 );
@@ -3505,6 +3528,7 @@ impl Scene for NitroXide {
                         ready: [self.ready[0], self.two_player && self.ready[1]],
                         selected: self.sel_row,
                         pair,
+                        tick,
                     }),
                     pair,
                     None,
@@ -3670,7 +3694,7 @@ impl NitroXide {
             }
             Phase::Select => {
                 let tick = ctx.sim_tick.as_u32();
-                self.draw_turntable(Gpu::from_dma_mut(ctx.gpu_dma()), tick);
+                let _ = tick;
                 self.draw_select(display, hud, ctx.sim_tick.as_u32());
             }
             Phase::Play => {

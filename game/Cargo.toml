@@ -21,6 +21,9 @@ diag-meter = ["boot-play"]
 # feedback effect at fixed ticks (shot, save, demolition, aerial goal, minute
 # banner, landing, pad, wall, ball off screen) so each can be captured.
 diag-fb = ["boot-play"]
+# Dev: print the kickoff fly-over's camera every call (progress, eye, the chase
+# camera it hands over to) on the TTY, for the fly-over's path to be plotted.
+diag-intro = []
 # Dev: the split-screen boot, but through a real match start, so the kickoff
 # fly-over, countdown and GO! can be profiled.
 boot-split-kickoff = ["boot-split-play"]

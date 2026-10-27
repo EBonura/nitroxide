@@ -207,16 +207,18 @@ pub fn draw(gpu: &mut Gpu, font: &FontAtlas, vp: Viewport, meter: &Meter, tick: 
 
     let mut dec = [0u8; U32_DEC_MAX];
     let text = u32_dec(&mut dec, meter.value as u32);
-    let text_w = font.text_width(text) as i32;
-    let cx = tag_x + (l.tag_w + l.slant) / 2;
-    let ty = tag_y + (l.tag_h - font.line_height() as i32) / 2;
-    font.draw_text(
-        (cx - text_w / 2 + 1) as i16,
-        (ty + 1) as i16,
+    // The middle of the digits' ink on the tag's midline (the slant puts the
+    // middle half a slant right of the bottom-left corner) and at half its height;
+    // the shadow lies outside the measure, in the lower margin.
+    let (tx, ty) = fx::ink_origin(
+        font,
         text,
-        (0, 0, 0),
+        2 * tag_x + l.tag_w + l.slant,
+        2 * tag_y + l.tag_h,
+        256,
     );
-    font.draw_text((cx - text_w / 2) as i16, ty as i16, text, (128, 128, 128));
+    font.draw_text(tx + 1, ty + 1, text, (0, 0, 0));
+    font.draw_text(tx, ty, text, (128, 128, 128));
 
     if meter.since >= SWEEP_TICKS.max(FLASH_TICKS) && !meter.burning {
         return;

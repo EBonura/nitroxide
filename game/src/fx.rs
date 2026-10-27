@@ -179,3 +179,43 @@ pub fn slanted_gradient(
         [top, top, bottom, bottom],
     ));
 }
+
+/// Where to put the pen to draw `text` so the middle of its lit pixels, with
+/// the drop shadow left out, lands on `(cx2 / 2, cy2 / 2)`, at `q8` (Q8, 256 for
+/// the font's own size). Centring by the line cell or the advance puts a digit
+/// high, because the cell holds room for descenders, and a narrow "1" to the
+/// side, because its advance runs on. `nitroxide_sim::ink` has the arithmetic and
+/// the tests that run it against the real fonts.
+pub fn ink_origin(
+    font: &psx_font::FontAtlas,
+    text: &str,
+    cx2: i32,
+    cy2: i32,
+    q8: i32,
+) -> (i16, i16) {
+    use nitroxide_sim::ink::{ink_of, place, Ink};
+    let face = font.font();
+    let Some(ink) = ink_of(
+        text,
+        face.glyph_h,
+        |c| i32::from(face.glyph_advance(c)),
+        |c, r| {
+            face.glyph_index(c)
+                .map_or(0, |i| face.glyph_row_packed(i, r))
+        },
+    ) else {
+        return ((cx2 / 2) as i16, (cy2 / 2) as i16);
+    };
+    let s = |v: i32| (v * q8 + 128) >> 8;
+    let scaled = Ink {
+        left: s(ink.left),
+        right: s(ink.right),
+        top: s(ink.top),
+        bottom: s(ink.bottom),
+    };
+    // A scaled glyph lands half a font pixel up and to the left of its cell
+    // (measured by the countdown), so the pen moves back by that.
+    let half = if q8 == 256 { 0 } else { (q8 + 256) >> 9 };
+    let (x, y) = place(scaled, cx2, cy2);
+    ((x + half) as i16, (y + half) as i16)
+}

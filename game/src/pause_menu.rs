@@ -201,10 +201,11 @@ impl NitroXide {
             .enumerate()
         {
             let text = u32_dec(&mut dec, score as u32);
-            let tw = hud.text_width(text) as i32 * 2;
             let bx = if seat == 0 { x } else { x + w - block };
-            let tx = bx + (block + SLANT / 2 - tw) / 2;
-            Self::shadowed_big(hud, tx as i16, (y + 4) as i16, text, white);
+            // The digits' ink centred in the block's midline and height.
+            let (tx, ty) = fx::ink_origin(hud, text, 2 * bx + block + SLANT / 2, 2 * y + h, 512);
+            hud.draw_text_scaled_q8(tx + 1, ty + 1, text, 512, 512, (0, 0, 0));
+            hud.draw_text_scaled_q8(tx, ty, text, 512, 512, Self::ink(white));
         }
         let mut clock = [b'+'; 5];
         let overtime = self.sim.overtime;
@@ -227,11 +228,11 @@ impl NitroXide {
             WinCondition::GoalLimit(_) => "FIRST TO",
         };
         let mid = x + block + (w - 2 * block) / 2 + SLANT / 4;
-        let cw = hud.text_width(centre) as i32;
+        let (cx, cy) = fx::ink_origin(hud, centre, 2 * mid, 2 * y + h, 256);
         Self::shadowed(
             hud,
-            (mid - cw / 2) as i16,
-            (y + 8) as i16,
+            cx,
+            cy,
             centre,
             if overtime {
                 crate::OVERTIME_INK

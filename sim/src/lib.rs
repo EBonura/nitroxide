@@ -36,6 +36,7 @@ pub mod angle;
 pub mod camera;
 #[cfg(test)]
 mod camera_tests;
+pub mod ink;
 pub mod playlist;
 
 use psx_math::int32::isqrt_i32;

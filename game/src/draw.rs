@@ -691,6 +691,10 @@ pub struct ScoreText {
     pub big: bool,
     /// Top of the clock, which is centred on [`HUD_CENTRE_X`].
     pub clock_y: i16,
+    /// The heights of the team blocks and of the clock plate at this point of
+    /// the animation: what the digits are centred in.
+    pub block_h: i16,
+    pub plate_h: i16,
 }
 
 /// The scoreboard fascia: a dark plate for the clock with a team block either
@@ -793,6 +797,8 @@ pub fn scoreboard(open: u8) -> ScoreText {
         score_y: if big { 1 } else { 0 },
         big,
         clock_y: at(0, 3),
+        block_h,
+        plate_h,
     }
 }
 
@@ -3328,53 +3334,119 @@ pub fn set_intro(progress: Option<i32>) {
 }
 
 /// Where the cameras are `progress` of the way through the kickoff fly-over:
-/// a swing round the arena, high and looking at the centre spot, which comes
-/// down onto `chase`, the pose the camera would have had, and ends on it.
+/// one swing round the arena, always the same way, high and looking at the
+/// centre spot, then a pull-back and descent onto `chase`, the pose the camera
+/// would have had, which it ends on with no speed left.
+///
+/// The path is worked in cylindrical terms about the arena's middle: the
+/// azimuth runs on a trapezoid of speed (a quick ramp up, a steady swing, an
+/// ease down to nothing as the camera arrives), the radius and height ease out
+/// of the swing's and into the chase camera's, and the camera looks at a target
+/// that eases from the centre spot to a point down the chase camera's own line
+/// of sight. Yaw and pitch come from that look-at, not from blending two
+/// angles, so there is no short-way flip and no angle fighting the path, and the
+/// eye never cuts inside the circle on its way out (the old eye-space lerp did).
 #[inline(never)]
 fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
     // How far out and how high the swing is, how far round it goes, and what it
     // looks at, all in uu (the angle in Q12). The ring stays inside the
-    // chamfered corners and under the roof.
+    // chamfered corners and over the roof.
     const RADIUS: i32 = 3000;
     const HEIGHT: i32 = 2900;
     const SPAN: i32 = 2300;
     const TARGET_Y: i32 = 250;
-    // Where in the swing the descent onto the chase camera starts, Q12.
+    // Where in the swing the descent onto the chase camera starts, Q12, and how
+    // long the azimuth takes to get up to speed.
     const DESCENT: i32 = 2300;
+    const RAMP: i32 = 600;
+    // How far down the chase camera's line of sight its look-at target is, uu.
+    const SIGHT: i32 = 3000;
 
     let p = progress.clamp(0, 4096);
-    let eased = (3 * p * p >> 12) - (2 * p * p >> 12) * p / 4096;
+    // Distance round the arc by progress `p`, over the whole: speed rises to 1
+    // over RAMP, holds, and falls back to 0 from DESCENT to the end.
+    let fall = 4096 - DESCENT;
+    let area = RAMP / 2 + (DESCENT - RAMP) + fall / 2;
+    let run = if p < RAMP {
+        p * p / (2 * RAMP)
+    } else if p < DESCENT {
+        RAMP / 2 + (p - RAMP)
+    } else {
+        let q = p - DESCENT;
+        RAMP / 2 + (DESCENT - RAMP) + q - q * q / (2 * fall)
+    };
+    let eased = run * 4096 / area;
+
     // The swing ends over the chase camera's own side of the arena.
     let end = atan2_q12(chase.eye.0, chase.eye.2) as i32;
-    let a = (end + (SPAN * (4096 - eased) >> 12)) as u16;
-    let eye = (
-        (sin_q12(a) * RADIUS) >> 12,
-        HEIGHT,
-        (cos_q12(a) * RADIUS) >> 12,
-    );
-    let (dx, dz) = (-eye.0, -eye.2);
-    let yaw = atan2_q12(dx, dz) as i32;
-    let pitch = atan2_q12(eye.1 - TARGET_Y, isqrt_i32(dx * dx + dz * dz).max(1)) as i32;
+    let az = (end + (SPAN * (4096 - eased) >> 12)) as u16;
 
     // The descent, eased in and out, so the hand-over has no corner in it.
-    let t = ((p - DESCENT).max(0) * 4096 / (4096 - DESCENT)).min(4096);
+    let t = ((p - DESCENT).max(0) * 4096 / fall).min(4096);
     let b = (3 * t * t >> 12) - (2 * t * t >> 12) * t / 4096;
     let lerp = |from: i32, to: i32| from + ((to - from) * b >> 12);
-    // Angles take the short way round.
-    let turn = |from: i32, to: i32| {
-        let d = ((to - from + 2048).rem_euclid(4096)) - 2048;
-        from + (d * b >> 12)
-    };
-    sim::camera::Pose {
-        eye: (
-            lerp(eye.0, chase.eye.0),
-            lerp(eye.1, chase.eye.1),
-            lerp(eye.2, chase.eye.2),
-        ),
-        yaw: turn(yaw, i32::from(chase.yaw)).rem_euclid(4096) as u16,
-        pitch: turn(pitch, chase.pitch.rem_euclid(4096)),
+
+    let out = isqrt_i32(chase.eye.0 * chase.eye.0 + chase.eye.2 * chase.eye.2);
+    let radius = lerp(RADIUS, out);
+    let eye = (
+        (sin_q12(az) * radius) >> 12,
+        lerp(HEIGHT, chase.eye.1),
+        (cos_q12(az) * radius) >> 12,
+    );
+
+    // Where the chase camera is looking, a long way down its line of sight.
+    let (cy, cp) = (chase.yaw, chase.pitch.rem_euclid(4096) as u16);
+    let flat = (cos_q12(cp) * SIGHT) >> 12;
+    let sight = (
+        chase.eye.0 + ((sin_q12(cy) * flat) >> 12),
+        chase.eye.1 - ((sin_q12(cp) * SIGHT) >> 12),
+        chase.eye.2 + ((cos_q12(cy) * flat) >> 12),
+    );
+    let target = (lerp(0, sight.0), lerp(TARGET_Y, sight.1), lerp(0, sight.2));
+    let (dx, dz) = (target.0 - eye.0, target.2 - eye.2);
+    // `atan2_q12` is a cheap approximation, a few degrees out at some slopes,
+    // so the look-at's angles carry a correction that grows to what it gets
+    // wrong for the chase camera's own line of sight: at the hand-over they are
+    // exactly the chase camera's.
+    let aim_yaw = atan2_q12(dx, dz) as i32;
+    let aim_pitch = atan2_q12(eye.1 - target.1, isqrt_i32(dx * dx + dz * dz).max(1)) as i32;
+    let (ex, ez) = (sight.0 - chase.eye.0, sight.2 - chase.eye.2);
+    let end_yaw = atan2_q12(ex, ez) as i32;
+    let end_pitch = atan2_q12(chase.eye.1 - sight.1, isqrt_i32(ex * ex + ez * ez).max(1)) as i32;
+    let way = |to: i32, from: i32| ((to - from + 2048).rem_euclid(4096)) - 2048;
+    let yaw = aim_yaw + (way(i32::from(chase.yaw), end_yaw) * b >> 12);
+    let pitch = aim_pitch + (way(chase.pitch.rem_euclid(4096), end_pitch) * b >> 12);
+    let pose = sim::camera::Pose {
+        eye,
+        yaw: yaw.rem_euclid(4096) as u16,
+        pitch,
         ..chase
+    };
+    #[cfg(feature = "diag-intro")]
+    {
+        let mut buf = [0u8; 16];
+        psx_rt::tty::print("INTRO ");
+        for v in [
+            p,
+            pose.eye.0,
+            pose.eye.1,
+            pose.eye.2,
+            i32::from(pose.yaw),
+            pose.pitch,
+            chase.eye.0,
+            chase.eye.1,
+            chase.pitch,
+            sight.1,
+            target.1,
+            dz,
+            dx,
+        ] {
+            psx_rt::tty::print(psx_math::fmt::i32_dec(&mut buf, v));
+            psx_rt::tty::print(" ");
+        }
+        psx_rt::tty::println("");
     }
+    pose
 }
 
 /// The last frame's camera and viewport for each seat, which is what the
@@ -6426,8 +6498,9 @@ impl Builder<'_> {
         for i in 0..unsafe { PUFF_COUNT } {
             let puff = unsafe { PUFFS[i] };
             let a = puff.left;
-            let hot = mix(seat_signal(puff.seat), (255, 255, 255), 3);
-            let smoke = mix((70, 80, 104), hot, a * 16 / 256);
+            let sig = seat_signal(puff.seat);
+            let hot = mix(sig, (255, 255, 255), 3);
+            let smoke = mix(mix(sig, (70, 76, 90), 11), hot, a * 16 / 256);
             let radius = 14 + (256 - a) * 36 / 256;
             let at = (puff.p.0, -puff.p.1, puff.p.2);
             self.fx_sprite(
@@ -6438,6 +6511,38 @@ impl Builder<'_> {
                 GLOW_PACKET,
                 0,
             );
+        }
+    }
+
+    /// The car-select turntable: a ring of light on the pitch round each staged
+    /// car, with brighter dashes that turn the way the car does. Ground-level
+    /// segments in the ordering table, each sorted by its own depth, so the far
+    /// side of the ring goes behind the car and the near side in front of it.
+    #[inline(never)]
+    fn turntable(&mut self, panels: &SelectPanels) {
+        const SEGS: i32 = 24;
+        const RADIUS: i32 = 115;
+        let turn = (panels.tick / 3) as i32;
+        for seat in 0..if panels.pair { SEATS } else { 1 } {
+            let cx = if panels.pair {
+                stage_car_x(seat, true)
+            } else {
+                0
+            };
+            let point = |i: i32| {
+                let a = (i % SEGS * 4096 / SEGS) as u16;
+                (
+                    cx + ((sin_q12(a) * RADIUS) >> 12),
+                    -3,
+                    STAGE_Z + ((cos_q12(a) * RADIUS) >> 12),
+                )
+            };
+            for i in 0..SEGS {
+                // Dashes of two segments in six, turning with the car.
+                let lit = (i + turn).rem_euclid(6) < 2;
+                let tint = if lit { (255, 255, 255) } else { (80, 150, 190) };
+                self.flame_streak(point(i), point(i + 1), 4, tint, 10);
+            }
         }
     }
 
@@ -8235,10 +8340,16 @@ impl Builder<'_> {
         let wid = (192 + n2 / 2) * (128 + level / 2) >> 8;
         let hot = |col: Rgb, k: i32| shade(col, level * k / 256 + 40, 256);
 
+        // The car's own colour: the outer glow is it, the middle is it lifted
+        // toward white, the core is white-hot; the nozzle, the diamonds and the
+        // ring follow.
+        let sig = seat_signal(seat);
+        let lifted = mix(sig, (255, 255, 255), 7);
+        let pale = mix(sig, (255, 255, 255), 12);
         // The outer glow, the middle and the core, each shorter and brighter.
         let layers: [(i32, i32, Rgb, i32); 3] = [
-            (256, 16, (40, 100, 255), 120),
-            (184, 10, (110, 210, 255), 200),
+            (256, 16, sig, 150),
+            (184, 10, lifted, 210),
             (108, 5, (255, 255, 255), 256),
         ];
         for (k, (l, w, col, bright)) in layers.into_iter().enumerate() {
@@ -8253,21 +8364,14 @@ impl Builder<'_> {
         }
         // The nozzle's soft glow, and the shock diamonds and the pulse ring that
         // show while the boost is held.
-        self.fx_sprite(
-            at(0),
-            24 * wid >> 8,
-            22,
-            hot((150, 215, 255), 200),
-            GLOW_PACKET,
-            14,
-        );
+        self.fx_sprite(at(0), 24 * wid >> 8, 22, hot(lifted, 200), GLOW_PACKET, 14);
         if level >= 192 {
             let (d1, d2) = (n1 & 1 == 0, n2 & 1 == 0);
             self.fx_sprite(
                 at(len * 120 >> 8),
                 7,
                 12,
-                hot((210, 245, 255), if d1 { 256 } else { 130 }),
+                hot(pale, if d1 { 256 } else { 130 }),
                 GLOW_PACKET,
                 8,
             );
@@ -8275,7 +8379,7 @@ impl Builder<'_> {
                 at(len * 205 >> 8),
                 5,
                 10,
-                hot((210, 245, 255), if d2 { 256 } else { 130 }),
+                hot(pale, if d2 { 256 } else { 130 }),
                 GLOW_PACKET,
                 8,
             );
@@ -8283,7 +8387,7 @@ impl Builder<'_> {
                 at(len * 46 >> 8),
                 11 + (n1 & 7),
                 20,
-                hot((110, 215, 255), 230),
+                hot(lifted, 230),
                 FX_RING_PACKET,
                 10,
             );
@@ -8570,6 +8674,8 @@ pub struct SelectPanels {
     /// Both seats staged, or seat 0 alone (solo practice, which stands its
     /// one car where the title does and drops the CPU panel).
     pub pair: bool,
+    /// The sim tick, for the turntable rings' dashes to turn with.
+    pub tick: u32,
 }
 
 /// Which screen-space fascia the front-end renderer should append over its
@@ -9214,7 +9320,10 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
                 if let Some(panels) = &front {
                     match panels {
                         FrontPanels::Title(menu) => menu_panels(b, menu),
-                        FrontPanels::Select(select) => select_panels(b, select),
+                        FrontPanels::Select(select) => {
+                            select_panels(b, select);
+                            b.turntable(select);
+                        }
                     }
                 } else {
                     // The scoreboard and the boost meters are not here: the overlay
