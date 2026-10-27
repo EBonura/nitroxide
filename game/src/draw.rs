@@ -3384,7 +3384,7 @@ fn intro_aim(
     // sight (after the arrival, so ball, eye and target share one plane and the
     // ball only ever slides up the screen).
     const DESCENT: i32 = 2300;
-    const RAMP: i32 = 600;
+    const RAMP: i32 = 400;
     const ARRIVE: i32 = 3000;
     const TURN: i32 = 3050;
     // How far down the chase camera's line of sight its look-at target is, uu.

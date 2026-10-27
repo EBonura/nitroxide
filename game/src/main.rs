@@ -158,9 +158,11 @@ enum Phase {
     Demo,
 }
 
-/// Ticks of the camera fly-over before each kickoff's countdown: a second and
-/// a half, long enough to see the arena and short enough to be no wait.
-const KICK_INTRO_TICKS: u16 = 96;
+/// Ticks of the camera fly-over before each kickoff's countdown, counted from
+/// the start of the tile sweep that leads into it (the first half of which is
+/// spent under the tiles, see `fly_over_began_under_the_tiles`): a little under
+/// two and a half seconds, so the swing is unhurried.
+const KICK_INTRO_TICKS: u16 = 142;
 /// The colour of the overtime clock and its banner's accent: nothing else in the
 /// match is violet.
 pub const OVERTIME_INK: (u8, u8, u8) = (196, 150, 255);
@@ -1527,15 +1529,28 @@ impl NitroXide {
                 self.paused = false;
                 self.pause_closing = false;
                 self.start_match();
+                self.fly_over_began_under_the_tiles();
             }
             sweep::Change::Quit => {
                 self.paused = false;
                 self.pause_closing = false;
                 self.to_title(tick);
             }
-            sweep::Change::Kickoff => self.start_match(),
+            sweep::Change::Kickoff => {
+                self.start_match();
+                self.fly_over_began_under_the_tiles();
+            }
             sweep::Change::Results => self.phase = Phase::Results,
         }
+    }
+
+    /// The fly-over runs on the clock of the whole tile sweep, not of its second
+    /// half: the arena appears under the tiles with the camera already
+    /// [`sweep::SWAP_TICK`] ticks into its swing and at speed, so the tiles
+    /// uncover a scene that is turning, not one about to start. The countdown
+    /// still follows the end of the fly-over, as it always did.
+    fn fly_over_began_under_the_tiles(&mut self) {
+        self.kick_intro = self.kick_intro.saturating_sub(sweep::SWAP_TICK as u16);
     }
 
     /// Back to the front end, with the highlight sweeping in from scratch.
@@ -2860,6 +2875,11 @@ impl Scene for NitroXide {
             sweep.t += 1;
             if sweep.t == sweep::SWAP_TICK {
                 self.apply_change(sweep.change, ctx.sim_tick.as_u32());
+            } else if sweep.t > sweep::SWAP_TICK && self.phase == Phase::Play && self.kick_intro > 0
+            {
+                // The fly-over a kickoff opens with keeps its own clock while
+                // the tiles uncover it: the camera is turning as they go.
+                self.kick_intro -= 1;
             }
             if sweep.t < sweep::TICKS {
                 self.sweep = Some(sweep);
