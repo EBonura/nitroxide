@@ -1,57 +1,42 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 | 2026-10-27
 
-Goals have a replay, shot like a broadcast. After the celebration the goal plays back full
-screen, in a split-screen game too. It opens on a tracking shot, low and beside the scoring
-car on a longer lens, moving with it; it cuts on the decisive touch, the last contact
-between a car and the ball, into a low angle at the goal that pushes in through the slow motion, a third
-of the speed through the last second and a half before the ball crosses the line; and it
-holds on the explosion with a gentle pull-back as the speed comes back. The camera keeps the
-ball in frame with a little room ahead of it, stays inside the arena and out of the net frame,
-and works for goals from any direction, aerials and own goals. The goal shot is one of two, chosen
-at random for each goal from the match itself, so a match plays the same way every time: low
-at the goal line looking across the mouth, or low inside the net looking out at the ball
-coming in. The same one is never used three goals running, and one that would be pressed
-against the walls or have a car driven into its lens gives way to the other. A REPLAY mark
-sits in the corner and the music dips during the slow motion. Then the usual fly-over. The
-goal that wins the match goes straight to the results as before.
+Goals have a replay, shot like a television one. After the celebration the goal plays back
+full screen (in split screen too), mostly in slow motion. It opens on a low tracking shot
+beside the car that scored, cuts at the moment the car hit the ball into a low angle at the
+goal that creeps in as the ball rolls toward the line, holds on the explosion and pulls back
+as the speed returns, and the music dips for the slow part. The goal shot is one of two,
+picked at random each time: low at the goal line looking across the mouth, or low inside
+the net looking out at the ball coming in. You never get the same one three goals in a row,
+and one that would put the camera in a wall or a car's way gives way to the other. Shots from
+anywhere, aerials and own goals work. The goal that wins the match is replayed too.
 
-Skipping is a hold now, in the replay and in the fly-over before a kickoff: HOLD X for a
-second and a small ring beside the hint fills clockwise; let go and it drains. A tap does
-nothing, and X that is still down from the goal does not skip what comes next. (The fly-over
-used to end on any button, and in a two-player game on a stale reading of the second pad.)
+Skipping is a hold now, in the replay and in the fly-over before a kickoff: hold X for a
+second and the ring beside the hint fills; let go and it drains. A tap does nothing, and an
+X that is still down from the goal will not skip what comes next. The hint is a ring with the
+X button inside it and "HOLD TO SKIP" beside it, in the bottom-right corner (above the boost
+bar during the fly-over), and the letter K in it now looks like a K. (The fly-over used to
+end on any button, and in two-player on a stale reading of the second pad.)
 
-Under the hood the match is recorded as it is played into a 15 KB ring of the last four
-seconds (ball and both cars, to the unit, and who touched the ball), and the replay draws
-from a scratch copy of the world, so it cannot touch the match in progress.
+The results are a scene now, not a caption. The winning car stands on the centre spot and
+turns slowly while the camera circles it. A gold trophy fades up above it in a burst of
+light, confetti in the winner's colours comes down, flashes pop in the stands and the corner
+lights breathe, and a short horn and a rising chime play over the music (a low falling pair
+and the crowd's gasp if you lost). Panels slide in beside it in the menus' style: the verdict
+in the winner's colour (WINNER, DEFEAT or DRAW, or P1 WINS and P2 WINS in two-player), the
+score and a note when it went to overtime, a table of goals, shots, saves, boost used, top
+speed and time in the air for both sides with the better figure in gold, and the choice of
+REMATCH, which starts the same match again, or QUIT TO MENU. The buttons wake up a second
+and a half in, so the last presses of the match cannot choose for you. A loss or a draw gets
+the same panels over a calmer scene with no cup. The results screen runs at 30 frames a
+second.
 
-The match-winning goal gets its replay too, and then the results are a scene instead of a
-caption. The winning car stands on the centre spot, slowly turning, under a camera that
-orbits it and keeps it in frame (the car sits left of centre to leave the right for the
-panels). A gold trophy, a low-poly cup of 120 triangles built in Blender 5.2 by
-`tools/make_trophy.py` and cooked through the model path like the cars, fades up above it
-with a burst of light and floats there, while confetti in the winner's colours falls through
-the arena, flashes pop in the stands and the corner lights breathe. A short sting plays over
-the music (a horn and a rising chime for a win, a low falling pair for a loss).
-
-Beside it, panels in the menus' slanted style slide in one after another: the verdict in the
-winner's colour (WINNER, DEFEAT, DRAW, or P1 WINS and P2 WINS in a two-player game) with the
-score, a stats table for both sides (goals, shots, saves, boost used, top speed, air time)
-with the better figure lit, and REMATCH or QUIT TO MENU on the sliding selection bar.
-REMATCH starts the same match again; the buttons wake a second and a half in, so the last
-presses of the match do not choose for you. A loss or a draw gets the same panels over a
-calmer scene with no cup. The sim now keeps the match's shots, saves, boost burned, top speed
-and time in the air (`MatchStats`).
-
-The HOLD TO SKIP hint is a larger ring with the X button drawn inside it, centred, and the words
-to its right, in the bottom-right corner inside the title-safe area (above the boost meter when
-the meter is up, in the fly-over). On the results, the OVERTIME note shares the score's line and
-the line is centred on the slanted plate, so it stays inside it.
-The HUD font's K, which drew as a short-armed H ("SKIP" read as "SHIP"), is redrawn.
-
-To make room the car models' tables are sized for what the cars need (320 vertices and faces
-a slot, 512 before) and the trophy shares the last car LOD's slot while the results are up.
+Under the hood: the match is recorded into a ring of the last four seconds, and the replay is
+drawn from a copy of the world, so it cannot touch the match in progress; the sim keeps the
+match's statistics; the trophy is a 98-triangle model built in Blender by
+`tools/make_trophy.py` and cooked like the cars; and the car model tables are sized to the
+cars (320 vertices and faces a slot, not 512) to make room.
 
 ## 0.5.1 | 2026-10-27
 

@@ -393,6 +393,14 @@ explicitly with `PSOXIDE_FROM`.
 
 ## Recent changes
 
+**0.6.0: goal replays, hold to skip, a victory screen.** A goal is replayed full screen in
+slow motion, shot like a broadcast: a tracking shot beside the scorer, a cut on the touch
+into a low angle at the goal, one of two styles chosen at random (never the same one three
+goals running), then the explosion. Skipping a replay or a kickoff fly-over is a hold of X
+with a filling ring. The match ends on a victory scene: the winning car turning under an
+orbiting camera, a gold trophy, confetti, a sting, a stats table for both sides and REMATCH
+or QUIT TO MENU (a calmer scene for a loss or a draw). Full notes are in `CHANGELOG.md`.
+
 **0.5.1: boost flame, pad bursts, a calmer fly-over.** The boost has a layered
 flickering flame and soft smoke in the car's colour, a pad taken bursts in the arena, the
 view widens with speed and boost (in each split half too), and the kickoff fly-over is a
