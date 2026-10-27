@@ -149,6 +149,9 @@ pub fn set_fov_widen(seat: usize, amount: i32) {
 /// The plane of the chosen field of view for `seat`, drawn in by its speed and
 /// boost.
 fn plane_for(seat: usize) -> i32 {
+    if let Some(plane) = unsafe { REPLAY_PLANE } {
+        return plane;
+    }
     let base = i32::from(sim::camera::FOV_PLANE[fov()]);
     let widen = unsafe { FOV_WIDEN[seat.min(1)] };
     (base - ((base * WIDEN_MAX >> 12) * widen >> 12)).max(PLANE_FLOOR.min(base))
@@ -3353,6 +3356,16 @@ static mut INTRO_ABOVE_ROOF: bool = false;
 /// The goal replay's camera, eye and target (world, Y up): while it is set every
 /// view is aimed from it (see `camera`) and the chase cameras are left alone.
 static mut REPLAY_CAM: Option<((i32, i32, i32), (i32, i32, i32))> = None;
+
+/// The goal replay's lens, as a projection plane in pixels, while it is set.
+static mut REPLAY_PLANE: Option<i32> = None;
+
+/// Set the goal replay's lens (a bigger plane is a longer lens), or hand the
+/// field of view back with `None`.
+pub fn set_replay_plane(plane: Option<i32>) {
+    // SAFETY: the game is single-threaded.
+    unsafe { REPLAY_PLANE = plane };
+}
 
 /// Aim the cameras for the goal replay, or hand them back with `None`.
 pub fn set_replay_cam(cam: Option<((i32, i32, i32), (i32, i32, i32))>) {
@@ -9093,6 +9106,11 @@ const S_CAR_FLUSH: u16 = telemetry::stage::TEXTURED_MODEL_JOINTS;
 pub fn render(s: &Sim, cars: [usize; SEATS], ball_cam: bool, buffer_y: u16) {
     use_plane(plane_for(0));
     enter_view(Viewport::FULL, buffer_y);
+    // The replay's camera is low and close: pitch tiles that reach behind its
+    // lens are clipped rather than dropped, as in the front end.
+    if unsafe { REPLAY_CAM.is_some() } {
+        unsafe { (*spad_view()).near_clip = true };
+    }
     // EXPERIMENT: kick the table the previous call built, then build this
     // frame's into the other set while the GPU draws that one.
     unsafe {

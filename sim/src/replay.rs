@@ -45,6 +45,8 @@ pub struct Frame {
     pub cars: [CarFrame; 2],
     /// The goal celebration's countdown, which the explosion is drawn from.
     pub freeze: u8,
+    /// Which cars touched the ball this tick: bit 0 blue, bit 1 orange.
+    pub touch: u8,
 }
 
 const _: () = assert!(core::mem::size_of::<Frame>() == 64);
@@ -81,6 +83,7 @@ impl Frame {
             roll_dir: s.ball.roll_dir,
             cars: [CarFrame::capture(&s.car), CarFrame::capture(&s.opponent)],
             freeze: s.goal_freeze.min(255) as u8,
+            touch: if s.hit > 0 { s.hit_by } else { 0 },
         }
     }
 }
@@ -124,6 +127,7 @@ impl Recorder {
                     flags: 0,
                 }; 2],
                 freeze: 0,
+                touch: 0,
             }; FRAMES],
             total: 0,
             cross: None,
@@ -302,69 +306,306 @@ fn isqrt(v: i32) -> i32 {
     psx_math::int32::isqrt_i32(v)
 }
 
-/// The replay camera: eye and look-at target in the world (Y up), uu.
-///
-/// It starts behind the scorer, a little above and along the way the car is
-/// travelling, then, from a second and three quarters before the ball crosses
-/// the line to just over half a second before it, swings to a low spot at the side
-/// of the goal and holds there, so the ball comes across the frame and into the
-/// net. The target is the ball throughout, which `look_at` aims at exactly.
-pub fn camera(
-    rec: &Recorder,
-    w: Window,
-    s_q8: i32,
-    scorer: usize,
-) -> ((i32, i32, i32), (i32, i32, i32)) {
-    let (i, k) = position(w, s_q8);
-    let (a, b) = (rec.get(i), rec.get(i + 1));
-    let mix = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
-    let ball = (
-        mix(a.ball[0], b.ball[0]),
-        mix(a.ball[1], b.ball[1]),
-        mix(a.ball[2], b.ball[2]),
-    );
-    let car = (
-        mix(a.cars[scorer].p[0], b.cars[scorer].p[0]),
-        mix(a.cars[scorer].p[1], b.cars[scorer].p[1]),
-        mix(a.cars[scorer].p[2], b.cars[scorer].p[2]),
-    );
-    // The way the car has been going over the last few ticks.
-    let (then, now) = (rec.get(i - 4).cars[scorer].p, rec.get(i + 4).cars[scorer].p);
-    let (mut dx, mut dz) = (
-        i32::from(now[0]) - i32::from(then[0]),
-        i32::from(now[2]) - i32::from(then[2]),
-    );
-    let mut len = isqrt(dx * dx + dz * dz);
-    if len < 8 {
-        // Nearly still: look along the car's own nose, toward the ball.
-        dx = ball.0 - car.0;
-        dz = ball.2 - car.2;
-        len = isqrt(dx * dx + dz * dz).max(1);
+/// What the director has settled about this goal before the replay starts.
+#[derive(Copy, Clone, Debug)]
+pub struct Direction {
+    /// Source ticks, relative to the crossing, of the decisive touch: the last
+    /// contact between a car and the ball before the goal. The cut is here.
+    pub touch: i32,
+    /// The car that made it, 0 blue and 1 orange.
+    pub toucher: usize,
+    /// Which end the goal is at: +1 for the orange net at +Z, -1 for blue's.
+    pub goal: i32,
+    /// True for the shot from low behind the goal looking out through the net;
+    /// false for the low side angle at the goal line.
+    pub behind_goal: bool,
+    /// Which side of the car's line the tracking shot stands: +1 or -1.
+    pub lane: i32,
+    /// Which side of the goal the side angle stands.
+    pub side: i32,
+}
+
+/// The blast takes this long to ease out, source ticks after the crossing.
+const RAMP_OUT: i32 = 38;
+
+fn unit2(dx: i32, dz: i32) -> (i32, i32, i32) {
+    let len = isqrt(dx * dx + dz * dz).max(1);
+    (dx * 4096 / len, dz * 4096 / len, len)
+}
+
+/// `v` limited to `limit` without a corner: unchanged up to `margin` short of
+/// it, then pressed up against it ever more gently, never past.
+fn soft_max(v: i32, limit: i32, margin: i32) -> i32 {
+    let start = limit - margin;
+    if v <= start {
+        v
+    } else {
+        let over = v - start;
+        start + margin * over / (margin + over)
     }
-    let behind = (
-        (car.0 - dx * 520 / len).clamp(-3900, 3900),
-        car.1 + 240,
-        (car.2 - dz * 520 / len).clamp(-4900, 4900),
-    );
-    // The side spot: low, wide of the goal mouth, in front of the line, on the
-    // side the ball is not coming from so it crosses the frame.
-    let cross_ball = rec.get(w.cross as i64).ball;
-    let early = rec.get(w.cross as i64 - 40).ball;
-    let goal = if cross_ball[2] >= 0 { 1 } else { -1 };
-    let side = if early[0] >= 0 { -1 } else { 1 };
-    let spot = (side * 2700, 170, goal * 4000);
-    // Smooth from the first position to the second.
-    let t = (((s_q8 >> 8) + 105) * 4096 / 70).clamp(0, 4096);
-    let w_ = (3 * t * t >> 12) - (2 * t * t >> 12) * t / 4096;
-    let e = |x: i32, y: i32| x + ((y - x) * w_ >> 12);
+}
+
+fn soft_clamp(v: i32, lo: i32, hi: i32, margin: i32) -> i32 {
+    -soft_max(-soft_max(v, hi, margin), -lo, margin)
+}
+
+/// Where the camera may stand: inside the arena, well off the walls and floor
+/// and ceiling, and behind the goal line only between the posts, under the bar
+/// and short of the back net. Pushed to the edge smoothly, not cut off.
+fn keep_inside(e: (i32, i32, i32), goal_box: bool) -> (i32, i32, i32) {
+    let wall = crate::HALF_X - 320;
+    let x = soft_clamp(e.0, -wall, wall, 500);
+    // The room behind the line: the whole depth of the net in the middle of the
+    // mouth, none at all beyond the posts, a smooth ramp between.
+    let mouth = crate::GOAL_HALF_W - 150;
+    let ramp = 320;
+    let ax = x.abs();
+    let base_end = crate::HALF_Z - 330;
+    let full_end = crate::HALF_Z + crate::GOAL_DEPTH - 130;
+    let end = if !goal_box || ax >= mouth + ramp {
+        base_end
+    } else if ax <= mouth {
+        full_end
+    } else {
+        base_end + (full_end - base_end) * (mouth + ramp - ax) / ramp
+    };
+    let reach = end - base_end;
+    let z = soft_clamp(e.2, -end, end, 500);
+    let y = soft_clamp(e.1, 95, crate::CEIL - 400, 300);
     (
-        (
-            e(behind.0, spot.0),
-            e(behind.1, spot.1),
-            e(behind.2, spot.2),
-        ),
-        ball,
+        x,
+        if goal_box && reach > 0 {
+            y.min(crate::GOAL_H - 110)
+        } else {
+            y
+        },
+        z,
     )
+}
+
+fn mix3(a: (i32, i32, i32), b: (i32, i32, i32), k: i32) -> (i32, i32, i32) {
+    (lerp(a.0, b.0, k), lerp(a.1, b.1, k), lerp(a.2, b.2, k))
+}
+
+fn ease(t: i32) -> i32 {
+    let t = t.clamp(0, 256);
+    (3 * t * t >> 8) - (2 * t * t >> 8) * t / 256
+}
+
+impl Direction {
+    /// Read the recording and decide the shots.
+    pub fn new(rec: &Recorder, w: Window) -> Self {
+        let cross = w.cross as i64;
+        let at_cross = rec.get(cross);
+        let goal = if at_cross.ball[2] >= 0 { 1 } else { -1 };
+        // The decisive touch: the last frame before the goal with a contact.
+        let mut found = None;
+        let mut seq = cross;
+        while seq >= w.start as i64 {
+            let t = rec.get(seq).touch;
+            if t != 0 {
+                found = Some((seq, t));
+                break;
+            }
+            seq -= 1;
+        }
+        let (touch, toucher) = match found {
+            Some((seq, bits)) => ((seq - cross) as i32, usize::from(bits & 1 == 0)),
+            None => {
+                // No touch in the ring: a long ball, or a roll from the kick.
+                // Cut as the slow motion starts, on the car nearest the ball.
+                let f = rec.get(cross - 90);
+                let d = |c: usize| {
+                    let (dx, dz) = (
+                        i32::from(f.cars[c].p[0]) - i32::from(f.ball[0]),
+                        i32::from(f.cars[c].p[2]) - i32::from(f.ball[2]),
+                    );
+                    dx * dx / 16 + dz * dz / 16
+                };
+                (-90, usize::from(d(1) < d(0)))
+            }
+        };
+        // How the ball came in, over its last half second.
+        let before = rec.get(cross - 12).ball;
+        let (dx, dz) = (
+            i32::from(at_cross.ball[0]) - i32::from(before[0]),
+            i32::from(at_cross.ball[2]) - i32::from(before[2]),
+        );
+        // From behind the net only for a ball that comes in high and straight:
+        // looking up at its flight there is no lit floor in the shot, which
+        // from inside the goal is a wash of the goal's own glow. A low ball is
+        // shot from the side, which has a clear view of the line.
+        let behind_goal = dz.abs() >= dx.abs() && at_cross.ball[1] >= 300;
+        let side = if before[0] >= 0 { -1 } else { 1 };
+        // The tracking shot stands on the side of the car's line that faces the
+        // middle of the pitch, so it has room.
+        let tf = rec.get(cross + touch as i64);
+        let (tx, tz, _) = unit2(
+            i32::from(rec.get(cross + touch as i64 + 8).cars[toucher].p[0])
+                - i32::from(rec.get(cross + touch as i64 - 8).cars[toucher].p[0]),
+            i32::from(rec.get(cross + touch as i64 + 8).cars[toucher].p[2])
+                - i32::from(rec.get(cross + touch as i64 - 8).cars[toucher].p[2]),
+        );
+        let (px, _pz) = (-tz, tx);
+        let lane = if (px * i32::from(tf.cars[toucher].p[0])) > 0 {
+            -1
+        } else {
+            1
+        };
+        Self {
+            touch,
+            toucher,
+            goal,
+            behind_goal,
+            lane,
+            side,
+        }
+    }
+}
+
+/// One frame's direction: where the camera stands, what it looks at and how
+/// long its lens is.
+#[derive(Copy, Clone, Debug)]
+pub struct Shot {
+    pub eye: (i32, i32, i32),
+    pub target: (i32, i32, i32),
+    /// The projection plane in pixels: a bigger one is a longer lens.
+    pub plane: i32,
+    /// True from the cut on the decisive touch.
+    pub cut: bool,
+}
+
+fn car_at(rec: &Recorder, w: Window, seat: usize, pos_q8: i64) -> (i32, i32, i32) {
+    let (i, k) = (pos_q8 >> 8, (pos_q8 & 255) as i32);
+    let (a, b) = (rec.get(i), rec.get(i + 1));
+    let m = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
+    let _ = w;
+    (
+        m(a.cars[seat].p[0], b.cars[seat].p[0]),
+        m(a.cars[seat].p[1], b.cars[seat].p[1]),
+        m(a.cars[seat].p[2], b.cars[seat].p[2]),
+    )
+}
+
+fn ball_at(rec: &Recorder, pos_q8: i64) -> (i32, i32, i32) {
+    let (i, k) = (pos_q8 >> 8, (pos_q8 & 255) as i32);
+    let (a, b) = (rec.get(i), rec.get(i + 1));
+    let m = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
+    (
+        m(a.ball[0], b.ball[0]),
+        m(a.ball[1], b.ball[1]),
+        m(a.ball[2], b.ball[2]),
+    )
+}
+
+/// A car's position smoothed over `half` ticks either side: a dolly that does
+/// not follow every wobble of the car.
+fn smooth_car(rec: &Recorder, w: Window, seat: usize, pos_q8: i64, half: i64) -> (i32, i32, i32) {
+    let (mut x, mut y, mut z, mut n) = (0, 0, 0, 0);
+    let mut o = -half;
+    while o <= half {
+        let p = car_at(rec, w, seat, pos_q8 + o * 256);
+        x += p.0;
+        y += p.1;
+        z += p.2;
+        n += 1;
+        o += half / 3;
+    }
+    (x / n, y / n, z / n)
+}
+
+/// Direct the replay at `s_q8` (source ticks relative to the crossing, Q8):
+/// a tracking shot beside the scorer, a cut on the decisive touch into a low
+/// angle at the goal that pushes in through the slow motion, and a pull-back as
+/// the blast eases out. All of it a function of the recording and the clock,
+/// moves eased, nothing stepped but the one cut.
+pub fn direct(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> Shot {
+    let pos = w.cross as i64 * 256 + s_q8 as i64;
+    let rel = s_q8 >> 8;
+    let ball = ball_at(rec, pos);
+    if rel < d.touch {
+        // The tracking shot: low, beside the car, a little ahead of it, on a long
+        // lens, looking between the car and the ball.
+        let car = smooth_car(rec, w, d.toucher, pos, 12);
+        let (a, b) = (
+            smooth_car(rec, w, d.toucher, pos + 10 * 256, 8),
+            smooth_car(rec, w, d.toucher, pos - 10 * 256, 8),
+        );
+        let (tx, tz, len) = unit2(a.0 - b.0, a.2 - b.2);
+        // Standing still, face the ball instead.
+        let (tx, tz) = if len < 40 {
+            let (bx, bz, _) = unit2(ball.0 - car.0, ball.2 - car.2);
+            (bx, bz)
+        } else {
+            (tx, tz)
+        };
+        let (px, pz) = (-tz * d.lane, tx * d.lane);
+        let eye = (
+            car.0 + (px * 900 >> 12) + (tx * 300 >> 12),
+            150 + car.1 / 3,
+            car.2 + (pz * 900 >> 12) + (tz * 300 >> 12),
+        );
+        let target = (
+            lerp(car.0, ball.0, 110),
+            lerp(car.1, ball.1, 110) + 30,
+            lerp(car.2, ball.2, 110),
+        );
+        return Shot {
+            eye: keep_inside(eye, false),
+            target,
+            plane: 340,
+            cut: false,
+        };
+    }
+    // The goal shot, from the touch on. It pushes in over the slow motion and
+    // pulls back as the blast eases out.
+    let t0 = d.touch.max(-90);
+    let into = ease((((s_q8 - t0 * 256) as i64 * 256) / ((8 - t0).max(1) as i64 * 256)) as i32);
+    let out = ease(((s_q8 - 8 * 256) as i64 * 256 / (RAMP_OUT as i64 * 256 - 8 * 256)) as i32);
+    // The ball with room to move into: the aim runs ahead of it along its path
+    // until it is in the net.
+    let (v0, v1) = (ball_at(rec, pos - 3 * 256), ball_at(rec, pos + 3 * 256));
+    let (vx, vz, vlen) = unit2(v1.0 - v0.0, v1.2 - v0.2);
+    let lead = if vlen > 6 { 230 * (256 - out) / 256 } else { 0 };
+    let target = (
+        ball.0 + (vx * lead >> 12),
+        ball.1 + 24,
+        ball.2 + (vz * lead >> 12),
+    );
+    let at_cross = rec.get(w.cross as i64).ball;
+    let (eye0, plane0, plane1, box_) = if d.behind_goal {
+        (
+            (
+                i32::from(at_cross[0]) / 3,
+                200,
+                d.goal * (crate::HALF_Z + crate::GOAL_DEPTH - 150),
+            ),
+            210,
+            250,
+            true,
+        )
+    } else {
+        (
+            (d.side * 2750, 160, d.goal * (crate::HALF_Z - 560)),
+            300,
+            360,
+            false,
+        )
+    };
+    // Push in toward the ball, and out again after the goal.
+    let eye = mix3(eye0, target, 22 * into / 256);
+    let eye = mix3(
+        eye,
+        (2 * eye0.0 - target.0, eye0.1 + 40, 2 * eye0.2 - target.2),
+        55 * out / 256,
+    );
+    let plane = lerp(plane0, plane1, into) - (plane1 - plane0 + 30) * out / 256;
+    Shot {
+        eye: keep_inside(eye, box_),
+        target,
+        plane,
+        cut: rel == d.touch,
+    }
 }
 
 #[cfg(test)]
@@ -481,21 +722,170 @@ mod tests {
         assert!(mid.goal_freeze > 0);
     }
 
-    #[test]
-    fn the_camera_stays_in_the_arena_and_on_the_ball() {
-        let rec = recorded(400, 150);
+    /// A recording of a goal made by hand: `ball(t)` and `car(t)` give the bodies
+    /// at tick `t` (the goal is scored at `lead`), with a touch at each tick in
+    /// `touches` (by the blue car).
+    fn staged(
+        lead: i32,
+        ball: impl Fn(i32) -> (i32, i32, i32),
+        car: impl Fn(i32) -> (i32, i32, i32),
+        touches: &[i32],
+    ) -> Recorder {
+        let mut rec = Recorder::new();
+        let mut s = Sim::with_win_condition(WinCondition::GoalLimit(9));
+        for t in 0..lead + 100 {
+            let b = ball(t.min(lead + 1));
+            s.ball.p = V3::new(uu(b.0), uu(b.1), uu(b.2));
+            let c = car(t);
+            s.car.p = V3::new(uu(c.0), uu(c.1), uu(c.2));
+            s.opponent.p = V3::new(uu(-1500), uu(28), uu(-3000));
+            s.hit = if touches.contains(&t) { 600 } else { 0 };
+            s.hit_by = if touches.contains(&t) { 1 } else { 0 };
+            s.goal_freeze = if t >= lead {
+                GOAL_FREEZE_TICKS - (t - lead) as u16
+            } else {
+                0
+            };
+            if Recorder::wants(&s) {
+                rec.push(&s);
+            }
+        }
+        rec
+    }
+
+    /// Walk a whole replay and hold the director to its rules.
+    fn judge(rec: &Recorder) -> Direction {
         let w = rec.window().unwrap();
+        let d = Direction::new(rec, w);
         let mut c = Clock::new(w);
+        let (mut last, mut cuts, mut n) = (None::<Shot>, 0, 0);
         loop {
-            let (eye, target) = camera(&rec, w, c.s, 0);
-            assert!(eye.0.abs() <= 4096 && eye.2.abs() <= 5120, "{eye:?}");
-            assert!((100..=2000).contains(&eye.1), "{eye:?}");
-            let mut sim = sim_at(0, 0);
-            apply(&mut sim, &rec, w, c.s);
-            assert!((target.0 - (sim.ball.p.x >> FP)).abs() <= 1);
+            let shot = direct(rec, w, &d, c.s);
+            let (e, t) = (shot.eye, shot.target);
+            assert!(e.0.abs() <= crate::HALF_X - 300, "{e:?} at {n}");
+            assert!((90..=crate::CEIL).contains(&e.1), "{e:?} at {n}");
+            let in_net = e.2.abs() > crate::HALF_Z - 300;
+            assert!(e.2.abs() <= crate::HALF_Z + crate::GOAL_DEPTH, "{e:?}");
+            if in_net {
+                assert!(
+                    e.0.abs() <= crate::GOAL_HALF_W && e.1 <= crate::GOAL_H,
+                    "{e:?} behind the line"
+                );
+            }
+            let dist =
+                isqrt((e.0 - t.0).pow(2) / 16 + (e.1 - t.1).pow(2) / 16 + (e.2 - t.2).pow(2) / 16)
+                    * 4;
+            assert!(dist >= 180, "the eye is on the ball at {n}: {dist}");
+            assert!((180..=430).contains(&shot.plane), "{}", shot.plane);
+            let (pos, _) = (w.cross as i64 * 256 + c.s as i64, 0);
+            let b = ball_at(rec, pos);
+            if (c.s >> 8) >= d.touch {
+                assert!(
+                    (t.0 - b.0).abs() <= 260
+                        && (t.2 - b.2).abs() <= 260
+                        && (t.1 - b.1).abs() <= 400
+                );
+            }
+            if let Some(l) = last {
+                let step = isqrt(
+                    ((e.0 - l.eye.0).pow(2) + (e.1 - l.eye.1).pow(2) + (e.2 - l.eye.2).pow(2)) / 16,
+                ) * 4;
+                if step > 150 {
+                    cuts += 1;
+                    assert!(
+                        c.s >> 8 == d.touch || (c.s >> 8) == d.touch + 1,
+                        "a cut off the beat at {}",
+                        c.s >> 8
+                    );
+                }
+                assert!(
+                    (shot.plane - l.plane).abs() <= 14 || step > 150,
+                    "plane jump off a cut"
+                );
+            }
+            last = Some(shot);
+            n += 1;
             if !c.step() {
                 break;
             }
+        }
+        assert!(cuts <= 1, "{cuts} cuts");
+        d
+    }
+
+    #[test]
+    fn a_driven_goal_is_cut_on_the_touch_and_shot_from_the_side_at_the_line() {
+        // A car running down the middle hits the ball at tick 150; it rolls in.
+        let rec = staged(
+            230,
+            |t| (0, 92, if t < 150 { 3000 } else { 3000 + (t - 150) * 27 }),
+            |t| (0, 28, 1500 + t * 10),
+            &[149, 150, 151],
+        );
+        let d = judge(&rec);
+        assert_eq!(d.toucher, 0);
+        assert_eq!(d.touch, 151 - 230);
+        assert_eq!(d.goal, 1);
+        assert!(!d.behind_goal);
+    }
+
+    #[test]
+    fn a_ball_coming_in_across_the_mouth_is_shot_from_the_side() {
+        let rec = staged(
+            200,
+            |t| (2400 - t.min(200) * 10, 100, 4000 + t.min(200) * 6),
+            |t| (2600 - t * 10, 28, 3600 + t * 6),
+            &[100],
+        );
+        let d = judge(&rec);
+        assert!(!d.behind_goal);
+    }
+
+    #[test]
+    fn a_long_shot_with_no_touch_in_the_ring_cuts_as_the_slow_motion_starts() {
+        let rec = staged(
+            300,
+            |t| (0, 92, -2000 + t * 24),
+            |t| (0, 28, -2800 + t * 12),
+            &[],
+        );
+        let d = judge(&rec);
+        assert_eq!(d.touch, -90);
+    }
+
+    #[test]
+    fn an_aerial_and_an_own_goal_hold_the_same_rules() {
+        // High in the air, in at the bar.
+        let rec = staged(
+            200,
+            |t| (300, 600, 3600 + t.min(200) * 7),
+            |t| (300, 520, 3500 + t * 7),
+            &[120],
+        );
+        assert!(
+            judge(&rec).behind_goal,
+            "a high ball is shot from behind the net"
+        );
+        // Into the blue net, at -Z.
+        let rec = staged(
+            220,
+            |t| (-200, 92, -3200 - t.min(220) * 9),
+            |t| (-200, 28, -3100 - t * 9),
+            &[130],
+        );
+        let d = judge(&rec);
+        assert_eq!(d.goal, -1);
+    }
+
+    #[test]
+    fn the_camera_is_pushed_off_walls_without_a_corner() {
+        let step = |v: i32| keep_inside((v, 400, 0), false).0;
+        assert_eq!(step(0), 0);
+        let mut last = step(2000);
+        for v in 2000..6000 {
+            let now = step(v);
+            assert!(now >= last && now - last <= 1 && now <= crate::HALF_X - 320);
+            last = now;
         }
     }
 }

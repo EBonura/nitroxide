@@ -114,8 +114,8 @@ pub static mut NITRO_GATE_STATE: GateState = GateState {
 };
 
 /// The goal replay, for a journey that scores and watches or skips it. Words,
-/// little-endian: magic, version, size in bytes, the stage (0 none, 1 the GOAL
-/// banner, 2 the replay), ticks since it began, the source tick it is showing
+/// little-endian: magic, version, size in bytes, the stage (0 none, 1 the tracking
+/// shot, 2 the goal shot after the cut), ticks since it began, the source tick it is showing
 /// relative to the ball crossing the line (signed), then how many replays have
 /// begun, been skipped and played to the end.
 #[repr(C)]
@@ -173,11 +173,7 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
     };
     let (stage, age, source_tick) = match game.replay {
         Some(r) => (
-            if r.age <= crate::replay::BANNER_TICKS {
-                1
-            } else {
-                2
-            },
+            if r.at_goal { 2 } else { 1 },
             u32::from(r.age),
             r.source_tick(),
         ),

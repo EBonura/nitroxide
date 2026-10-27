@@ -47,6 +47,12 @@ profile = ["profile-frame", "psx-telemetry/emit"]
 # Dev: kick off with the ball rolling at the far net, so a headless run
 # reaches a goal at a predictable tick and the celebration can be looked at.
 boot-goal = []
+# Dev: a goal to replay that is an aerial: the car in the air meets a falling
+# ball in front of the goal and heads it in.
+boot-goal-aerial = []
+# Dev: a goal to replay that is a long shot: the ball is struck from our own
+# end and rolls the length of the pitch, its touch long out of the replay's ring.
+boot-goal-long = []
 # Dev: boot-goal with the opponent left on its AI, so the goal and the kickoff
 # after it are seen with a car that was driving when the ball went in.
 boot-goal-ai = []

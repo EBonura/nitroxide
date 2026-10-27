@@ -1969,48 +1969,16 @@ impl NitroXide {
         }
     }
 
-    /// The goal replay's overlay: a GOAL banner in the scoring team's colour over
-    /// the first moments, then a REPLAY mark in the corner, and the way out.
-    fn draw_replay_overlay(&self, ctx: &mut Ctx, display: &FontAtlas, hud: &FontAtlas) {
-        let Some(replay) = self.replay else {
-            return;
-        };
+    /// The goal replay's overlay: the REPLAY mark in the corner and the way out.
+    fn draw_replay_overlay(&self, ctx: &mut Ctx, hud: &FontAtlas) {
         let tick = ctx.sim_tick.as_u32();
         let gpu = Gpu::from_dma_mut(ctx.gpu_dma());
-        let seat = usize::from(replay.scorer == Team::Orange);
-        let colour = draw::seat_signal(seat);
-        let age = i32::from(replay.age);
-        let hold = i32::from(replay::BANNER_TICKS);
-        if age <= hold {
-            // The plate slides in from the left, holds, and slides out; the
-            // word is the team's colour, outlined, centred by its ink.
-            let slide = 10;
-            let k = if age < slide {
-                fx::ease_out(age * fx::ONE / slide)
-            } else if hold - age < slide {
-                fx::ease_out((hold - age) * fx::ONE / slide)
-            } else {
-                fx::ONE
-            };
-            let (w, h) = (236, 64);
-            let ow = w * k >> 12;
-            let (x, y) = (160 - ow / 2 - 6, 88);
-            fx::slanted(gpu, x, y, ow, h, 12, (13, 20, 48));
-            fx::slanted(gpu, x, y + h - 3, ow, 3, 12, colour);
-            fx::slanted(gpu, x, y, ow, 3, 12, colour);
-            if k > 3000 {
-                let (tx, ty) = fx::ink_origin(display, "GOAL", 2 * 160, 2 * (y + h / 2), 640);
-                Self::outlined(display, tx, ty, "GOAL", 640, colour);
-            }
-        }
-        // The mark: a red dot that breathes, and the word.
+        // A red dot that breathes, and the word.
         if (tick / 20) % 2 == 0 {
             fx::rect(gpu, 10, 11, 6, 6, (230, 50, 50));
         }
         Self::shadowed(hud, 20, 8, "REPLAY", (240, 240, 240));
-        if age > hold {
-            Self::centred(hud, 160, draw::SCREEN_H - 22, "X SKIP", (190, 200, 222));
-        }
+        Self::centred(hud, 160, draw::SCREEN_H - 22, "X SKIP", (190, 200, 222));
     }
 
     /// The banner written straight to the GPU over the finished frame: split
@@ -2779,6 +2747,31 @@ impl Scene for NitroXide {
             self.sim.opponent.p.x = nitroxide_sim::uu(3000);
             self.sim.ball.v.z = 5500;
             psx_rt::tty::println("boot-goal: ball kicked");
+        }
+        #[cfg(feature = "boot-goal-aerial")]
+        {
+            use nitroxide_sim::{uu, V3};
+            self.phase = Phase::Play;
+            self.sim.opponent_ai = false;
+            self.sim.opponent.p.x = uu(3000);
+            self.sim.car.p = V3::new(uu(150), uu(500), uu(2500));
+            self.sim.car.v = V3::new(0, 150, 2900);
+            self.sim.car.grounded = false;
+            self.sim.car.boosting = true;
+            self.sim.ball.p = V3::new(uu(150), uu(520), uu(3000));
+            self.sim.ball.v = V3::new(0, 200, 1500);
+            self.sim.ball.grounded = false;
+        }
+        #[cfg(feature = "boot-goal-long")]
+        {
+            use nitroxide_sim::{uu, V3};
+            self.phase = Phase::Play;
+            self.sim.opponent_ai = false;
+            self.sim.opponent.p.x = uu(3000);
+            self.sim.car.p = V3::new(uu(-400), uu(28), uu(-4300));
+            self.sim.car.v = V3::new(0, 0, 2200);
+            self.sim.ball.p = V3::new(uu(-250), uu(92), uu(-3700));
+            self.sim.ball.v = V3::new(uu(1) * 2, 0, 3300);
         }
         // Ball parked in the air a short way in front of the car, which is the
         // only view that shows a shadow whole. On the ground the ball sits on
@@ -3817,7 +3810,7 @@ impl NitroXide {
                 self.draw_select(display, hud, ctx.sim_tick.as_u32());
             }
             Phase::Play if self.replay.is_some() => {
-                self.draw_replay_overlay(ctx, display, hud);
+                self.draw_replay_overlay(ctx, hud);
                 return;
             }
             Phase::Play => {

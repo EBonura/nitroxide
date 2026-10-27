@@ -54,7 +54,7 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 1 }
 timeout = 300
 [[step]]
-checkpoint = "goal-banner"
+checkpoint = "replay-tracking-shot"
 golden = false
 [[step.assert]]
 kind = "not_flat"
@@ -84,9 +84,9 @@ op = "gt"
 value = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 2 }
-timeout = 80
+timeout = 300
 [[step]]
-checkpoint = "replay-playing"
+checkpoint = "replay-cut-to-the-goal-shot"
 golden = false
 [[step.assert]]
 kind = "not_flat"
@@ -101,7 +101,7 @@ kind = "ram"
 sym = "NITRO_REPLAY_STATE"
 offset = 20
 op = "lt"
-value = -60
+value = 0
 signed = true
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 20, op = "gt", value = -60, signed = true }

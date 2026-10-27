@@ -2,18 +2,21 @@
 
 ## Unreleased
 
-Goals have a replay. After the celebration a GOAL banner slides in, in the scoring
-team's colour, and the goal plays back full screen, in a split-screen game too: the
-last two and a half seconds, then slow motion at a third of the speed through the last
-second and a half before the ball crosses the line, and back to full speed as the
-explosion goes off. The camera starts behind the scorer and swings to a low spot beside
-the goal, looking at the ball all the way. A REPLAY mark sits in the corner, X skips
-straight to the kickoff, and the music dips while the replay is in slow motion. Then
-the usual fly-over. The goal that wins the match goes straight to the results as before.
+Goals have a replay, shot like a broadcast. After the celebration the goal plays back full
+screen, in a split-screen game too. It opens on a tracking shot, low and beside the scoring
+car on a longer lens, moving with it; it cuts on the decisive touch, the last contact
+between a car and the ball, into a low angle at the goal (from the side at the line, or from
+behind the net for a ball that comes in high) that pushes in through the slow motion, a third
+of the speed through the last second and a half before the ball crosses the line; and it
+holds on the explosion with a gentle pull-back as the speed comes back. The camera keeps the
+ball in frame with a little room ahead of it, stays inside the arena and out of the net frame,
+and works for goals from any direction, aerials and own goals. A REPLAY mark sits in the
+corner, X skips straight to the kickoff, and the music dips during the slow motion. Then the
+usual fly-over. The goal that wins the match goes straight to the results as before.
 
 Under the hood the match is recorded as it is played into a 15 KB ring of the last four
-seconds (ball and both cars, to the unit), and the replay draws from a scratch copy of the
-world, so it cannot touch the match in progress.
+seconds (ball and both cars, to the unit, and who touched the ball), and the replay draws
+from a scratch copy of the world, so it cannot touch the match in progress.
 
 ## 0.5.1 | 2026-10-27
 

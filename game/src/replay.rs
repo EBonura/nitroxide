@@ -3,7 +3,7 @@
 //! scratch world a replay is drawn from, and the state of one replay in progress.
 //! `nitroxide_sim::replay` has the data and the arithmetic.
 
-use nitroxide_sim::replay::{apply, camera, Clock, Recorder, Window};
+use nitroxide_sim::replay::{apply, direct, Clock, Direction, Recorder, Window};
 use nitroxide_sim::{Sim, Team};
 
 use crate::{audio, draw};
@@ -20,8 +20,6 @@ pub static mut STARTED: u32 = 0;
 pub static mut SKIPPED: u32 = 0;
 pub static mut FINISHED: u32 = 0;
 
-/// Ticks the GOAL banner holds the first frame of the replay.
-pub const BANNER_TICKS: u16 = 54;
 /// The music's level during the slow motion, Q12.
 const DUCKED: u16 = 1400;
 
@@ -30,9 +28,12 @@ const DUCKED: u16 = 1400;
 pub struct Replay {
     window: Window,
     clock: Clock,
-    /// Ticks since the replay began; the banner holds the picture until
-    /// [`BANNER_TICKS`].
+    /// How the goal is to be shot: the touch to cut on, which angle, which side.
+    direction: Direction,
+    /// Ticks since the replay began.
     pub age: u16,
+    /// True from the cut onto the goal shot.
+    pub at_goal: bool,
     /// The team that scored, whose colour the banner is in.
     pub scorer: Team,
     /// The music's current duck, Q12.
@@ -69,7 +70,9 @@ impl Replay {
         let mut replay = Self {
             window,
             clock: Clock::new(window),
+            direction: Direction::new(ring, window),
             age: 0,
+            at_goal: false,
             scorer: live.last_scorer,
             duck: 4096,
         };
@@ -78,15 +81,8 @@ impl Replay {
         Some(replay)
     }
 
-    fn seat(&self) -> usize {
-        match self.scorer {
-            Team::Blue => 0,
-            Team::Orange => 1,
-        }
-    }
-
     /// Put the current replay frame in the scratch world and the camera on it.
-    fn show(&self) {
+    fn show(&mut self) {
         // SAFETY: the game is single-threaded.
         let (ring, scratch) = unsafe {
             (
@@ -96,8 +92,10 @@ impl Replay {
         };
         let Some(sim) = scratch else { return };
         apply(sim, ring, self.window, self.clock.s);
-        let seat = self.seat();
-        draw::set_replay_cam(Some(camera(ring, self.window, self.clock.s, seat)));
+        let shot = direct(ring, self.window, &self.direction, self.clock.s);
+        self.at_goal = (self.clock.s >> 8) >= self.direction.touch;
+        draw::set_replay_cam(Some((shot.eye, shot.target)));
+        draw::set_replay_plane(Some(shot.plane));
         for (i, car) in [&sim.car, &sim.opponent].into_iter().enumerate() {
             draw::set_flame(i, if car.boosting { 256 } else { 0 });
         }
@@ -106,18 +104,10 @@ impl Replay {
     /// One display tick. False once the replay is over.
     pub fn tick(&mut self) -> bool {
         self.age += 1;
-        let running = if self.age <= BANNER_TICKS {
-            true
-        } else {
-            self.clock.step()
-        };
+        let running = self.clock.step();
         self.show();
         // The music drops for the slow part and comes back after it.
-        let goal = if self.age > BANNER_TICKS && self.clock.slow() {
-            DUCKED
-        } else {
-            4096
-        };
+        let goal = if self.clock.slow() { DUCKED } else { 4096 };
         self.duck = if self.duck > goal {
             self.duck.saturating_sub(512).max(goal)
         } else {
@@ -137,6 +127,7 @@ impl Replay {
             }
         }
         draw::set_replay_cam(None);
+        draw::set_replay_plane(None);
         audio::duck_music(4096);
         for seat in 0..2 {
             draw::set_flame(seat, 0);

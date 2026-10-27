@@ -1477,6 +1477,9 @@ pub struct Sim {
     /// Read by the audio layer to decide how hard the hit sounded, and reset
     /// at the top of every tick so it only ever describes right now.
     pub hit: i32,
+    /// Which cars made that contact: bit 0 the blue car, bit 1 the orange. Zero
+    /// when nothing touched the ball this tick.
+    pub hit_by: u8,
     /// Set on the tick a boost pad is taken, for the pickup sound.
     pub pad_taken: bool,
     /// Set on the tick a car is wrecked, for the bang that goes with it.
@@ -1560,6 +1563,7 @@ impl Sim {
             clock,
             win_condition,
             hit: 0,
+            hit_by: 0,
             pad_taken: false,
             demo: false,
             pad_timers: [0; PADS.len()],
@@ -2140,6 +2144,7 @@ impl Sim {
         // early-return too: a demolition on the same tick as a goal must make
         // one bang, not repeat for every frozen celebration tick.
         self.hit = 0;
+        self.hit_by = 0;
         self.pad_taken = false;
         self.demo = false;
         if self.goal_freeze > 0 {
@@ -2233,6 +2238,7 @@ impl Sim {
             b = Self::collide_car_ball(&mut self.ball, &mut self.opponent);
         }
         self.hit = a.max(b);
+        self.hit_by = u8::from(a > 0) | u8::from(b > 0) << 1;
         self.collide_cars();
         // The whistle with the score level, and no goal being celebrated.
         if matches!(self.win_condition, WinCondition::TimeLimit(_))
