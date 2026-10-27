@@ -1,8 +1,13 @@
-NitroXide (PSX)  -  v0.5.0
+NitroXide (PSX)  -  v0.5.1
 ==========================
 
 A Rocket League-style rocket-car soccer game for the original PlayStation:
 drive, boost and score against the CPU, or with a friend in split-screen.
+New in 0.5.1: a layered boost flame and soft smoke in your car's colour, a
+burst when you take a boost pad, a wider view at speed, a calmer kickoff
+fly-over that starts as the menu tiles part, split-screen pitch drawn as
+smoothly as a single player's, no holes in the title's orbit, a select ring that
+goes behind the car, and HUD numbers centred in their panels.
 New in 0.5.0: Rocket League-style air control and flips, six new cars (nine in
 all), six tracks of music, stereo sound effects with a sound for every menu
 action, a camera fly-over and a big 3, 2, 1, GO! at every kickoff, golden-goal

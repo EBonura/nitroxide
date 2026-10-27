@@ -393,6 +393,15 @@ explicitly with `PSOXIDE_FROM`.
 
 ## Recent changes
 
+**0.5.1: boost flame, pad bursts, a calmer fly-over.** The boost has a layered
+flickering flame and soft smoke in the car's colour, a pad taken bursts in the arena, the
+view widens with speed and boost (in each split half too), and the kickoff fly-over is a
+steady high swing around the ball that starts as the menu tiles part. Split screen draws
+the pitch as finely as a single view, the title's orbit has no holes, the select ring goes
+behind the car, HUD numbers are centred in their panels, and the arena texture no longer
+reads into a stack buffer that left the boot no room to grow. Full notes are in
+`CHANGELOG.md`.
+
 **0.5.0: air control, new cars, music, kickoffs, overtime and moving menus.** A car in
 the air steers with Rocket League's own torque and damping, and a flip is a real
 angular impulse. There are nine cars (six new from Pavel 3D's pack), six tracks of
