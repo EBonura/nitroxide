@@ -446,15 +446,15 @@ impl Feedback {
                 // ages and cools from the car's colour, hot-white at the
                 // tail, to a dim grey-blue smoke as it fades.
                 Kind::Trail => {
-                    let hot = fx::mix(seat_signal(usize::from(p.seat)), (255, 255, 255), 90);
-                    let radius = (12 + (256 - a) * 30 / 256) * plane / s.depth;
+                    let hot = fx::mix(seat_signal(usize::from(p.seat)), (255, 255, 255), 40);
+                    let radius = (14 + (256 - a) * 36 / 256) * plane / s.depth;
                     let smoke = fx::mix((70, 80, 104), hot, a);
                     fx::glow(
                         gpu,
                         s.x,
                         s.y,
-                        radius.clamp(2, 20),
-                        fx::dim(smoke, a * 3 / 4 + 40),
+                        radius.clamp(2, 22),
+                        fx::dim(smoke, a / 2 + 36),
                     );
                     continue;
                 }
