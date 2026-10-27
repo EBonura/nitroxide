@@ -3442,11 +3442,16 @@ impl Scene for NitroXide {
             _ => None,
         };
         draw::set_banner(banner);
-        draw::set_fov_widen(if self.phase == Phase::Play && !self.two_player {
-            self.fb.widen
-        } else {
-            0
-        });
+        for seat in 0..2 {
+            draw::set_fov_widen(
+                seat,
+                if self.phase == Phase::Play {
+                    self.fb.widen[seat]
+                } else {
+                    0
+                },
+            );
+        }
         draw::set_intro(match self.phase {
             Phase::Play if self.kick_intro > 0 => Some(
                 i32::from(KICK_INTRO_TICKS - self.kick_intro) * 4096 / i32::from(KICK_INTRO_TICKS),

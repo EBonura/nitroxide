@@ -77,8 +77,10 @@ pub struct Feedback {
     tick: u32,
     banner: u8,
     warned: bool,
-    /// How far the boost has widened the field of view, Q12.
-    pub widen: i32,
+    /// How far speed and boost have widened each seat's field of view, Q12.
+    pub widen: [i32; 2],
+    /// How grown each seat's boost flame is, `0..=256`.
+    flame: [i32; 2],
 }
 
 impl Feedback {
@@ -93,7 +95,8 @@ impl Feedback {
             tick: 0,
             banner: 0,
             warned: false,
-            widen: 0,
+            widen: [0; 2],
+            flame: [0; 2],
         }
     }
 
@@ -124,13 +127,30 @@ impl Feedback {
             self.warned = false;
         }
 
-        // The field of view opens up while the single player's car is boosting.
-        let target = if !two_player && sim.car.boosting {
-            ONE
-        } else {
-            0
-        };
-        self.widen += (target - self.widen) / 6;
+        // The field of view opens up with speed, and a little more with the
+        // boost, each seat's own, easing over about fifteen ticks either way:
+        // from a little under supersonic to the top speed it takes three
+        // quarters of the widening, the boost the last quarter.
+        let _ = two_player;
+        for seat in 0..2 {
+            let car = car_of(sim, seat);
+            let speed = car.v.len() * 60 >> FP;
+            let target = if car.wrecked() {
+                0
+            } else {
+                ((speed - WIDEN_FROM_SPEED) * ONE / WIDEN_SPEED_SPAN).clamp(0, ONE) * 3 / 4
+                    + if car.boosting { ONE / 4 } else { 0 }
+            };
+            self.widen[seat] += (target - self.widen[seat]) / 5;
+            // The flame grows over the first four ticks of boost and snaps
+            // shorter on release.
+            self.flame[seat] = if !car.wrecked() && car.boosting {
+                (self.flame[seat] + 64).min(256)
+            } else {
+                self.flame[seat] >> 2
+            };
+            draw::set_flame(seat, self.flame[seat]);
+        }
 
         for seat in 0..2 {
             let car = car_of(sim, seat);
@@ -247,8 +267,15 @@ impl Feedback {
     pub fn reset(&mut self) {
         *self = Self::new();
         draw::clear_puffs();
+        draw::set_flame(0, 0);
+        draw::set_flame(1, 0);
     }
 }
+
+/// The speed, uu/s, the field of view starts to open at, and how much further
+/// the full speed-driven widening takes (the top speed is a little over 2,300).
+const WIDEN_FROM_SPEED: i32 = 1800;
+const WIDEN_SPEED_SPAN: i32 = 500;
 
 /// How far behind the car's centre the exhaust is: the rear bumper (the
 /// hitbox's half length) and a little past it, uu.
@@ -453,7 +480,7 @@ impl Feedback {
         {
             return;
         }
-        let plane = draw::plane();
+        let plane = draw::plane(seat);
         fx::additive(gpu);
         for p in self.parts.iter().filter(|p| p.life > 0) {
             let Some(s) = draw::project_seat(seat, p.p) else {

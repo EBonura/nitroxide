@@ -126,21 +126,32 @@ fn use_plane(h: i32) {
     scene::set_projection_plane(h as u16);
 }
 
-/// How far the field of view has widened toward the next step up, Q12: the
-/// rush of boosting. Set by the game each frame; split screen never uses it.
-static mut FOV_WIDEN: i32 = 0;
+/// How far each seat's field of view has widened for speed and boost, Q12
+/// (`4096` is the full [`WIDEN_MAX`]). Set by the game each frame.
+static mut FOV_WIDEN: [i32; 2] = [0; 2];
+/// The projection plane each seat's last view was drawn with, so the overlay
+/// (the ball arrow, the particles) places things through the same projection.
+static mut SEAT_PLANE: [i32; 2] = [MENU_PROJ_H; 2];
+/// The most a view's plane is drawn in at full widening, Q12 (a sixth: about
+/// 12 percent for speed and four more for boost).
+const WIDEN_MAX: i32 = 655;
+/// A widened plane never goes under this: the narrowest step's own plane is
+/// 112, and the pitch and the walls are clipped for what a view of that width
+/// can reach.
+const PLANE_FLOOR: i32 = 100;
 
-/// Widen the match's field of view by `amount` (Q12) of one step.
-pub fn set_fov_widen(amount: i32) {
+/// Widen `seat`'s field of view by `amount` (Q12) of [`WIDEN_MAX`].
+pub fn set_fov_widen(seat: usize, amount: i32) {
     // SAFETY: the game is single-threaded.
-    unsafe { FOV_WIDEN = amount.clamp(0, 4096) };
+    unsafe { FOV_WIDEN[seat.min(1)] = amount.clamp(0, 4096) };
 }
 
-/// The plane of the chosen field of view, drawn in by the boost's widening.
-fn match_plane() -> i32 {
+/// The plane of the chosen field of view for `seat`, drawn in by its speed and
+/// boost.
+fn plane_for(seat: usize) -> i32 {
     let base = i32::from(sim::camera::FOV_PLANE[fov()]);
-    let next = i32::from(sim::camera::FOV_PLANE[(fov() + 1).min(FOV_STEPS - 1)]);
-    base - ((base - next) * unsafe { FOV_WIDEN } >> 12)
+    let widen = unsafe { FOV_WIDEN[seat.min(1)] };
+    (base - ((base * WIDEN_MAX >> 12) * widen >> 12)).max(PLANE_FLOOR.min(base))
 }
 
 /// One player's slice of the back buffer, stacked top and bottom, the way
@@ -836,7 +847,17 @@ const PAD_ORB_FAR: Rgb = (225, 173, 57);
 /// table quantises depth into slots roughly 27 uu apart at the distance a chase
 /// camera sits, so a bias 30 above the shadow's is about one slot of margin and
 /// measured as still hidden; this is nearer four.
-const FLAME_BIAS: i32 = -300;
+/// How far the flame reaches behind the nozzle at full length, uu.
+const FLAME_LEN: i32 = 190;
+/// How grown each seat's flame is, `0..=256` (zero draws none). The feedback
+/// layer raises it over the first frames of boost and drops it on release.
+static mut FLAME_LEVEL: [i32; 2] = [0; 2];
+
+/// Set `seat`'s flame level.
+pub fn set_flame(seat: usize, level: i32) {
+    // SAFETY: the game is single-threaded.
+    unsafe { FLAME_LEVEL[seat.min(1)] = level.clamp(0, 256) };
+}
 
 type Rgb = (u8, u8, u8);
 
@@ -2808,7 +2829,7 @@ const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
 /// Goal halos (four a goal, eight with both goals in view), the ball's disc,
 /// and its hoop at up to sixteen segments of two quads: 41 at most. An
 /// explosion is up to 34 more, and a goal and a demolition can overlap.
-const MAX_GLOWS: usize = 144;
+const MAX_GLOWS: usize = 176;
 static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; SET_COUNT] = [GLOW_INIT; SET_COUNT];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
     GlowQuad {
@@ -3381,7 +3402,7 @@ pub fn project_seat(seat: usize, p: (i32, i32, i32)) -> Option<SeatPoint> {
     // SAFETY: the game is single-threaded.
     let (view, vp) = unsafe { SEAT_VIEWS[seat.min(1)] }?;
     let (cx, cy, cz) = view.camera_space((p.0, -p.1, p.2));
-    let h = proj_h();
+    let h = unsafe { SEAT_PLANE[seat.min(1)] };
     let z = cz.max(1);
     Some(SeatPoint {
         x: i32::from(vp.x) + i32::from(vp.w) / 2 + cx * h / z,
@@ -3392,9 +3413,10 @@ pub fn project_seat(seat: usize, p: (i32, i32, i32)) -> Option<SeatPoint> {
     })
 }
 
-/// The projection plane in force, for sizing things by their distance.
-pub fn plane() -> i32 {
-    proj_h()
+/// The projection plane `seat`'s last view was drawn with, for sizing things
+/// by their distance.
+pub fn plane(seat: usize) -> i32 {
+    unsafe { SEAT_PLANE[seat.min(1)] }
 }
 
 /// One puff of boost exhaust: where it is (uu, Y up), how much of its life is
@@ -4742,18 +4764,6 @@ impl Builder<'_> {
         } else {
             count_overflow!();
         }
-    }
-
-    /// As [`Builder::quad_biased`], but semi-transparent: the GPU averages the
-    /// quad with what is behind it. What the boost plume is made of.
-    fn quad_blended(&mut self, corners: [(i32, i32, i32); 4], colors: [Rgb; 4], bias: i32) {
-        let Some((sp, z_sum)) = project_quad(&corners) else {
-            return;
-        };
-        if !quad_overlaps_view(&sp) {
-            return;
-        }
-        self.emit_blended(sp, z_sum / 4 + bias, colors);
     }
 
     /// A textured quad, projected the same way as [`Builder::quad`], with a
@@ -8171,81 +8181,149 @@ impl Builder<'_> {
         }
     }
 
-    /// The boost flame. The only thing drawn on the car by hand: brake lights
-    /// and everything else come baked into the model's own materials.
-    fn car_flame(&mut self, c: &sim::Car, view: &View) {
-        if !c.boosting {
+    /// The boost flame, in the world behind the bumper: three nested stretched
+    /// glows (a cyan-blue outer, a cyan middle and a white-hot core), a soft glow
+    /// at the nozzle, two shock diamonds and a pulse ring while the boost is
+    /// held. Its length and width flicker each frame on a deterministic noise
+    /// per car, and its `level` (see [`set_flame`]) grows over the first few
+    /// frames of boost and drops away on release. All of it is additive and
+    /// sorted into the ordering table with a small push back, so the nozzle sits
+    /// behind the bumper and the rest sorts by its own depth from any camera.
+    #[inline(never)]
+    fn car_flame(&mut self, c: &sim::Car, seat: usize, view: &View) {
+        let level = unsafe { FLAME_LEVEL[seat] };
+        if level == 0 {
             return;
         }
-        // Nothing doing if the car is behind the eye or almost on it. Quads are
-        // not clipped against the camera plane on this hardware, so a plume with
-        // one corner behind it projects to a screen-wide smear, and since the
-        // opponent boosts constantly that smear was the only flame usually
-        // visible. The mesh pass has a frustum test for the same reason.
+        // Nothing doing if the car is behind the eye or almost on it: quads are
+        // not clipped against the camera plane on this hardware, so a streak
+        // with one end behind it would project to a screen-wide smear.
         let depth = view.camera_space(car_ground(c)).2;
-        // The +40 keeps the clamped tail below from ever needing a negative
-        // length: at this depth the shortest tail still fits.
         if depth < DEPTH_RANGE.near() as i32 + sim::CAR_HALF_L + 40 {
             return;
         }
         // A car past the imposter distance in a half-width view is two flat
-        // slabs; a plume on a car that is not there reads as a firefly.
+        // slabs; a flame on a car that is not there reads as a firefly.
         if split_view() && depth > FAR_CAR_DISTANCE {
             return;
         }
-        // Same origin and orientation the mesh uses.
-        view.set_object(&car_world(c), car_ground(c));
-        let flick = if (c.wheel_spin >> 6) & 1 == 0 { 0 } else { 28 };
+        view.set_world();
+        let (_, up, fwd) = c.basis();
+        let q = |v: i32, k: i32| v * k >> 12;
+        // The nozzle: just behind the rear bumper and low, near the axle.
+        let back = sim::CAR_HALF_L + 6;
+        let nz = (
+            r(c.p.x) - q(fwd.x, back) - q(up.x, 12),
+            r(c.p.y) - q(fwd.y, back) - q(up.y, 12),
+            r(c.p.z) - q(fwd.z, back) - q(up.z, 12),
+        );
+        // Back along the car by `t`, in render space (Y down).
+        let at = |t: i32| {
+            (
+                nz.0 - q(fwd.x, t),
+                -(nz.1 - q(fwd.y, t)),
+                nz.2 - q(fwd.z, t),
+            )
+        };
 
-        // Off the back of the car, not out of the middle of it. This started at
-        // the tail of the hitbox, which is 82 back, and 60 put the root a good
-        // 20 uu inside the bodywork.
-        let root = -sim::CAR_HALF_L;
-        // An exhaust tail rather than a stub: three tapering, semi-transparent
-        // segments running hot to ember, after WipEout's plumes. The taper is
-        // the fade; the GPU's average blend cannot fade a quad to nothing, so
-        // the shape thins to a point instead.
-        //
-        // Clamped so no corner reaches the camera plane: quads are not clipped
-        // against it on this hardware, and a chase camera sits square in the
-        // tail's path. The near guard above only covers the car itself.
-        let reach = depth - DEPTH_RANGE.near() as i32 - sim::CAR_HALF_L - 16;
-        let len = (170 + flick).min(reach).max(24);
+        let tick = unsafe { CAMERA_TICK };
+        let n1 = crate::fx::scatter(tick, seat as u32 * 7 + 1) as i32;
+        let n2 = crate::fx::scatter(tick, seat as u32 * 7 + 2) as i32;
+        // Flicker: the length by a sixth either way, the width by a quarter.
+        let reach = (depth - DEPTH_RANGE.near() as i32 - sim::CAR_HALF_L - 16).max(24);
+        let len = ((FLAME_LEN * (800 + n1) / 928) * level >> 8).clamp(20, reach);
+        let wid = (192 + n2 / 2) * (128 + level / 2) >> 8;
+        let hot = |col: Rgb, k: i32| shade(col, level * k / 256 + 40, 256);
 
-        // Crossed sheets, one lying flat and one standing up, because a single
-        // sheet trailing backwards is edge-on from exactly the angle the game is
-        // played at. Low, so the tail clears the bodywork and its own shadow.
-        let y = 20;
-        let half_w = [14, 9, 5, 1];
-        let half_h = [13, 8, 4, 1];
-        let cols: [Rgb; 4] = [
-            (255, 226, 130),
-            (255, 140, 40),
-            (255, 80, 24),
-            (160, 40, 16),
+        // The outer glow, the middle and the core, each shorter and brighter.
+        let layers: [(i32, i32, Rgb, i32); 3] = [
+            (256, 16, (40, 100, 255), 120),
+            (184, 10, (110, 210, 255), 200),
+            (108, 5, (255, 255, 255), 256),
         ];
-        let z_at = |i: usize| root - len * i as i32 / 3;
-        for i in 0..3 {
-            let (z0, z1) = (z_at(i), z_at(i + 1));
-            let shade = [cols[i], cols[i], cols[i + 1], cols[i + 1]];
-            let (w0, w1) = (half_w[i], half_w[i + 1]);
-            self.quad_blended(
-                [(-w0, y, z0), (w0, y, z0), (-w1, y, z1), (w1, y, z1)],
-                shade,
-                FLAME_BIAS,
-            );
-            let (h0, h1) = (half_h[i], half_h[i + 1]);
-            self.quad_blended(
-                [
-                    (0, y - h0, z0),
-                    (0, y + h0, z0),
-                    (0, y - h1, z1),
-                    (0, y + h1, z1),
-                ],
-                shade,
-                FLAME_BIAS,
+        for (k, (l, w, col, bright)) in layers.into_iter().enumerate() {
+            let tail = len * l >> 8;
+            self.flame_streak(
+                at(-len / 6),
+                at(tail),
+                w * wid >> 8,
+                hot(col, bright),
+                12 - k as i32,
             );
         }
+        // The nozzle's soft glow, and the shock diamonds and the pulse ring that
+        // show while the boost is held.
+        self.fx_sprite(
+            at(0),
+            24 * wid >> 8,
+            22,
+            hot((150, 215, 255), 200),
+            GLOW_PACKET,
+            14,
+        );
+        if level >= 192 {
+            let (d1, d2) = (n1 & 1 == 0, n2 & 1 == 0);
+            self.fx_sprite(
+                at(len * 120 >> 8),
+                7,
+                12,
+                hot((210, 245, 255), if d1 { 256 } else { 130 }),
+                GLOW_PACKET,
+                8,
+            );
+            self.fx_sprite(
+                at(len * 205 >> 8),
+                5,
+                10,
+                hot((210, 245, 255), if d2 { 256 } else { 130 }),
+                GLOW_PACKET,
+                8,
+            );
+            self.fx_sprite(
+                at(len * 46 >> 8),
+                11 + (n1 & 7),
+                20,
+                hot((110, 215, 255), 230),
+                FX_RING_PACKET,
+                10,
+            );
+        }
+    }
+
+    /// One layer of the flame: the glow tile stretched from `a` to `b`, `hw` uu
+    /// to either side, so it reads as a soft cone along the flame.
+    fn flame_streak(
+        &mut self,
+        a: (i32, i32, i32),
+        b: (i32, i32, i32),
+        hw: i32,
+        tint: Rgb,
+        bias: i32,
+    ) {
+        let v = |p: (i32, i32, i32)| Vec3I16::new(p.0 as i16, p.1 as i16, p.2 as i16);
+        let (pa, pb) = (project(v(a)), project(v(b)));
+        if pa.sz == 0 || pb.sz == 0 {
+            return;
+        }
+        let half = (hw * proj_h() / pa.sz.max(1) as i32).clamp(1, 24);
+        let (dx, dy) = (pb.sx as i32 - pa.sx as i32, pb.sy as i32 - pa.sy as i32);
+        let len = isqrt_i32(dx * dx + dy * dy).max(1);
+        // Along the flame (so the soft ends are not cut off) and across it.
+        let (ex, ey) = (dx * half / len, dy * half / len);
+        let (px, py) = (-ey, ex);
+        let (ax, ay) = (pa.sx as i32 - ex, pa.sy as i32 - ey);
+        let (bx, by) = (pb.sx as i32 + ex, pb.sy as i32 + ey);
+        let sp = [
+            ((ax + px) as i16, (ay + py) as i16),
+            ((ax - px) as i16, (ay - py) as i16),
+            ((bx + px) as i16, (by + py) as i16),
+            ((bx - px) as i16, (by - py) as i16),
+        ];
+        if !quad_overlaps_view(&sp) || !gpu_draws_whole(&sp) {
+            return;
+        }
+        let depth = (pa.sz as i32 + pb.sz as i32) / 2 + bias;
+        self.emit_glow(sp, depth, Self::GLOW_UVS, [tint; 4], GLOW_PACKET);
     }
 }
 
@@ -8820,7 +8898,10 @@ pub fn render_menu(
         ),
     };
     // The overlay places things on the stage through this camera too.
-    unsafe { SEAT_VIEWS[0] = Some((view, Viewport::FULL)) };
+    unsafe {
+        SEAT_VIEWS[0] = Some((view, Viewport::FULL));
+        SEAT_PLANE[0] = MENU_PROJ_H;
+    }
     enter_view(Viewport::FULL, buffer_y);
     // The camera is a hand above the grass: pitch tiles reach behind the lens.
     unsafe { (*spad_view()).near_clip = true };
@@ -8864,7 +8945,7 @@ const S_CAR_FLUSH: u16 = telemetry::stage::TEXTURED_MODEL_JOINTS;
 
 /// Draw one frame of the match for one player, on the whole screen.
 pub fn render(s: &Sim, cars: [usize; SEATS], ball_cam: bool, buffer_y: u16) {
-    use_plane(match_plane());
+    use_plane(plane_for(0));
     enter_view(Viewport::FULL, buffer_y);
     // EXPERIMENT: kick the table the previous call built, then build this
     // frame's into the other set while the GPU draws that one.
@@ -8899,7 +8980,6 @@ pub fn render_split(
     buffer_y: u16,
     swapped: bool,
 ) {
-    use_plane(match_plane());
     let (near, far) = if swapped {
         (&s.opponent, &s.car)
     } else {
@@ -8949,6 +9029,8 @@ pub fn render_split(
             SPLIT_HALF = k;
             VIEW_TAIL = k == 1;
             enter_view_cpu(vp);
+            // Each view has its own widening.
+            use_plane(plane_for(camera_slot));
             render_view(s, cars, cam, subject, vp, camera_slot);
             VIEW_TAIL = false;
             // Last into the first slot walked, so first in the table.
@@ -8997,7 +9079,10 @@ fn render_view(
         )
     });
     // Kept for the overlay, which projects the ball and the particles itself.
-    unsafe { SEAT_VIEWS[camera_slot.min(1)] = Some((view, vp)) };
+    unsafe {
+        SEAT_VIEWS[camera_slot.min(1)] = Some((view, vp));
+        SEAT_PLANE[camera_slot.min(1)] = proj_h();
+    }
     build_view(s, cars, view, vp, None);
 }
 
@@ -9175,9 +9260,9 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
 
         staged!(S_BALL, { on_scratchpad(|| b.ball(s, &view)) });
         on_scratchpad(|| {
-            for body in [&s.car, &s.opponent] {
+            for (seat, body) in [&s.car, &s.opponent].into_iter().enumerate() {
                 if !body.wrecked() {
-                    b.car_flame(body, &view);
+                    b.car_flame(body, seat, &view);
                 }
             }
         });
