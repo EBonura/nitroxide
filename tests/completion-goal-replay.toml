@@ -36,11 +36,11 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
-# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+# The tile sweep, then the fly-over (skipped by holding X), then three, two, one.
 wait = 34
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait = 180
@@ -58,6 +58,12 @@ checkpoint = "replay-tracking-shot"
 golden = false
 [[step.assert]]
 kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 40
+op = "gt"
+value = 0
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_REPLAY_STATE"
@@ -165,9 +171,58 @@ offset = 24
 op = "eq"
 value = 1
 [[step]]
+# A tap on the fly-over does not skip it: it is held for a second, with a ring.
 press = ["cross"]
-hold = 4
+hold = 8
+wait = 30
+[[step]]
+checkpoint = "fly-over-tap-does-not-skip"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 44
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 36
+op = "zero"
+[[step]]
+press = ["cross"]
+hold = 30
 wait = 0
+[[step]]
+checkpoint = "fly-over-ring-filling"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 36
+op = "gt"
+value = 15
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 36
+op = "lt"
+value = 45
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 44
+op = "gt"
+value = 0
+[[step]]
+press = ["cross"]
+hold = 62
+wait = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 44
+op = "zero"
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
 timeout = 190
@@ -183,8 +238,68 @@ timeout = 300
 [[step]]
 wait = 12
 [[step]]
+# A tap does not skip the replay.
 press = ["cross"]
-hold = 4
+hold = 10
+wait = 30
+[[step]]
+checkpoint = "replay-tap-does-not-skip"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 12
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 28
+op = "zero"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 36
+op = "zero"
+[[step]]
+# Half a second of holding fills half the ring.
+press = ["cross"]
+hold = 30
+wait = 0
+[[step]]
+checkpoint = "replay-ring-filling"
+golden = false
+[[step.assert]]
+kind = "not_flat"
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 12
+op = "gt"
+value = 0
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 36
+op = "gt"
+value = 15
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 36
+op = "lt"
+value = 45
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_REPLAY_STATE"
+offset = 28
+op = "zero"
+[[step]]
+# The ring completes: the replay ends.
+press = ["cross"]
+hold = 62
 wait = 8
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 12, op = "eq", value = 0 }
@@ -226,7 +341,7 @@ op = "eq"
 value = 3
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }

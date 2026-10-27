@@ -28,6 +28,7 @@ use psx_math::sincos::{cos_q12, sin_q12};
 use psx_settings::Profile;
 use psx_vram::{Clut, TextureDepth, TexturePage};
 
+use nitroxide_sim::skip::SkipHold;
 use nitroxide_sim::{DemoMatch, Input, Sim, Team, WinCondition, DEMO_MATCHES};
 
 mod assets;
@@ -174,23 +175,6 @@ const PAUSE_TICKS: u8 = 20;
 /// Half of it: tiles cover the panel's area for this long, the panel is swapped
 /// in or out under them, and they uncover it for as long again.
 const PAUSE_HALF: u8 = PAUSE_TICKS / 2;
-/// What cuts the fly-over short: every button but Start (which pauses) and
-/// Select (the controls page).
-const SKIP_BUTTONS: [u16; 12] = [
-    button::CROSS,
-    button::CIRCLE,
-    button::SQUARE,
-    button::TRIANGLE,
-    button::L1,
-    button::L2,
-    button::R1,
-    button::R2,
-    button::UP,
-    button::DOWN,
-    button::LEFT,
-    button::RIGHT,
-];
-
 /// Ticks of no input on a menu page before the attract demo starts:
 /// thirty seconds, about where WipEout's sits.
 const DEMO_IDLE_TICKS: u32 = 60 * 60;
@@ -717,8 +701,10 @@ struct NitroXide {
     /// What each seat's boost meter is showing.
     meters: boost_meter::Meters,
     /// Ticks left of the camera fly-over before a kickoff's countdown starts.
-    /// The sim stands still while it runs, and any button ends it.
+    /// The sim stands still while it runs, and holding X ends it.
     kick_intro: u16,
+    /// How far X has been held to skip the fly-over or the goal replay.
+    pub skip: SkipHold,
     /// The goal replay in progress, if one is: the sim stands still while it
     /// runs and the renderer is handed the replay's own world.
     replay: Option<replay::Replay>,
@@ -875,6 +861,7 @@ impl NitroXide {
             sweep: None,
             meters: boost_meter::Meters::new(),
             kick_intro: 0,
+            skip: SkipHold::new(),
             replay: None,
             fb: feedback::Feedback::new(),
             pause_t: 0,
@@ -1378,7 +1365,9 @@ impl NitroXide {
     fn start_match(&mut self) {
         // The last match's goals are not this one's to replay.
         replay::clear();
+        replay::new_match();
         self.replay = None;
+        self.skip = SkipHold::new();
         // The previous match is over: forget it, and say go.
         audio::new_match();
         self.sim = Sim::with_win_condition(MATCH_RULES[self.match_rule]);
@@ -1562,13 +1551,9 @@ impl NitroXide {
     }
 
     /// One tick of the goal replay. The sim does not move: the replay plays its
-    /// own recording. X skips straight to the kickoff.
+    /// own recording. Holding X for a second skips straight to the kickoff.
     fn update_replay(&mut self, ctx: &mut Ctx) {
-        if self.two_player {
-            ctx.refresh_second_pad();
-        }
-        let skipped = ctx.just_pressed(button::CROSS)
-            || (self.two_player && ctx.just_pressed_for(1, button::CROSS));
+        let skipped = self.step_skip(ctx);
         let Some(mut replay) = self.replay else {
             return;
         };
@@ -1578,6 +1563,7 @@ impl NitroXide {
         }
         replay.finish(skipped);
         self.replay = None;
+        self.skip = SkipHold::new();
         // Back to the kickoff the sim is standing at: the chase cameras start
         // over where the cars are, and the fly-over opens.
         draw::reset_cameras();
@@ -1585,9 +1571,23 @@ impl NitroXide {
         self.kick_intro = KICK_INTRO_TICKS;
     }
 
+    /// One tick of the hold-X-to-skip ring, on either pad in a two-player game:
+    /// true on the tick it completes. Reads the second pad afresh.
+    fn step_skip(&mut self, ctx: &mut Ctx) -> bool {
+        if self.two_player {
+            ctx.refresh_second_pad();
+        }
+        let two = self.two_player;
+        let held = ctx.is_held_for(0, button::CROSS) || (two && ctx.is_held_for(1, button::CROSS));
+        let pressed =
+            ctx.just_pressed(button::CROSS) || (two && ctx.just_pressed_for(1, button::CROSS));
+        self.skip.step(held, pressed)
+    }
+
     /// Back to the front end, with the highlight sweeping in from scratch.
     fn to_title(&mut self, tick: u32) {
         self.kick_intro = 0;
+        self.skip = SkipHold::new();
         if let Some(r) = self.replay.take() {
             r.finish(true);
         }
@@ -1978,7 +1978,37 @@ impl NitroXide {
             fx::rect(gpu, 10, 11, 6, 6, (230, 50, 50));
         }
         Self::shadowed(hud, 20, 8, "REPLAY", (240, 240, 240));
-        Self::centred(hud, 160, draw::SCREEN_H - 22, "X SKIP", (190, 200, 222));
+        self.draw_skip_hint(gpu, hud);
+    }
+
+    /// "HOLD X SKIP" at the foot of the screen with the ring beside it that fills
+    /// clockwise while X is held.
+    fn draw_skip_hint(&self, gpu: &mut Gpu, hud: &FontAtlas) {
+        const TEXT: &str = "HOLD X SKIP";
+        const RING: i32 = 16;
+        const GAP: i32 = 5;
+        let y = draw::SCREEN_H - 22;
+        let width = hud.text_width(TEXT) as i32;
+        let left = 160 - (RING + GAP + width) / 2;
+        fx::opaque(gpu);
+        let (cx, cy) = (left + RING / 2, i32::from(y) + 4);
+        let filled = self.skip.q12();
+        // A dark edge, the track, then what has filled of it.
+        fx::arc(gpu, (cx, cy), (3, 8), 0, fx::ONE, (0, 0, 0));
+        fx::arc(gpu, (cx, cy), (4, 7), filled, fx::ONE, (52, 60, 82));
+        fx::arc(gpu, (cx, cy), (4, 7), 0, filled, (110, 215, 255));
+        let lit = self.skip.ticks() > 0;
+        Self::shadowed(
+            hud,
+            (left + RING + GAP) as i16,
+            y,
+            TEXT,
+            if lit {
+                (255, 255, 255)
+            } else {
+                (190, 200, 222)
+            },
+        );
     }
 
     /// The banner written straight to the GPU over the finished frame: split
@@ -3344,14 +3374,12 @@ impl Scene for NitroXide {
                     self.ball_cam[0] = !self.ball_cam[0];
                 }
                 // The fly-over before a kickoff: nothing in the match moves, and
-                // any button on either pad cuts it short.
+                // holding X for a second cuts it short, as with the replay.
                 if self.kick_intro > 0 {
-                    let skipped = SKIP_BUTTONS.iter().any(|&b| {
-                        ctx.just_pressed(b) || (self.two_player && ctx.just_pressed_for(1, b))
-                    });
+                    let skipped = self.step_skip(ctx);
                     self.kick_intro = if skipped { 0 } else { self.kick_intro - 1 };
-                    if self.two_player {
-                        ctx.refresh_second_pad();
+                    if self.kick_intro == 0 {
+                        self.skip = SkipHold::new();
                     }
                     return;
                 }
@@ -3385,6 +3413,7 @@ impl Scene for NitroXide {
                     match replay::Replay::begin(&self.sim) {
                         Some(r) => {
                             self.replay = Some(r);
+                            self.skip = SkipHold::new();
                             self.fb.reset();
                         }
                         None => self.kick_intro = KICK_INTRO_TICKS,
@@ -3834,6 +3863,9 @@ impl NitroXide {
                         self.two_player,
                     );
                     self.draw_now_playing(hud, ctx.sim_tick.as_u32());
+                }
+                if self.kick_intro > 0 && !self.paused && self.sweep.is_none() {
+                    self.draw_skip_hint(Gpu::from_dma_mut(ctx.gpu_dma()), hud);
                 }
                 if self.kick_intro == 0 {
                     let views = self.view_seats();

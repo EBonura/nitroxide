@@ -36,11 +36,11 @@ press = ["cross"]
 hold = 4
 wait = 0
 [[step]]
-# The tile sweep, then the fly-over (skipped with a press), then three, two, one.
+# The tile sweep, then the fly-over (skipped by holding X), then three, two, one.
 wait = 34
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait = 180
@@ -71,14 +71,14 @@ value = 3
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# A goal is followed by its replay, which a press skips, then the fly-over,
-# which any press skips before the countdown.
+# A goal is followed by its replay, which holding X skips, then the fly-over,
+# which holding X skips before the countdown.
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 8
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
@@ -93,14 +93,14 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# A goal is followed by its replay, which a press skips, then the fly-over,
-# which any press skips before the countdown.
+# A goal is followed by its replay, which holding X skips, then the fly-over,
+# which holding X skips before the countdown.
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 8
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
@@ -115,14 +115,14 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# A goal is followed by its replay, which a press skips, then the fly-over,
-# which any press skips before the countdown.
+# A goal is followed by its replay, which holding X skips, then the fly-over,
+# which holding X skips before the countdown.
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 8
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
@@ -137,14 +137,14 @@ timeout = 400
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# A goal is followed by its replay, which a press skips, then the fly-over,
-# which any press skips before the countdown.
+# A goal is followed by its replay, which holding X skips, then the fly-over,
+# which holding X skips before the countdown.
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 8
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }

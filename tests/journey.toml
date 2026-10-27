@@ -97,11 +97,11 @@ value = 2
 [[step]]
 press = ["cross"]
 hold = 4
-# The tile sweep, the fly-over (skipped with a press) and the countdown.
+# The tile sweep, the fly-over (skipped by holding X) and the countdown.
 wait = 34
 [[step]]
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait = 186
@@ -202,9 +202,9 @@ value = 0
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Any button skips the fly-over before the countdown.
+# Holding X skips the fly-over before the countdown.
 press = ["cross"]
-hold = 4
+hold = 62
 wait = 0
 [[step]]
 wait = 4

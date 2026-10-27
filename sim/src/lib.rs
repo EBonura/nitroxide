@@ -39,6 +39,7 @@ mod camera_tests;
 pub mod ink;
 pub mod playlist;
 pub mod replay;
+pub mod skip;
 
 use psx_math::int32::isqrt_i32;
 use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
@@ -2036,6 +2037,31 @@ impl Sim {
     pub fn seed_ai(&mut self, orange: u32, blue: u32) {
         self.ai_rng = orange.max(1);
         self.blue_bot.rng = blue.max(1);
+    }
+
+    /// A number the match settles on at any moment and nothing else: the bots'
+    /// seeded scatter, the score, the clock and where the bodies are. The goal
+    /// replay's director reads it to vary its shots; it draws nothing from the
+    /// bots' streams, so asking changes no match, and the same match asks the
+    /// same thing on every run.
+    pub fn director_roll(&self) -> u32 {
+        let mut h = self.ai_rng ^ self.blue_bot.rng.rotate_left(13);
+        for v in [
+            i32::from(self.score_blue),
+            i32::from(self.score_orange),
+            self.clock as i32,
+            self.ball.p.x,
+            self.ball.p.y,
+            self.ball.p.z,
+            self.car.p.x,
+            self.car.p.z,
+            self.opponent.p.x,
+            self.opponent.p.z,
+        ] {
+            h = (h ^ v as u32).wrapping_mul(0x9e37_79b1);
+            h ^= h >> 15;
+        }
+        h
     }
 
     /// One tick of blue intent from the same bot that drives orange.

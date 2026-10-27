@@ -245,14 +245,6 @@ fn lerp_angle(a: u16, b: u16, k: i32) -> u16 {
     (i32::from(a) + (d * k >> 8)).rem_euclid(4096) as u16
 }
 
-fn v3(p: [i16; 3]) -> V3 {
-    V3::new(
-        uu(i32::from(p[0])),
-        uu(i32::from(p[1])),
-        uu(i32::from(p[2])),
-    )
-}
-
 /// The replay's position as frames and a Q8 fraction between them.
 fn position(w: Window, s_q8: i32) -> (i64, i32) {
     let pos = w.cross as i64 * 256 + s_q8 as i64;
@@ -325,6 +317,78 @@ pub struct Direction {
     pub side: i32,
 }
 
+/// The two ways to shoot the goal itself.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Style {
+    /// Low at the goal line, off to one side, looking across the mouth.
+    Side,
+    /// Low in the net behind the line, looking out at the ball coming in.
+    Behind,
+}
+
+/// The two goals before this one, newest first, `None` before there are any.
+pub type Recent = [Option<Style>; 2];
+
+/// How far a style's camera may be pressed by the walls, the posts and the
+/// roof over a replay before it counts as blocked, in units. The shot from
+/// the net sits about 250 off its wish all through, against the back wall
+/// of the net, and is meant to.
+const MAX_STRAIN: i32 = 400;
+
+/// A car this close to the camera, on the ground plane, is in the way of it.
+const CAR_CLEARANCE: i32 = 450;
+
+/// Choose the goal shot: one of the two at random from `roll`, never the same
+/// one three goals running, and the other one when this goal would press the
+/// chosen camera hard against the walls or put a car in front of its lens.
+/// Safety outranks the variety: a style that is blocked is not used even to
+/// avoid a repeat.
+pub fn pick_style(rec: &Recorder, w: Window, roll: u32, recent: Recent) -> Style {
+    let other = |s: Style| match s {
+        Style::Side => Style::Behind,
+        Style::Behind => Style::Side,
+    };
+    let mut want = if (roll >> 11) & 1 == 0 {
+        Style::Side
+    } else {
+        Style::Behind
+    };
+    if recent[0] == Some(want) && recent[1] == Some(want) {
+        want = other(want);
+    }
+    if workable(rec, w, want) || !workable(rec, w, other(want)) {
+        want
+    } else {
+        other(want)
+    }
+}
+
+/// Whether `style` gives a clear camera for this goal: pushed no more than
+/// [`MAX_STRAIN`] off where it wants to be at any point of the replay, and with
+/// no car driven or flung up to the lens.
+fn workable(rec: &Recorder, w: Window, style: Style) -> bool {
+    let d = Direction::new(rec, w, style);
+    let mut s = d.touch.max(-90) * 256;
+    while s <= (RAMP_OUT + 8) * 256 {
+        let (shot, wanted) = goal_shot(rec, w, &d, s);
+        let (a, b) = (shot.eye, wanted);
+        let strain = isqrt(((a.0 - b.0).pow(2) + (a.1 - b.1).pow(2) + (a.2 - b.2).pow(2)) / 16) * 4;
+        if strain > MAX_STRAIN {
+            return false;
+        }
+        let pos = w.cross as i64 * 256 + s as i64;
+        for seat in 0..2 {
+            let c = car_at(rec, w, seat, pos);
+            let (dx, dz) = (c.0 - a.0, c.2 - a.2);
+            if isqrt((dx * dx + dz * dz) / 16) * 4 < CAR_CLEARANCE && (c.1 - a.1).abs() < 500 {
+                return false;
+            }
+        }
+        s += 6 * 256;
+    }
+    true
+}
+
 /// The blast takes this long to ease out, source ticks after the crossing.
 const RAMP_OUT: i32 = 38;
 
@@ -393,8 +457,8 @@ fn ease(t: i32) -> i32 {
 }
 
 impl Direction {
-    /// Read the recording and decide the shots.
-    pub fn new(rec: &Recorder, w: Window) -> Self {
+    /// Read the recording and decide the shots, the goal shot in `style`.
+    pub fn new(rec: &Recorder, w: Window, style: Style) -> Self {
         let cross = w.cross as i64;
         let at_cross = rec.get(cross);
         let goal = if at_cross.ball[2] >= 0 { 1 } else { -1 };
@@ -425,17 +489,9 @@ impl Direction {
                 (-90, usize::from(d(1) < d(0)))
             }
         };
-        // How the ball came in, over its last half second.
+        // Which way the ball came in, over its last half second, for the side
+        // the side angle stands on.
         let before = rec.get(cross - 12).ball;
-        let (dx, dz) = (
-            i32::from(at_cross.ball[0]) - i32::from(before[0]),
-            i32::from(at_cross.ball[2]) - i32::from(before[2]),
-        );
-        // From behind the net only for a ball that comes in high and straight:
-        // looking up at its flight there is no lit floor in the shot, which
-        // from inside the goal is a wash of the goal's own glow. A low ball is
-        // shot from the side, which has a clear view of the line.
-        let behind_goal = dz.abs() >= dx.abs() && at_cross.ball[1] >= 300;
         let side = if before[0] >= 0 { -1 } else { 1 };
         // The tracking shot stands on the side of the car's line that faces the
         // middle of the pitch, so it has room.
@@ -456,7 +512,7 @@ impl Direction {
             touch,
             toucher,
             goal,
-            behind_goal,
+            behind_goal: style == Style::Behind,
             lane,
             side,
         }
@@ -557,8 +613,16 @@ pub fn direct(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> Shot {
             cut: false,
         };
     }
-    // The goal shot, from the touch on. It pushes in over the slow motion and
-    // pulls back as the blast eases out.
+    goal_shot(rec, w, d, s_q8).0
+}
+
+/// The goal shot, from the touch on: it pushes in over the slow motion and
+/// pulls back as the blast eases out. Returns the shot and the eye it wanted
+/// before the arena pushed it about.
+fn goal_shot(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> (Shot, (i32, i32, i32)) {
+    let pos = w.cross as i64 * 256 + s_q8 as i64;
+    let rel = s_q8 >> 8;
+    let ball = ball_at(rec, pos);
     let t0 = d.touch.max(-90);
     let into = ease((((s_q8 - t0 * 256) as i64 * 256) / ((8 - t0).max(1) as i64 * 256)) as i32);
     let out = ease(((s_q8 - 8 * 256) as i64 * 256 / (RAMP_OUT as i64 * 256 - 8 * 256)) as i32);
@@ -600,12 +664,15 @@ pub fn direct(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> Shot {
         55 * out / 256,
     );
     let plane = lerp(plane0, plane1, into) - (plane1 - plane0 + 30) * out / 256;
-    Shot {
-        eye: keep_inside(eye, box_),
-        target,
-        plane,
-        cut: rel == d.touch,
-    }
+    (
+        Shot {
+            eye: keep_inside(eye, box_),
+            target,
+            plane,
+            cut: rel == d.touch,
+        },
+        eye,
+    )
 }
 
 #[cfg(test)]
@@ -754,9 +821,9 @@ mod tests {
     }
 
     /// Walk a whole replay and hold the director to its rules.
-    fn judge(rec: &Recorder) -> Direction {
+    fn judge(rec: &Recorder, style: Style) -> Direction {
         let w = rec.window().unwrap();
-        let d = Direction::new(rec, w);
+        let d = Direction::new(rec, w, style);
         let mut c = Clock::new(w);
         let (mut last, mut cuts, mut n) = (None::<Shot>, 0, 0);
         loop {
@@ -813,6 +880,12 @@ mod tests {
         d
     }
 
+    /// Both styles hold the rules on one goal.
+    fn judge_both(rec: &Recorder) -> Direction {
+        judge(rec, Style::Behind);
+        judge(rec, Style::Side)
+    }
+
     #[test]
     fn a_driven_goal_is_cut_on_the_touch_and_shot_from_the_side_at_the_line() {
         // A car running down the middle hits the ball at tick 150; it rolls in.
@@ -822,7 +895,7 @@ mod tests {
             |t| (0, 28, 1500 + t * 10),
             &[149, 150, 151],
         );
-        let d = judge(&rec);
+        let d = judge_both(&rec);
         assert_eq!(d.toucher, 0);
         assert_eq!(d.touch, 151 - 230);
         assert_eq!(d.goal, 1);
@@ -837,7 +910,7 @@ mod tests {
             |t| (2600 - t * 10, 28, 3600 + t * 6),
             &[100],
         );
-        let d = judge(&rec);
+        let d = judge_both(&rec);
         assert!(!d.behind_goal);
     }
 
@@ -849,7 +922,7 @@ mod tests {
             |t| (0, 28, -2800 + t * 12),
             &[],
         );
-        let d = judge(&rec);
+        let d = judge_both(&rec);
         assert_eq!(d.touch, -90);
     }
 
@@ -862,10 +935,8 @@ mod tests {
             |t| (300, 520, 3500 + t * 7),
             &[120],
         );
-        assert!(
-            judge(&rec).behind_goal,
-            "a high ball is shot from behind the net"
-        );
+        assert!(judge(&rec, Style::Behind).behind_goal);
+        judge(&rec, Style::Side);
         // Into the blue net, at -Z.
         let rec = staged(
             220,
@@ -873,8 +944,74 @@ mod tests {
             |t| (-200, 28, -3100 - t * 9),
             &[130],
         );
-        let d = judge(&rec);
+        let d = judge_both(&rec);
         assert_eq!(d.goal, -1);
+    }
+
+    #[test]
+    fn the_style_is_random_never_thrice_and_falls_back_when_blocked() {
+        // A high ball in the middle: both styles work.
+        let high = staged(
+            200,
+            |t| (300, 600, 3600 + t.min(200) * 7),
+            |t| (300, 520, 3500 + t * 7),
+            &[120],
+        );
+        let w = high.window().unwrap();
+        assert!(workable(&high, w, Style::Behind) && workable(&high, w, Style::Side));
+        let mut seen = [0; 2];
+        for roll in 0..64u32 {
+            let s = pick_style(&high, w, roll.wrapping_mul(0x9e37_79b9), [None, None]);
+            seen[usize::from(s == Style::Behind)] += 1;
+        }
+        assert!(seen[0] > 16 && seen[1] > 16, "{seen:?}");
+        // Never the same style a third time running, whatever the roll says.
+        for roll in 0..64u32 {
+            let roll = roll.wrapping_mul(0x9e37_79b9);
+            let first = pick_style(&high, w, roll, [None, None]);
+            let again = pick_style(&high, w, roll, [Some(first), Some(first)]);
+            assert_ne!(again, first);
+            assert_eq!(pick_style(&high, w, roll, [Some(first), None]), first);
+        }
+        // A car that drives on into the net is in the way of a camera there:
+        // the side angle, even when the roll and the history ask for the other.
+        let rolled_in = staged(
+            230,
+            |t| (0, 92, if t < 150 { 3000 } else { 3000 + (t - 150) * 27 }),
+            |t| (0, 28, (2000 + t * 14).min(5800)),
+            &[149, 150, 151],
+        );
+        let w = rolled_in.window().unwrap();
+        assert!(!workable(&rolled_in, w, Style::Behind) && workable(&rolled_in, w, Style::Side));
+        for roll in 0..64u32 {
+            let roll = roll.wrapping_mul(0x9e37_79b9);
+            assert_eq!(
+                pick_style(&rolled_in, w, roll, [Some(Style::Side), Some(Style::Side)]),
+                Style::Side
+            );
+            assert_eq!(pick_style(&rolled_in, w, roll, [None, None]), Style::Side);
+        }
+        // A ball on the floor is shot either way.
+        let low = staged(
+            230,
+            |t| (0, 92, if t < 150 { 3000 } else { 3000 + (t - 150) * 27 }),
+            |t| (0, 28, 1500 + t * 10),
+            &[149, 150, 151],
+        );
+        let w = low.window().unwrap();
+        assert!(workable(&low, w, Style::Behind) && workable(&low, w, Style::Side));
+    }
+
+    #[test]
+    fn the_director_roll_is_the_match_and_nothing_else() {
+        let a = sim_at(300, 0);
+        let b = sim_at(300, 0);
+        assert_eq!(a.director_roll(), b.director_roll());
+        assert_eq!(a.director_roll(), a.director_roll());
+        assert_ne!(a.director_roll(), sim_at(301, 0).director_roll());
+        let mut c = sim_at(300, 0);
+        c.score_blue += 1;
+        assert_ne!(a.director_roll(), c.director_roll());
     }
 
     #[test]

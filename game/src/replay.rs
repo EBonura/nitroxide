@@ -3,7 +3,9 @@
 //! scratch world a replay is drawn from, and the state of one replay in progress.
 //! `nitroxide_sim::replay` has the data and the arithmetic.
 
-use nitroxide_sim::replay::{apply, direct, Clock, Direction, Recorder, Window};
+use nitroxide_sim::replay::{
+    apply, direct, pick_style, Clock, Direction, Recent, Recorder, Style, Window,
+};
 use nitroxide_sim::{Sim, Team};
 
 use crate::{audio, draw};
@@ -15,10 +17,17 @@ static mut RING: Recorder = Recorder::new();
 /// of the live sim, so the pads and the scores are right, with the bodies moved.
 static mut SCRATCH: Option<Sim> = None;
 
+/// The goal shots of the match's last two replays, newest first, so the director
+/// does not use one style three times running.
+static mut RECENT: Recent = [None, None];
+
 /// Replays begun, skipped with X and played to the end: for the gate.
 pub static mut STARTED: u32 = 0;
 pub static mut SKIPPED: u32 = 0;
 pub static mut FINISHED: u32 = 0;
+/// The goal shot of the replay last begun: 0 none yet, 1 the side angle, 2 from
+/// behind the net.
+pub static mut LAST_STYLE: u32 = 0;
 
 /// The music's level during the slow motion, Q12.
 const DUCKED: u16 = 1400;
@@ -38,6 +47,12 @@ pub struct Replay {
     pub scorer: Team,
     /// The music's current duck, Q12.
     duck: u16,
+}
+
+/// A new match: no goals shot yet.
+pub fn new_match() {
+    // SAFETY: the game is single-threaded.
+    unsafe { *core::ptr::addr_of_mut!(RECENT) = [None, None] };
 }
 
 /// Forget the recording: a new match, or a replay that has been seen.
@@ -67,10 +82,18 @@ impl Replay {
         let ring = unsafe { &*core::ptr::addr_of!(RING) };
         let window = ring.window()?;
         unsafe { *core::ptr::addr_of_mut!(SCRATCH) = Some(*live) };
+        // The goal shot is at random from the match, as the sim has it at this
+        // goal: the same match shoots the same goals the same way.
+        let recent = unsafe { *core::ptr::addr_of!(RECENT) };
+        let style = pick_style(ring, window, live.director_roll(), recent);
+        unsafe {
+            *core::ptr::addr_of_mut!(RECENT) = [Some(style), recent[0]];
+            LAST_STYLE = if style == Style::Side { 1 } else { 2 };
+        }
         let mut replay = Self {
             window,
             clock: Clock::new(window),
-            direction: Direction::new(ring, window),
+            direction: Direction::new(ring, window, style),
             age: 0,
             at_goal: false,
             scorer: live.last_scorer,

@@ -50,6 +50,11 @@ op = "between"
 value = 3590
 value_hi = 3600
 [[step]]
+wait = 8
+[[step]]
+# The fly-over, skipped by holding X on either pad, then three, two, one.
+press = ["cross"]
+hold = 62
 wait = 200
 [[step]]
 press = ["r2"]
@@ -183,7 +188,7 @@ wait = 8
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 35
+wait = 81
 [[step]]
 checkpoint = "returned-title"
 golden = false

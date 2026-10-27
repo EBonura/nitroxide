@@ -129,22 +129,31 @@ pub struct ReplayState {
     started: u32,
     skipped: u32,
     finished: u32,
+    /// Ticks the skip ring is filled, `0..=60`, in a replay or a fly-over.
+    skip_ticks: u32,
+    /// The goal shot of the replay last begun: 0 none yet, 1 side, 2 behind.
+    style: u32,
+    /// Ticks left of the fly-over before a kickoff, 0 when there is none.
+    fly_over: u32,
 }
 
-const _: () = assert!(core::mem::size_of::<ReplayState>() == 36);
+const _: () = assert!(core::mem::size_of::<ReplayState>() == 48);
 
 #[used]
 #[no_mangle]
 pub static mut NITRO_REPLAY_STATE: ReplayState = ReplayState {
     magic: u32::from_le_bytes(*b"NRPL"),
-    version: 1,
-    size_bytes: 36,
+    version: 2,
+    size_bytes: 48,
     stage: 0,
     age: 0,
     source_tick: 0,
     started: 0,
     skipped: 0,
     finished: 0,
+    skip_ticks: 0,
+    style: 0,
+    fly_over: 0,
 };
 
 pub fn publish(game: &NitroXide, completed_tick: u32) {
@@ -181,14 +190,17 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
     };
     let replay = ReplayState {
         magic: u32::from_le_bytes(*b"NRPL"),
-        version: 1,
-        size_bytes: 36,
+        version: 2,
+        size_bytes: 48,
         stage,
         age,
         source_tick,
         started: unsafe { crate::replay::STARTED },
         skipped: unsafe { crate::replay::SKIPPED },
         finished: unsafe { crate::replay::FINISHED },
+        skip_ticks: u32::from(game.skip.ticks()),
+        style: unsafe { crate::replay::LAST_STYLE },
+        fly_over: u32::from(game.kick_intro),
     };
     unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_REPLAY_STATE), replay) };
     unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_SETTINGS_STATE), settings) };

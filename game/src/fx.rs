@@ -76,6 +76,36 @@ pub fn opaque(gpu: &mut Gpu) {
     gpu.set_draw_mode(TextureMaterial::opaque(0, 0, (0x80, 0x80, 0x80)));
 }
 
+/// An arc of a ring about `centre` between radii `(inner, outer)`, drawn
+/// clockwise from the top: from `from` to `to` of a whole turn, both Q12. Cut
+/// into slices of a thirtieth of a turn at most, whose chords are flat.
+pub fn arc(gpu: &mut Gpu, centre: (i32, i32), radii: (i32, i32), from: i32, to: i32, colour: Rgb) {
+    use psx_math::sincos::{cos_q12, sin_q12};
+    const SLICE: i32 = 4096 / 30;
+    let at = |a: i32, r: i32| {
+        let a = (a & 4095) as u16;
+        (
+            centre.0 + ((sin_q12(a) * r + 2048) >> 12),
+            centre.1 - ((cos_q12(a) * r + 2048) >> 12),
+        )
+    };
+    let mut a = from;
+    while a < to {
+        let b = (a + SLICE).min(to);
+        quad(
+            gpu,
+            [
+                at(a, radii.1),
+                at(b, radii.1),
+                at(a, radii.0),
+                at(b, radii.0),
+            ],
+            colour,
+        );
+        a = b;
+    }
+}
+
 /// An opaque axis-aligned rectangle.
 pub fn rect(gpu: &mut Gpu, x: i32, y: i32, w: i32, h: i32, colour: Rgb) {
     if w <= 0 || h <= 0 {

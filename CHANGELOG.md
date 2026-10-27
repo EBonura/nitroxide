@@ -5,14 +5,22 @@
 Goals have a replay, shot like a broadcast. After the celebration the goal plays back full
 screen, in a split-screen game too. It opens on a tracking shot, low and beside the scoring
 car on a longer lens, moving with it; it cuts on the decisive touch, the last contact
-between a car and the ball, into a low angle at the goal (from the side at the line, or from
-behind the net for a ball that comes in high) that pushes in through the slow motion, a third
+between a car and the ball, into a low angle at the goal that pushes in through the slow motion, a third
 of the speed through the last second and a half before the ball crosses the line; and it
 holds on the explosion with a gentle pull-back as the speed comes back. The camera keeps the
 ball in frame with a little room ahead of it, stays inside the arena and out of the net frame,
-and works for goals from any direction, aerials and own goals. A REPLAY mark sits in the
-corner, X skips straight to the kickoff, and the music dips during the slow motion. Then the
-usual fly-over. The goal that wins the match goes straight to the results as before.
+and works for goals from any direction, aerials and own goals. The goal shot is one of two, chosen
+at random for each goal from the match itself, so a match plays the same way every time: low
+at the goal line looking across the mouth, or low inside the net looking out at the ball
+coming in. The same one is never used three goals running, and one that would be pressed
+against the walls or have a car driven into its lens gives way to the other. A REPLAY mark
+sits in the corner and the music dips during the slow motion. Then the usual fly-over. The
+goal that wins the match goes straight to the results as before.
+
+Skipping is a hold now, in the replay and in the fly-over before a kickoff: HOLD X for a
+second and a small ring beside the hint fills clockwise; let go and it drains. A tap does
+nothing, and X that is still down from the goal does not skip what comes next. (The fly-over
+used to end on any button, and in a two-player game on a stale reading of the second pad.)
 
 Under the hood the match is recorded as it is played into a 15 KB ring of the last four
 seconds (ball and both cars, to the unit, and who touched the ball), and the replay draws
