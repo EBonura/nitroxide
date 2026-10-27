@@ -3275,14 +3275,13 @@ fn camera(
         &request,
         now,
     );
-    // The kickoff fly-over takes the view over, ending exactly on the chase
-    // camera's, which the update above keeps tracking underneath.
-    let pose = match unsafe { INTRO } {
-        Some(progress) => intro_pose(progress, pose),
-        None => pose,
-    };
+    // The kickoff fly-over takes the view over, ending on the chase camera's,
+    // which the update above keeps tracking underneath. It is aimed, eye to
+    // target, rather than given angles: see `intro_aim`.
+    let ball = (r(s.ball.p.x), r(s.ball.p.y), r(s.ball.p.z));
+    let intro = unsafe { INTRO }.map(|progress| intro_aim(progress, pose, ball));
     // SAFETY: the game is single-threaded.
-    unsafe { INTRO_ABOVE_ROOF = INTRO.is_some() && pose.eye.1 > sim::CEIL };
+    unsafe { INTRO_ABOVE_ROOF = intro.is_some_and(|(eye, _)| eye.1 > sim::CEIL) };
     #[cfg(feature = "diag-log")]
     crate::diaglog::fill!(cam;
         now as i32,
@@ -3311,11 +3310,29 @@ fn camera(
         0,
     );
     // The camera works in world space (Y up); the renderer's Y is down.
-    look_from(
-        (pose.eye.0, -pose.eye.1, pose.eye.2),
-        pose.yaw,
-        pose.pitch.rem_euclid(4096) as u16,
-    )
+    let view = match intro {
+        Some((eye, target)) => look_at(eye, target),
+        None => look_from(
+            (pose.eye.0, -pose.eye.1, pose.eye.2),
+            pose.yaw,
+            pose.pitch.rem_euclid(4096) as u16,
+        ),
+    };
+    #[cfg(feature = "diag-intro")]
+    if let (Some(progress), Some(_)) = (unsafe { INTRO }, intro) {
+        // Where the ball falls from the middle of the view, in pixels, and the
+        // eye: what the fly-over's table is made of.
+        let (cx, cy, cz) = view.camera_space((ball.0, -ball.1, ball.2));
+        let (dx, dy) = (cx * proj_h() / cz.max(1), cy * proj_h() / cz.max(1));
+        let mut buf = [0u8; 16];
+        psx_rt::tty::print("INTRO ");
+        for v in [camera_slot as i32, progress, dx, dy, cz] {
+            psx_rt::tty::print(psx_math::fmt::i32_dec(&mut buf, v));
+            psx_rt::tty::print(" ");
+        }
+        psx_rt::tty::println("");
+    }
+    view
 }
 
 /// How far through the kickoff fly-over the cameras are, Q12 (`0..=4096`), or
@@ -3333,47 +3350,60 @@ pub fn set_intro(progress: Option<i32>) {
     unsafe { INTRO = progress };
 }
 
-/// Where the cameras are `progress` of the way through the kickoff fly-over:
-/// one swing round the arena, always the same way, high and looking at the
-/// centre spot, then a pull-back and descent onto `chase`, the pose the camera
-/// would have had, which it ends on with no speed left.
+/// Where the cameras are, eye and look-at target (world, Y up), `progress` of
+/// the way through the kickoff fly-over: one swing round the arena, always the
+/// same way, high and looking at the ball, then a pull-back and descent onto
+/// `chase`, the pose the camera would have had, which it ends on with no speed
+/// left.
 ///
 /// The path is worked in cylindrical terms about the arena's middle: the
-/// azimuth runs on a trapezoid of speed (a quick ramp up, a steady swing, an
-/// ease down to nothing as the camera arrives), the radius and height ease out
-/// of the swing's and into the chase camera's, and the camera looks at a target
-/// that eases from the centre spot to a point down the chase camera's own line
-/// of sight. Yaw and pitch come from that look-at, not from blending two
-/// angles, so there is no short-way flip and no angle fighting the path, and the
-/// eye never cuts inside the circle on its way out (the old eye-space lerp did).
+/// azimuth runs on a trapezoid of angular speed (a quick ramp up, a steady swing,
+/// an ease down to nothing as the camera arrives), and the radius and height
+/// ease out of the swing's and into the chase camera's. The camera is aimed
+/// from the eye at the ball, which is exact (`look_at` builds the view from the
+/// direction, with no angles in between), so the ball stays on the middle of the
+/// screen however the eye moves. Only in the last stretch does the target ease
+/// off the ball onto a point down the chase camera's line of sight, so the
+/// hand-over is a smooth turn onto the chase view and not a swing.
 #[inline(never)]
-fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
-    // How far out and how high the swing is, how far round it goes, and what it
-    // looks at, all in uu (the angle in Q12). The ring stays inside the
-    // chamfered corners and over the roof.
+fn intro_aim(
+    progress: i32,
+    chase: sim::camera::Pose,
+    ball: (i32, i32, i32),
+) -> ((i32, i32, i32), (i32, i32, i32)) {
+    // How far out and how high the swing is, how far round it goes, all in uu
+    // (the angle in Q12). The ring stays inside the chamfered corners and over
+    // the roof.
     const RADIUS: i32 = 3000;
     const HEIGHT: i32 = 2900;
     const SPAN: i32 = 2300;
-    const TARGET_Y: i32 = 250;
-    // Where in the swing the descent onto the chase camera starts, Q12, and how
-    // long the azimuth takes to get up to speed.
+    // Where in the swing the descent onto the chase camera starts, Q12, how
+    // long the azimuth takes to get up to speed, where it has arrived over the
+    // chase camera's side and the eye only backs off and comes down along that
+    // line, and where the aim leaves the ball for the chase camera's line of
+    // sight (after the arrival, so ball, eye and target share one plane and the
+    // ball only ever slides up the screen).
     const DESCENT: i32 = 2300;
     const RAMP: i32 = 600;
+    const ARRIVE: i32 = 3000;
+    const TURN: i32 = 3050;
     // How far down the chase camera's line of sight its look-at target is, uu.
     const SIGHT: i32 = 3000;
 
     let p = progress.clamp(0, 4096);
     // Distance round the arc by progress `p`, over the whole: speed rises to 1
-    // over RAMP, holds, and falls back to 0 from DESCENT to the end.
-    let fall = 4096 - DESCENT;
+    // over RAMP, holds, and falls back to 0 from DESCENT to ARRIVE.
+    let fall = ARRIVE - DESCENT;
     let area = RAMP / 2 + (DESCENT - RAMP) + fall / 2;
     let run = if p < RAMP {
         p * p / (2 * RAMP)
     } else if p < DESCENT {
         RAMP / 2 + (p - RAMP)
-    } else {
+    } else if p < ARRIVE {
         let q = p - DESCENT;
         RAMP / 2 + (DESCENT - RAMP) + q - q * q / (2 * fall)
+    } else {
+        area
     };
     let eased = run * 4096 / area;
 
@@ -3381,16 +3411,18 @@ fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
     let end = atan2_q12(chase.eye.0, chase.eye.2) as i32;
     let az = (end + (SPAN * (4096 - eased) >> 12)) as u16;
 
-    // The descent, eased in and out, so the hand-over has no corner in it.
-    let t = ((p - DESCENT).max(0) * 4096 / fall).min(4096);
-    let b = (3 * t * t >> 12) - (2 * t * t >> 12) * t / 4096;
-    let lerp = |from: i32, to: i32| from + ((to - from) * b >> 12);
+    let smooth = |t: i32| {
+        let t = t.clamp(0, 4096);
+        (3 * t * t >> 12) - (2 * t * t >> 12) * t / 4096
+    };
+    let b = smooth((p - DESCENT) * 4096 / (4096 - DESCENT));
+    let lerp = |from: i32, to: i32, k: i32| from + ((to - from) * k >> 12);
 
     let out = isqrt_i32(chase.eye.0 * chase.eye.0 + chase.eye.2 * chase.eye.2);
-    let radius = lerp(RADIUS, out);
+    let radius = lerp(RADIUS, out, b);
     let eye = (
         (sin_q12(az) * radius) >> 12,
-        lerp(HEIGHT, chase.eye.1),
+        lerp(HEIGHT, chase.eye.1, b),
         (cos_q12(az) * radius) >> 12,
     );
 
@@ -3402,51 +3434,43 @@ fn intro_pose(progress: i32, chase: sim::camera::Pose) -> sim::camera::Pose {
         chase.eye.1 - ((sin_q12(cp) * SIGHT) >> 12),
         chase.eye.2 + ((cos_q12(cy) * flat) >> 12),
     );
-    let target = (lerp(0, sight.0), lerp(TARGET_Y, sight.1), lerp(0, sight.2));
-    let (dx, dz) = (target.0 - eye.0, target.2 - eye.2);
-    // `atan2_q12` is a cheap approximation, a few degrees out at some slopes,
-    // so the look-at's angles carry a correction that grows to what it gets
-    // wrong for the chase camera's own line of sight: at the hand-over they are
-    // exactly the chase camera's.
-    let aim_yaw = atan2_q12(dx, dz) as i32;
-    let aim_pitch = atan2_q12(eye.1 - target.1, isqrt_i32(dx * dx + dz * dz).max(1)) as i32;
-    let (ex, ez) = (sight.0 - chase.eye.0, sight.2 - chase.eye.2);
-    let end_yaw = atan2_q12(ex, ez) as i32;
-    let end_pitch = atan2_q12(chase.eye.1 - sight.1, isqrt_i32(ex * ex + ez * ez).max(1)) as i32;
-    let way = |to: i32, from: i32| ((to - from + 2048).rem_euclid(4096)) - 2048;
-    let yaw = aim_yaw + (way(i32::from(chase.yaw), end_yaw) * b >> 12);
-    let pitch = aim_pitch + (way(chase.pitch.rem_euclid(4096), end_pitch) * b >> 12);
-    let pose = sim::camera::Pose {
-        eye,
-        yaw: yaw.rem_euclid(4096) as u16,
-        pitch,
-        ..chase
-    };
-    #[cfg(feature = "diag-intro")]
-    {
-        let mut buf = [0u8; 16];
-        psx_rt::tty::print("INTRO ");
-        for v in [
-            p,
-            pose.eye.0,
-            pose.eye.1,
-            pose.eye.2,
-            i32::from(pose.yaw),
-            pose.pitch,
-            chase.eye.0,
-            chase.eye.1,
-            chase.pitch,
-            sight.1,
-            target.1,
-            dz,
-            dx,
-        ] {
-            psx_rt::tty::print(psx_math::fmt::i32_dec(&mut buf, v));
-            psx_rt::tty::print(" ");
-        }
-        psx_rt::tty::println("");
+    let t = smooth((p - TURN) * 4096 / (4096 - TURN));
+    let target = (
+        lerp(ball.0, sight.0, t),
+        lerp(ball.1, sight.1, t),
+        lerp(ball.2, sight.2, t),
+    );
+    (eye, target)
+}
+
+/// A view from `eye` (world, Y up) looking at `target`, built straight from the
+/// direction between them: the forward axis is that direction, and the right and
+/// up axes follow from its horizontal part, exactly as `look_from` lays them out
+/// for a yaw and pitch, but with no angle to get wrong in between.
+fn look_at(eye: (i32, i32, i32), target: (i32, i32, i32)) -> View {
+    // Render space has Y down: a target below the eye is a positive Y.
+    let (dx, dy, dz) = (target.0 - eye.0, eye.1 - target.1, target.2 - eye.2);
+    let flat = isqrt_i32(dx * dx + dz * dz).max(1);
+    let len = isqrt_i32(dx * dx + dy * dy + dz * dz).max(1);
+    let q = |v: i32, d: i32| (v * 4096 / d).clamp(-4096, 4096);
+    // The sine and cosine of the yaw and the pitch, in Q12.
+    let (sy, cy) = (q(dx, flat), q(dz, flat));
+    let (sp, cp) = (q(dy, len), q(flat, len));
+    let f = [
+        ((sy * cp) >> 12) as i16,
+        sp as i16,
+        ((cy * cp) >> 12) as i16,
+    ];
+    let rt = [cy as i16, 0, -sy as i16];
+    let up = [
+        ((-sy * sp) >> 12) as i16,
+        cp as i16,
+        ((-cy * sp) >> 12) as i16,
+    ];
+    View {
+        v: Mat3I16 { m: [rt, up, f] },
+        pos: (eye.0, -eye.1, eye.2),
     }
-    pose
 }
 
 /// The last frame's camera and viewport for each seat, which is what the
