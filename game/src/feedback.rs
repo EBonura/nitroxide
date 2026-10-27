@@ -148,18 +148,25 @@ impl Feedback {
         let speed = car.v.len() * 60 >> FP;
         if !car.wrecked() {
             if car.boosting {
-                // From the tail, a little behind it.
-                let back = |a: i32, f: i32| a - (f * CAR_TAIL >> 12);
-                let p = (back(pos.0, fwd.x), back(pos.1, fwd.y), back(pos.2, fwd.z));
-                // Each puff drifts a little off the exhaust line and rises, so
-                // the trail spreads into a plume instead of a column.
+                // From the exhaust: just behind the rear bumper and low, near
+                // the wheel axle, along the car's own axes so it stays at the
+                // tail on a wall or in the air.
+                let at =
+                    |a: i32, f: i32, u: i32| a - (f * CAR_TAIL >> 12) - (u * EXHAUST_DROP >> 12);
+                let p = (
+                    at(pos.0, fwd.x, up.x),
+                    at(pos.1, fwd.y, up.y),
+                    at(pos.2, fwd.z, up.z),
+                );
+                // Each puff drifts back off the exhaust line, spreading
+                // sideways into a plume instead of a column.
                 let wobble =
                     |n: u32| (fx::scatter(self.tick, n * 7 + seat as u32) as i16 - 128) >> 3;
                 self.spawn(Particle {
                     p,
                     v: (
                         (-(fwd.x >> 9)) as i16 + wobble(1),
-                        (-(fwd.y >> 9)) as i16 + 5 + wobble(2).abs() / 2,
+                        (-(fwd.y >> 9)) as i16 + wobble(2).abs() / 4,
                         (-(fwd.z >> 9)) as i16 + wobble(3),
                     ),
                     life: 16,
@@ -220,16 +227,35 @@ impl Feedback {
                 _ => {}
             }
         }
+        // The renderer draws the exhaust puffs in the world, in the car's own
+        // ordering table, so a puff behind a car sorts behind it.
+        draw::clear_puffs();
+        for p in self
+            .parts
+            .iter()
+            .filter(|p| p.life > 0 && p.kind == Kind::Trail)
+        {
+            draw::add_puff(
+                (p.p.0, p.p.1.max(6), p.p.2),
+                i32::from(p.life) * 256 / i32::from(p.life0),
+                usize::from(p.seat),
+            );
+        }
     }
 
     /// Forget everything: a new match.
     pub fn reset(&mut self) {
         *self = Self::new();
+        draw::clear_puffs();
     }
 }
 
-/// How far behind the car's centre the boost trail starts, uu.
-const CAR_TAIL: i32 = 90;
+/// How far behind the car's centre the exhaust is: the rear bumper (the
+/// hitbox's half length) and a little past it, uu.
+const CAR_TAIL: i32 = nitroxide_sim::CAR_HALF_L + 10;
+/// How far below the hitbox centre, along the car's up, the exhaust sits, uu:
+/// about the wheel axle (the centre is 28 above the ground at rest).
+const EXHAUST_DROP: i32 = 12;
 
 fn car_of(sim: &Sim, seat: usize) -> &Car {
     if seat == 0 {
@@ -420,7 +446,11 @@ fn respawn_count(display: &FontAtlas, hud: &FontAtlas, vp: Viewport, car: &Car) 
 
 impl Feedback {
     fn draw_particles(&self, gpu: &mut Gpu, seat: usize) {
-        if self.parts.iter().all(|p| p.life == 0) {
+        if self
+            .parts
+            .iter()
+            .all(|p| p.life == 0 || p.kind == Kind::Trail)
+        {
             return;
         }
         let plane = draw::plane();
@@ -442,22 +472,8 @@ impl Feedback {
             // Fades out over its life.
             let a = i32::from(p.life) * 256 / i32::from(p.life0);
             let (size_uu, colour): (i32, Rgb) = match p.kind {
-                // A puff of exhaust: a soft round sprite that swells as it
-                // ages and cools from the car's colour, hot-white at the
-                // tail, to a dim grey-blue smoke as it fades.
-                Kind::Trail => {
-                    let hot = fx::mix(seat_signal(usize::from(p.seat)), (255, 255, 255), 40);
-                    let radius = (14 + (256 - a) * 36 / 256) * plane / s.depth;
-                    let smoke = fx::mix((70, 80, 104), hot, a);
-                    fx::glow(
-                        gpu,
-                        s.x,
-                        s.y,
-                        radius.clamp(2, 22),
-                        fx::dim(smoke, a / 2 + 36),
-                    );
-                    continue;
-                }
+                // Drawn in the world by the renderer (`draw::add_puff`).
+                Kind::Trail => continue,
                 Kind::Spark => (7, (255, 170, 70)),
                 Kind::Dust => (28 + (256 - a) / 6, (62, 56, 44)),
             };

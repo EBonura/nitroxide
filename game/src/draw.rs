@@ -2808,7 +2808,7 @@ const GLOW_RESTORE: u32 = ARENA_MATERIAL.draw_mode_word();
 /// Goal halos (four a goal, eight with both goals in view), the ball's disc,
 /// and its hoop at up to sixteen segments of two quads: 41 at most. An
 /// explosion is up to 34 more, and a goal and a demolition can overlap.
-const MAX_GLOWS: usize = 112;
+const MAX_GLOWS: usize = 144;
 static mut GLOW_SETS: [[GlowQuad; MAX_GLOWS]; SET_COUNT] = [GLOW_INIT; SET_COUNT];
 const GLOW_INIT: [GlowQuad; MAX_GLOWS] = [const {
     GlowQuad {
@@ -3397,16 +3397,38 @@ pub fn plane() -> i32 {
     proj_h()
 }
 
-/// What the overlay needs to draw the glow tile flat on the screen (see
-/// `fx::glow`): the glow palette's and the base page's words, then the
-/// tile's corner and size in texels.
-pub(crate) const GLOW_TILE: (u16, u16, u8, u8, u8) = (
-    GLOW_CLUT.uv_word(),
-    TEX_TPAGE.uv_word(0),
-    GLOW_U0,
-    GLOW_V0,
-    GLOW_W,
-);
+/// One puff of boost exhaust: where it is (uu, Y up), how much of its life is
+/// left (`0..=256`) and whose car it came from.
+#[derive(Copy, Clone)]
+struct Puff {
+    p: (i32, i32, i32),
+    left: i32,
+    seat: usize,
+}
+const MAX_PUFFS: usize = 32;
+static mut PUFFS: [Puff; MAX_PUFFS] = [Puff {
+    p: (0, 0, 0),
+    left: 0,
+    seat: 0,
+}; MAX_PUFFS];
+static mut PUFF_COUNT: usize = 0;
+
+/// Forget the exhaust puffs (the feedback layer republishes them every tick).
+pub fn clear_puffs() {
+    // SAFETY: the game is single-threaded.
+    unsafe { PUFF_COUNT = 0 };
+}
+
+/// Publish one puff for the renderer to draw in the world.
+pub fn add_puff(p: (i32, i32, i32), left: i32, seat: usize) {
+    // SAFETY: the game is single-threaded.
+    unsafe {
+        if PUFF_COUNT < MAX_PUFFS {
+            PUFFS[PUFF_COUNT] = Puff { p, left, seat };
+            PUFF_COUNT += 1;
+        }
+    }
+}
 
 /// A camera at `pos` looking along `yaw` with `pitch` below the horizontal.
 ///
@@ -6385,6 +6407,30 @@ impl Builder<'_> {
         );
     }
 
+    /// The boost exhaust: soft round puffs in the world at the cars' tails,
+    /// sorted into the ordering table with everything else, so a puff behind a
+    /// car is behind it from any camera. They swell as they age and cool from
+    /// the car's colour, near white at the tail, to a dim grey-blue smoke.
+    #[inline(never)]
+    fn puffs(&mut self) {
+        for i in 0..unsafe { PUFF_COUNT } {
+            let puff = unsafe { PUFFS[i] };
+            let a = puff.left;
+            let hot = mix(seat_signal(puff.seat), (255, 255, 255), 3);
+            let smoke = mix((70, 80, 104), hot, a * 16 / 256);
+            let radius = 14 + (256 - a) * 36 / 256;
+            let at = (puff.p.0, -puff.p.1, puff.p.2);
+            self.fx_sprite(
+                at,
+                radius,
+                22,
+                shade(smoke, a * 5 / 8 + 40, 256),
+                GLOW_PACKET,
+                0,
+            );
+        }
+    }
+
     /// The pickup effect of every pad taken in the last [`PAD_FX_LIFE`] ticks.
     /// Stateless: a pad's age since it was taken is its respawn time less what
     /// its timer has left.
@@ -9092,6 +9138,7 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
                     b.goal_burst(s);
                     b.demo_burst(s);
                     b.pad_bursts(s);
+                    b.puffs();
                 }
                 b.ceiling(&cull);
                 b.goals(&view);
