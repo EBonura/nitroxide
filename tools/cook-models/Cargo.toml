@@ -23,4 +23,4 @@ gltf = "1"
 # pulls in a full glTF parser, which is fine here and would never fit on the
 # console. The runtime side reads its output with psx-asset.
 psxed-format = { path = "../../.psoxide/crates/psxed-format" }
-psxed-gltf = { path = "../../.psoxide/editor/crates/psxed-gltf" }
+psxed-gltf = { path = "../../.psoxide/crates/psxed-gltf" }

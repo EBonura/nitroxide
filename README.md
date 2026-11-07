@@ -8,7 +8,7 @@ It's also on the [PSoXide Demo Disc](https://bonnie-studios.itch.io/psoxide-demo
 
 Rocket-powered car soccer for the original PlayStation, written in Rust on the
 [PSoXide SDK](https://github.com/EBonura/PSoXide) and
-[engine](https://github.com/EBonura/PSoXide-editor/tree/main/engine). Drive a car into a
+[engine](https://github.com/EBonura/PSoXide/tree/main/engine). Drive a car into a
 ball, put the ball in the net, burn nitro to get there first.
 
 An original game for PS1 hardware, licensed GPL-2.0-or-later.

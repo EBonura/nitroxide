@@ -242,7 +242,7 @@ DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rust
 # and the exe lands at $(EXE) as before.
 #
 # The host tools (psoxide-pgo, mkisopsx) build in .psoxide's Cargo workspace
-# against the Cargo.lock imported from the editor pin. --locked keeps a host
+# against the Cargo.lock imported from the SDK pin. --locked keeps a host
 # build from rewriting that imported file, which the next `make psoxide` would
 # refuse as an edit.
 FEATURES    ?=
