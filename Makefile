@@ -203,12 +203,12 @@ SDK_REV    := $(shell sed -n '/"sdk": *{/,/"revision"/s/.*"revision": *"\([0-9a-
 # psoxide-components of 5219afbe resolves the compound workspace offline and
 # fails on a runner with a cold cargo registry (CI); the one at 7e97c246 primes
 # the registry first. Both write the same .psoxide for the same lock.
-LINK_REV   ?= efdd3083c343d275d3c9cf39e2d6d3658ac3995d
+LINK_REV   ?= 686303a7ab51b084af238efcc78557a82319027c
 COMPONENTS := $(ROOT)/target/psoxide-components/$(LINK_REV)
 PSOXIDE_FROM ?=
 psoxide:
 	@if [ -n "$(PSOXIDE_FROM)" ]; then \
-		cargo run -q --manifest-path "$(PSOXIDE_FROM)/tools/psoxide-link/Cargo.toml" -- \
+		cargo run -q --manifest-path "$(PSOXIDE_FROM)/tools/psoxide-link/Cargo.toml" --bin psoxide-link -- \
 			--from "$(PSOXIDE_FROM)" --into "$(PSOXIDE)"; \
 	else \
 		[ -x "$(COMPONENTS)/bin/psoxide-components" ] || cargo install -q --locked \
