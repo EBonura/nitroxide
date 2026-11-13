@@ -162,6 +162,8 @@ psx-pack   = { path = "../.psoxide/sdk/crates/psx-pack" }
 psx-pad    = { path = "../.psoxide/sdk/crates/psx-pad" }
 # The CD drive, for WORLD.PAK startup reads and the XA music player.
 psx-io     = { path = "../.psoxide/sdk/crates/psx-io" }
+# Register addresses for the two diagnostic modules (diag-sound, diag-audio-cost).
+psx-hw     = { path = "../.psoxide/crates/psx-hw" }
 # Root directory lookup of the music files (`music.rs`).
 psx-fmv    = { path = "../.psoxide/sdk/crates/psx-fmv" }
 psx-spu    = { path = "../.psoxide/sdk/crates/psx-spu" }

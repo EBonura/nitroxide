@@ -1403,7 +1403,7 @@ pub fn new_match() {
 pub mod sound_test {
     use super::*;
 
-    const SPU: u32 = 0x1f80_1c00;
+    const SPU: u32 = psx_hw::spu::BASE;
     /// Voices the test follows, with their names, for one test.
     const WATCH: usize = 5;
     static mut VOICE: [u8; WATCH] = [0xff; WATCH];

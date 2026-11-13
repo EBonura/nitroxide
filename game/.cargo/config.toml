@@ -18,3 +18,7 @@ build-std-features = ["compiler-builtins-mem"]
 # the hazards it creates through PSoXide's post-link trampoline patcher
 # (the SDK's hazard-patch, HAZARD_TRAMPOLINES in psx-rt), as
 # Cortex, hl-psx and quake-psx build.
+
+# The architecture gate (sdk/docs/GATE.md) reads this program's exceptions from here.
+[env]
+PSX_GATE_FILE = { value = "../psx-gate.toml", relative = true }

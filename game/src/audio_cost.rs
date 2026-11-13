@@ -9,8 +9,8 @@
 use core::ptr::{read_volatile, write_volatile};
 use psx_rt::tty;
 
-const T2_COUNTER: *const u32 = 0x1f80_1120 as *const u32;
-const T2_MODE: *mut u32 = 0x1f80_1124 as *mut u32;
+const T2_COUNTER: *const u32 = psx_hw::timers::block(2) as *const u32;
+const T2_MODE: *mut u32 = (psx_hw::timers::block(2) + psx_hw::timers::MODE) as *mut u32;
 /// Clock source: system clock over eight.
 const T2_SYSCLK_DIV8: u32 = 1 << 9;
 
