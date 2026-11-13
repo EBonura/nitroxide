@@ -7,10 +7,7 @@ license = "GPL-2.0-or-later"
 repository = "https://github.com/EBonura/nitroxide"
 
 [features]
-default = ["pad-irq-engine"]
-# Read the pads from the interrupt-driven pad engine instead of polling them
-# from the frame loop (sdk/docs/PAD-IRQ-ENGINE.md).
-pad-irq-engine = ["psx-engine/pad-irq-engine"]
+default = []
 # Dev shortcut: boot straight into the match for headless capture.
 boot-play = []
 # Dev: boot into a match whose boost meters are driven through a fixed script
@@ -152,8 +149,8 @@ path = "src/main.rs"
 nitroxide-sim = { path = "../sim" }
 
 psx-asset  = { path = "../.psoxide/sdk/crates/psx-asset" }
-psx-rt     = { path = "../.psoxide/sdk/crates/psx-rt", features = ["boot-trace", "hazard-trampolines-256"] }
-psx-engine = { path = "../.psoxide/engine/crates/psx-engine", features = ["boot-trace"] }
+psx-rt     = { path = "../.psoxide/sdk/crates/psx-rt", features = ["hazard-trampolines-256"] }
+psx-engine = { path = "../.psoxide/engine/crates/psx-engine" }
 psx-gpu    = { path = "../.psoxide/sdk/crates/psx-gpu" }
 psx-sfx    = { path = "../.psoxide/sdk/crates/psx-sfx" }
 psx-gte    = { path = "../.psoxide/sdk/crates/psx-gte" }
