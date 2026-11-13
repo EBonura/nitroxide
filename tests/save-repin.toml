@@ -119,7 +119,8 @@ kind = "not_flat"
 [[step.assert]]
 kind = "frame_diff"
 from = "sound-off-before-save"
-region = { x = 118, y = 74, w = 20, h = 36 }
+# The Sound row. The rows below it (Music, Track) hold a shuffled song name seeded off the boot's timers.
+region = { x = 95, y = 64, w = 40, h = 16 }
 max_changed = 0.01
 [[step]]
 card = { action = "snapshot" }

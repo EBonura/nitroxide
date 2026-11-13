@@ -6,10 +6,14 @@ disc = ["build/gate/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 3000
 
+# Anchored on the game's own clock (the sim tick the gate state publishes), not on video frames since boot:
+# how long the boot takes moves with the SDK, and the splash fade and the title's animation move with it.
 [[step]]
-wait = 160
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 60 }
 [[step]]
 checkpoint = "splash"
+# The line under the mark carries the sheen, which moves with every second tick; the mark is steady by now.
+mask = [{ x = 90, y = 140, w = 140, h = 28 }, { x = 244, y = 38, w = 76, h = 18 }]
 strict = [{ x = 110, y = 145, w = 110, h = 20 }]
 [[step.assert]]
 kind = "not_flat"
@@ -19,10 +23,11 @@ window = 60
 min_changes = 5
 
 [[step]]
-wait = 280
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 301 }
 [[step]]
 checkpoint = "menu"
-mask = [{ x = 10, y = 10, w = 176, h = 16 }]
+# The second rectangle is the song name of the "now playing" chip: the shuffle is seeded off the boot's timers.
+mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 244, y = 38, w = 76, h = 18 }]
 [[step.assert]]
 kind = "presenting"
 window = 120
@@ -60,7 +65,8 @@ hold = 4
 wait = 120
 [[step]]
 checkpoint = "select"
-mask = [{ x = 70, y = 106, w = 204, h = 31 }]
+# The stage and the opponent column: both cars turn with the tick the screen opened on, and the opponent is drawn from it.
+mask = [{ x = 0, y = 85, w = 320, h = 62 }, { x = 160, y = 148, w = 150, h = 36 }, { x = 244, y = 38, w = 76, h = 18 }]
 [[step.assert]]
 kind = "not_flat"
 [[step.assert]]

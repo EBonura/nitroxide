@@ -78,14 +78,22 @@ op = "zero"
 # The results scene builds in, then the buttons answer.
 wait_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 48, op = "ge", value = 100 }
 timeout = 400
+# The results scene stalls for several frames as it opens (one tick of 3.9M cycles, then a burst of caught-up ticks), and
+# a 4-frame press that falls inside it can be over before the game has acted on it: keep each button down until the
+# game has, and wait for the title, not for a frame count.
 [[step]]
 press = ["down"]
-hold = 4
-wait = 12
+hold_until = { kind = "ram", sym = "NITRO_REPLAY_STATE", offset = 52, op = "eq", value = 1 }
+timeout = 300
+wait = 4
 [[step]]
 press = ["start"]
-hold = 4
-wait = 42
+hold_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "ne", value = 4 }
+timeout = 300
+wait = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 1 }
+timeout = 300
 [[step]]
 checkpoint = "returned-title"
 golden = false
