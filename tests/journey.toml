@@ -82,11 +82,11 @@ min_count = 200
 note = "left blue car remains visible"
 [[step.assert]]
 kind = "pixels"
-color = [255, 57, 82]
+color = [31, 192, 192]
 color_tol = 25
 region = { x = 185, y = 95, w = 90, h = 43 }
 min_count = 200
-note = "right red car remains visible"
+note = "right teal car remains visible"
 [[step.assert]]
 kind = "ram"
 sym = "NITRO_GATE_STATE"
@@ -202,10 +202,14 @@ value = 0
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
 timeout = 200
 [[step]]
-# Holding X skips the fly-over before the countdown.
+# Holding X skips the goal replay; the fly-over then plays out and the
+# countdown starts when the kickoff hold begins to run down from 180.
 press = ["cross"]
 hold = 62
 wait = 0
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "between", value = 1, value_hi = 179 }
+timeout = 400
 [[step]]
 wait = 4
 [[step]]
