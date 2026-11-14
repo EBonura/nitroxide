@@ -594,23 +594,11 @@ enum PauseRow {
     Quit,
 }
 
-/// Analog re-assert attempts per plug-in before a pad is taken as
-/// digital-only (the boot handshake in `init` is on top of these).
-const ANALOG_ATTEMPTS: u8 = 4;
-
 /// The display the engine's default `Config` programs, which the picture
 /// options reprogram or overlay.
 const SCREEN_RESOLUTION: Resolution = Resolution::R320X240;
 
 struct NitroXide {
-    /// Frames since boot, used only to pace the analog re-assert.
-    analog_retry: u32,
-    /// Analog re-assert attempts left per port since it was last seen
-    /// connected. A pad that stays digital after these is digital-only.
-    analog_attempts: [u8; 2],
-    /// Whether each port answered last frame, to re-arm the attempts when a
-    /// pad is plugged in mid-session.
-    pad_seen: [bool; 2],
     /// Wide display face: title, menu rows, the goal headline.
     display: Option<FontAtlas>,
     /// Compact face: score, clock, boost, captions.
@@ -825,9 +813,6 @@ impl NitroXide {
 
     fn new() -> Self {
         NitroXide {
-            analog_retry: 0,
-            analog_attempts: [ANALOG_ATTEMPTS; 2],
-            pad_seen: [false; 2],
             display: None,
             hud: None,
             phase: Phase::Intro,
@@ -2631,13 +2616,6 @@ impl NitroXide {
 
 impl Scene for NitroXide {
     fn init(&mut self, ctx: &mut Ctx) {
-        // Ask both pads for analog mode up front. A DualShock boots in digital
-        // and reports the sticks centred until told otherwise, so without this
-        // the steering deadzone is reading a stick that never moves and the car
-        // is D-pad only. VoXide has always done this; the retry in `update`
-        // covers a pad that was not ready at boot or gets re-plugged.
-        let _ = ctx.enable_analog(psx_pad::Port::One);
-        let _ = ctx.enable_analog(psx_pad::Port::Two);
         if let Ok(profile) = psx_settings::load_from_slot_one(ctx.controller_port(), SETTINGS_FILE)
         {
             self.profile = profile;
@@ -2931,33 +2909,6 @@ impl Scene for NitroXide {
         if self.display_dirty {
             self.display_dirty = false;
             self.apply_screen_offset(ctx);
-        }
-        // Re-assert analog for a pad that missed the boot handshake or was
-        // plugged in mid-session. The handshake is three config transactions
-        // with spin-delays plus a poll, so it only runs for a port that is
-        // connected and not yet analog, a bounded number of times per
-        // plug-in: unconditionally every fifteen frames it was 4.7% of the
-        // split route's instructions.
-        self.analog_retry = self.analog_retry.wrapping_add(1);
-        for port in 0..2 {
-            let pad = ctx.pad_for(port);
-            let connected = pad.is_connected();
-            if connected && !self.pad_seen[port] {
-                self.analog_attempts[port] = ANALOG_ATTEMPTS;
-            }
-            self.pad_seen[port] = connected;
-            if self.analog_retry % 15 == 0
-                && connected
-                && !pad.is_analog()
-                && self.analog_attempts[port] > 0
-            {
-                self.analog_attempts[port] -= 1;
-                let _ = ctx.enable_analog(if port == 0 {
-                    psx_pad::Port::One
-                } else {
-                    psx_pad::Port::Two
-                });
-            }
         }
         // Outside the phase machine: the disc's music plays over the front
         // end and the match alike, and a pause holds the game, not the song.
