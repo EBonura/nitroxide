@@ -1402,6 +1402,9 @@ pub fn new_match() {
 #[cfg(feature = "diag-sound")]
 pub mod sound_test {
     use super::*;
+    use psx_hw::spu::mask::{ENDX_HI, ENDX_LO};
+    use psx_hw::spu::voice::{current_vol_left, current_vol_right};
+    use psx_hw::spu::MAIN_VOL_LEFT_CURRENT;
 
     const SPU: u32 = psx_hw::spu::BASE;
     /// Voices the test follows, with their names, for one test.
@@ -1479,7 +1482,7 @@ pub mod sound_test {
                 }
                 return;
             };
-            let endx = rd(0x1f80_1e9c) as u32 | ((rd(0x1f80_1e9e) as u32) << 16);
+            let endx = rd(ENDX_LO) as u32 | ((rd(ENDX_HI) as u32) << 16);
             for i in 0..WATCH {
                 let v = VOICE[i] as u32;
                 if v >= 24 {
@@ -1488,8 +1491,8 @@ pub mod sound_test {
                 SEEN[slot][i] = [
                     rd(SPU + v * 16 + 0xc),
                     ((endx >> v) & 1) as u16,
-                    rd(0x1f80_1e00 + v * 4),
-                    rd(0x1f80_1e00 + v * 4 + 2),
+                    rd(current_vol_left(v)),
+                    rd(current_vol_right(v)),
                 ];
             }
         }
@@ -1524,7 +1527,7 @@ pub mod sound_test {
             text(&mut l[0], &mut at, " CD ");
             hex(&mut l[0], &mut at, MUSIC_LEVEL as u16, 4);
             text(&mut l[0], &mut at, " MAIN ");
-            hex(&mut l[0], &mut at, rd(0x1f80_1db8), 4);
+            hex(&mut l[0], &mut at, rd(MAIN_VOL_LEFT_CURRENT), 4);
             text(&mut l[0], &mut at, " KON ");
             hex(&mut l[0], &mut at, KONS, 2);
             l[1] = [b' '; 48];
