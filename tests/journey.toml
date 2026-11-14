@@ -209,10 +209,14 @@ timeout = 200
 press = ["cross"]
 hold = 62
 wait = 0
+# The countdown steps count the game's own pad polls (one per sim tick), not video frames: which tick a frame shows
+# depends on how the flips fall, and that moves with anything that changes the timing of the match.
 [[step]]
+sync = "poll"
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "between", value = 1, value_hi = 179 }
 timeout = 400
 [[step]]
+sync = "poll"
 wait = 4
 [[step]]
 checkpoint = "countdown-3"
@@ -309,6 +313,7 @@ op = "zero"
 each = { count = 34, stride = 4 }
 
 [[step]]
+sync = "poll"
 wait = 64
 [[step]]
 checkpoint = "countdown-2"
@@ -405,6 +410,7 @@ op = "zero"
 each = { count = 34, stride = 4 }
 
 [[step]]
+sync = "poll"
 wait = 60
 [[step]]
 checkpoint = "countdown-1"
