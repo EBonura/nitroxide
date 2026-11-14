@@ -726,9 +726,11 @@ press = ["down"]
 hold = 4
 wait = 12
 [[step]]
+# Held through the one-off stall of the results scene (about seven ticks, at a fixed point in the
+# disc's timeline, not in the scene's own): a four-tick press that lands inside it is never polled.
 press = ["start"]
-hold = 4
-wait = 52
+hold = 12
+wait = 44
 [[step]]
 checkpoint = "timed-five-returned-title"
 golden = false
