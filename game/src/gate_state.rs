@@ -73,7 +73,7 @@ pub struct GateState {
     pub version: u32,
     pub size_bytes: u32,
     pub completed_tick: u32,
-    /// Intro=0, title=1, select=2, play=3, results=4, demo=5.
+    /// Title=1, select=2, play=3, results=4, demo=5 (0 was the in-game boot splash, now drawn before the engine starts).
     pub phase: u32,
     pub two_player: u32,
     pub score_blue: u32,
@@ -214,7 +214,6 @@ pub fn publish(game: &NitroXide, completed_tick: u32) {
     unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!(NITRO_SETTINGS_STATE), settings) };
     let sim: &Sim = &game.sim;
     let phase = match game.phase {
-        Phase::Intro => 0,
         Phase::Title => 1,
         Phase::Select => 2,
         Phase::Play => 3,

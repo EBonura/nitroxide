@@ -17,7 +17,8 @@ extern crate psx_rt;
 
 use psx_display::Label;
 use psx_engine::{
-    button, ActionBinding, ActionMap, App, Config, Ctx, Deadzone, PadState, Scene, VisualPacing,
+    button, ActionBinding, ActionMap, App, BootSplash, Config, ControllerPort, Ctx, Deadzone,
+    PadState, Scene, VisualPacing,
 };
 use psx_font::fonts::KENNEY_ROCKET;
 use psx_font::FontAtlas;
@@ -37,7 +38,6 @@ mod audio;
 mod audio_cost;
 mod settings_menu;
 use settings_menu::{Action as SettingsAction, SettingsRow};
-mod bonnie;
 mod boost_meter;
 mod countdown;
 #[cfg(feature = "diag-log")]
@@ -72,19 +72,6 @@ const DISPLAY_BLEND_CLUT: Clut = Clut::new(320, 257);
 /// Clear of the display atlas at 320 and the arena's own texture page at 384.
 const HUD_TPAGE: TexturePage = TexturePage::new(512, 0, TextureDepth::Bit4);
 const HUD_CLUT: Clut = Clut::new(512, 256);
-
-/// Bonnie Studios intro logo: 128x128 4bpp in an otherwise free VRAM column,
-/// its CLUT in the spare row under the HUD's. Same art and placement family as
-/// VoXide and the Celeste collection.
-const BONNIE_TPAGE: TexturePage = TexturePage::new(896, 0, TextureDepth::Bit4);
-const BONNIE_CLUT: Clut = Clut::new(896, 256);
-
-/// Intro cadence, matched to the other games on the demo disc: fade in, hold,
-/// fade out, in engine ticks.
-const INTRO_FADE_IN: i32 = 32;
-const INTRO_HOLD: i32 = 74;
-const INTRO_TOTAL: i32 = 150;
-const INTRO_FADE_OUT: i32 = INTRO_TOTAL - INTRO_FADE_IN - INTRO_HOLD;
 
 /// Analog deflection below this is treated as centred: a worn DualShock never
 /// reads exactly 0x80.
@@ -148,10 +135,6 @@ enum CardAsk {
 
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
-    /// Boot splash: the Bonnie Studios logo and the "Built with PSoXide"
-    /// line, matched to VoXide's and hl-psx's cadence. Any face button or
-    /// Start skips it once the opening frames have passed.
-    Intro,
     Title,
     /// Both seats pick a car and a colour, staged on the pitch the title uses.
     Select,
@@ -667,8 +650,6 @@ struct NitroXide {
     /// select screen opened. There is no RNG on this hardware and none is
     /// wanted: the only thing that has to look unplanned is one draw.
     seed: u32,
-    /// Ticks spent on the boot splash, driving its fade and its skip grace.
-    intro_t: i32,
     profile: Profile<9, 0>,
     settings_dirty: bool,
     settings_save_status: &'static str,
@@ -815,8 +796,7 @@ impl NitroXide {
         NitroXide {
             display: None,
             hud: None,
-            phase: Phase::Intro,
-            intro_t: 0,
+            phase: Phase::Title,
             sim: Sim::new(),
             cars: [0, 1],
             menu: 0,
@@ -2140,66 +2120,6 @@ impl NitroXide {
         Self::shadowed(font, cx - font.text_width(text) as i16 / 2, y, text, tint);
     }
 
-    /// The pause menu, over the held frame.
-    ///
-    /// The plate is a GP0 fill straight into the back buffer rather than an
-    /// ordering-table quad: the table has already been submitted by the time
-    /// the overlay runs, and in a split game it was submitted twice, so a
-    /// panel spanning the seam has no single pass to belong to. A fill takes
-    /// VRAM coordinates and ignores both the drawing area and the offset,
-    /// which is why it needs `buffer_y` and why it can cross the seam at all.
-    /// Its X and width are rounded to 16, which the command requires.
-
-    /// The boot splash: black frame, the Bonnie Studios logo, and the "Built
-    /// with PSoXide" sheen line. Ported from hl-psx's intro, drawn through
-    /// this game's overlay pass instead of a pre-loop of its own.
-    fn draw_intro(&self, font: &FontAtlas, buffer_y: u16) {
-        let t = self.intro_t;
-        let level = if t < INTRO_FADE_IN {
-            t * 128 / INTRO_FADE_IN
-        } else if t < INTRO_FADE_IN + INTRO_HOLD {
-            128
-        } else {
-            (INTRO_TOTAL - t) * 128 / INTRO_FADE_OUT
-        }
-        .clamp(0, 128);
-
-        psx_gpu::fill_rect(
-            0,
-            buffer_y,
-            draw::SCREEN_W as u16,
-            draw::SCREEN_H as u16,
-            0,
-            0,
-            0,
-        );
-        // The 128px source logo drawn as the 96x96 mark the other games use.
-        let l = level as u8;
-        psx_gpu::draw_quad_textured(
-            [(112, 34), (208, 34), (112, 130), (208, 130)],
-            [(0, 0), (128, 0), (0, 128), (128, 128)],
-            BONNIE_CLUT.uv_word(),
-            BONNIE_TPAGE.uv_word(0),
-            (l, l, l),
-        );
-
-        // "Built with PSoXide", with the sweeping sheen.
-        const TAG: &str = "Built with PSoXide";
-        let span = TAG.chars().count() as i32 + 18;
-        let head = (t / 2).rem_euclid(span);
-        let mut x = draw::SCREEN_W / 2 - font.text_width(TAG) as i16 / 2;
-        for (index, ch) in TAG.char_indices() {
-            let glyph = &TAG[index..index + ch.len_utf8()];
-            let amount = (18 - (index as i32 - head).abs() * 6).max(0);
-            let channel = |base: i32| {
-                let dim = base * level / 128;
-                (dim + (level - dim) * amount / 18) as u8
-            };
-            font.draw_text(x, 150, glyph, (channel(76), channel(108), channel(128)));
-            x += font.text_width(glyph) as i16;
-        }
-    }
-
     /// The controls page, over the title or the pause menu: what each button
     /// does, and how to flip, cancel a flip and roll in the air. Same plate as
     /// the settings panel, two pages, left and right to turn them.
@@ -2615,11 +2535,16 @@ impl NitroXide {
 }
 
 impl Scene for NitroXide {
-    fn init(&mut self, ctx: &mut Ctx) {
-        if let Ok(profile) = psx_settings::load_from_slot_one(ctx.controller_port(), SETTINGS_FILE)
-        {
+    /// The SDK's boot splash. The saved settings are read here, first, because the splash
+    /// needs the player's brightness and the game needs the rest.
+    fn boot_splash(&mut self, port: &mut ControllerPort) -> Option<BootSplash> {
+        if let Ok(profile) = psx_settings::load_from_slot_one(port, SETTINGS_FILE) {
             self.profile = profile;
         }
+        Some(BootSplash::new("Built with PSoXide").with_brightness(self.profile.brightness))
+    }
+
+    fn init(&mut self, ctx: &mut Ctx) {
         // A step an earlier build kept in `difficulty` moves to its own game
         // byte (in memory; the next save writes it out).
         nitroxide_sim::camera::migrate_legacy_fov(&mut self.profile);
@@ -2673,18 +2598,6 @@ impl Scene for NitroXide {
         psx_vram::upload_16bpp(
             psx_vram::VramRect::new(DISPLAY_BLEND_CLUT.x(), DISPLAY_BLEND_CLUT.y(), 16, 1),
             &blend_clut,
-        );
-        psx_vram::upload_16bpp(
-            psx_vram::VramRect::new(BONNIE_TPAGE.x(), BONNIE_TPAGE.y(), 32, 128),
-            &bonnie::COVER_BONNIE,
-        );
-        // Entry 0 opaque near-black: the logo's holes must cover the backdrop,
-        // not show through as transparent texels.
-        let mut clut = bonnie::BONNIE_CLUT;
-        clut[0] = 0x0421;
-        psx_vram::upload_16bpp(
-            psx_vram::VramRect::new(BONNIE_CLUT.x(), BONNIE_CLUT.y(), 16, 1),
-            &clut,
         );
         loading.finish(ctx);
         #[cfg(feature = "boot-play")]
@@ -3014,19 +2927,6 @@ impl Scene for NitroXide {
             return;
         }
         match self.phase {
-            Phase::Intro => {
-                self.intro_t += 1;
-                // Held-from-boot presses are ignored for a short grace, so
-                // walking out of the launcher with X held does not blink the
-                // splash away before it is seen.
-                let skip = self.intro_t > 8
-                    && (ctx.just_pressed(button::CROSS)
-                        || ctx.just_pressed(button::CIRCLE)
-                        || ctx.just_pressed(button::START));
-                if skip || self.intro_t >= INTRO_TOTAL {
-                    self.to_title(ctx.sim_tick.as_u32());
-                }
-            }
             Phase::Title => {
                 // Port 2 too, so a press on either pad keeps the demo away.
                 ctx.refresh_second_pad();
@@ -3586,8 +3486,6 @@ impl Scene for NitroXide {
             _ => None,
         });
         match self.phase {
-            // Nothing behind the splash: the overlay paints the whole frame.
-            Phase::Intro => {}
             Phase::Title => {
                 self.stage_cars(tick, false);
                 draw::render_menu(
@@ -3772,9 +3670,6 @@ impl NitroXide {
         let display = self.display.as_ref().expect("display font");
         let hud = self.hud.as_ref().expect("hud font");
         match self.phase {
-            Phase::Intro => {
-                self.draw_intro(hud, ctx.fb.draw_origin().1);
-            }
             Phase::Title => {
                 self.draw_title(display, hud, ctx.sim_tick.as_u32());
                 if self.settings.is_some() {
