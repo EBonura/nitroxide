@@ -383,6 +383,10 @@ gate-symbols: build
 		"$(ROOT)/build/gate-symbols-tool" "$(EXE)" > "$(ROOT)/build/gate-symbols.txt"; \
 		echo "GATE SYMBOLS -> $(ROOT)/build/gate-symbols.txt"
 
+# The gate disc is the test disc: its executable seeds everything that depends on timing from one
+# fixed seed (the `fixed-seed` feature), so a journey compares the song and the opponent exactly.
+# `make disc` and `make build` are the shipping executable and have none of that.
+gate-disc: override FEATURES += fixed-seed
 gate-disc: gate-symbols
 	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(GATE_DISC_OUT)"
 	@echo "GATE DISC -> $(patsubst %.bin,%.cue,$(GATE_DISC_OUT))"

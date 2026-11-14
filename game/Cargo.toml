@@ -145,7 +145,7 @@ diag-sound = []
 # player (the playlist's shuffle, the opponent's opening car and paint) comes from
 # one fixed seed, so builds whose boots differ by a tick show the same song and the
 # same opponent and a journey can compare frames exactly. A build without the
-# feature has none of it: `make gate-disc FEATURES=fixed-seed` builds the test disc.
+# feature has none of it: `make gate-disc` builds the test disc with it.
 fixed-seed = []
 
 [[bin]]

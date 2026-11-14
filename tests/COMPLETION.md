@@ -1,6 +1,6 @@
 # Authored feature journeys
 
-Build the ordinary gate disc and symbol list with `make gate-disc`, then run:
+Build the gate disc and symbol list with `make gate-disc` (a test disc: the executable takes the song order and the opponent from one fixed seed, so frames that show them compare exactly), then run:
 
 ```sh
 psoxide-gate run tests/completion-chain.toml --strict
