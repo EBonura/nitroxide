@@ -139,7 +139,7 @@ impl Music {
         psx_io::irq::set_mask(saved_irq_mask);
         // How long the disc took to spin up and answer, to the cycle: the
         // one thing that differs between boots of the same program.
-        let seed = ((counter(Timer::Timer2) as u32) << 16) ^ counter(Timer::Timer1) as u32;
+        let seed = boot_seed();
         self.list = Playlist::new(XA_SONGS.len(), seed);
         self.player.set_volume(0x80, 0x80);
     }
@@ -293,4 +293,11 @@ fn sector_bytes(sector: &[u32; SECTOR_WORDS]) -> &[u8] {
     // SAFETY: `[u32; N]` reinterpreted as its own bytes; alignment shrinks and
     // the length is the array's.
     unsafe { core::slice::from_raw_parts(sector.as_ptr().cast::<u8>(), SECTOR_WORDS * 4) }
+}
+
+/// How long the disc took to spin up, to the cycle, as the root counters show it;
+/// a `fixed-seed` build takes the one fixed seed instead.
+#[inline(always)]
+fn boot_seed() -> u32 {
+    crate::seed_from(((counter(Timer::Timer2) as u32) << 16) ^ counter(Timer::Timer1) as u32)
 }

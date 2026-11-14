@@ -3093,7 +3093,7 @@ impl Scene for NitroXide {
                         self.start_demo();
                     } else {
                         audio::ui(audio::Ui::Select);
-                        self.open_select(ctx.sim_tick.as_u32());
+                        self.open_select(seed_from(ctx.sim_tick.as_u32()));
                     }
                 }
             }
@@ -3912,4 +3912,16 @@ fn main() -> ! {
     psx_rt::interrupts::set_min_flip_vblanks(1);
     let mut game = NitroXide::new();
     App::run(config, &mut game);
+}
+
+/// What a draw that depends on timing is seeded with: `entropy`, the timing itself, or in a
+/// `fixed-seed` build (see Cargo.toml) one constant, so that two builds whose boots differ by a
+/// tick draw the same song and the same opponent.
+#[inline(always)]
+fn seed_from(entropy: u32) -> u32 {
+    if cfg!(feature = "fixed-seed") {
+        0x2545_f491
+    } else {
+        entropy
+    }
 }

@@ -141,6 +141,13 @@ diag-audio-cost = []
 # playing at (audio.rs, `sound_test`). Never in a shipping build.
 diag-sound = []
 
+# Test builds: everything the game draws from the timing of the boot or of the
+# player (the playlist's shuffle, the opponent's opening car and paint) comes from
+# one fixed seed, so builds whose boots differ by a tick show the same song and the
+# same opponent and a journey can compare frames exactly. A build without the
+# feature has none of it: `make gate-disc FEATURES=fixed-seed` builds the test disc.
+fixed-seed = []
+
 [[bin]]
 name = "nitroxide"
 path = "src/main.rs"
