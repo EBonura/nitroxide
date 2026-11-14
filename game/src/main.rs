@@ -3803,8 +3803,8 @@ fn main() -> ! {
         ..Config::default()
     };
     // The SDK holds every flip to two VBlanks unless a game opts out; single-player targets 60.
-    // 1 is psx_tick::PresentCap::UNCAPPED.min_vblanks().
-    psx_rt::interrupts::set_min_flip_vblanks(1);
+    // UNCAPPED presents on every VBlank.
+    psx_rt::present::set_cap(psx_rt::present::PresentCap::UNCAPPED);
     let mut game = NitroXide::new();
     App::run(config, &mut game);
 }
