@@ -199,12 +199,7 @@ bake:
 # it is installed once per SDK revision, from the revision the lock pins, under
 # target/. PSOXIDE_FROM remains an explicit demo-disc override.
 SDK_REV    := $(shell sed -n '/"sdk": *{/,/"revision"/s/.*"revision": *"\([0-9a-f]*\)".*/\1/p' "$(ROOT)/components.lock.json")
-# The hydrator itself is installed from LINK_REV, not from the pinned SDK: the
-# psoxide-components of 5219afbe resolves the compound workspace offline and
-# fails on a runner with a cold cargo registry (CI); the one at 7e97c246 primes
-# the registry first. Both write the same .psoxide for the same lock.
-LINK_REV   ?= b05a64760cea6edc5291b57b3ef4ddfc171b76dd
-COMPONENTS := $(ROOT)/target/psoxide-components/$(LINK_REV)
+COMPONENTS := $(ROOT)/target/psoxide-components/$(SDK_REV)
 PSOXIDE_FROM ?=
 psoxide:
 	@if [ -n "$(PSOXIDE_FROM)" ]; then \
@@ -212,7 +207,7 @@ psoxide:
 			--from "$(PSOXIDE_FROM)" --into "$(PSOXIDE)"; \
 	else \
 		[ -x "$(COMPONENTS)/bin/psoxide-components" ] || cargo install -q --locked \
-			--git https://github.com/EBonura/PSoXide --rev $(LINK_REV) --root "$(COMPONENTS)" psoxide-link; \
+			--git https://github.com/EBonura/PSoXide --rev $(SDK_REV) --root "$(COMPONENTS)" psoxide-link; \
 		"$(COMPONENTS)/bin/psoxide-components" --root "$(PSOXIDE)" --lock "$(ROOT)/components.lock.json"; \
 	fi
 
