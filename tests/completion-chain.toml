@@ -639,7 +639,14 @@ wait = 12
 [[step]]
 press = ["start"]
 hold = 4
-wait = 42
+wait = 4
+[[step]]
+# The title camera orbits the car as a function of the absolute simulation tick (draw::render_menu), so a
+# picture of it only repeats at one tick. Wait for that tick on the game's own published counter, not for
+# a number of ticks after the press: a boot that is a tick or two earlier or later no longer moves the camera.
+# 26595 is about 40 ticks after the title returns on both the old and the new boot timing.
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 26595 }
+timeout = 200
 [[step]]
 checkpoint = "timed-three-returned-title"
 golden = false
