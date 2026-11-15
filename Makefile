@@ -203,7 +203,7 @@ SDK_REV    := $(shell sed -n '/"sdk": *{/,/"revision"/s/.*"revision": *"\([0-9a-
 # psoxide-components of 5219afbe resolves the compound workspace offline and
 # fails on a runner with a cold cargo registry (CI); the one at 7e97c246 primes
 # the registry first. Both write the same .psoxide for the same lock.
-LINK_REV   ?= 20f05ccf9120248219cad09b4cb87654b8868453
+LINK_REV   ?= 25376bc431c4b5d318b89cb025c41e817f9a3f80
 COMPONENTS := $(ROOT)/target/psoxide-components/$(LINK_REV)
 PSOXIDE_FROM ?=
 psoxide:
