@@ -248,6 +248,9 @@ DELAY_SLOT_CONFIG = $(if $(PSX_DELAY_SLOT_FLAGS),--config 'target.$(TARGET).rust
 FEATURES    ?=
 GAME_CARGO   = build --release$(if $(strip $(FEATURES)), --features "$(FEATURES)") $(DELAY_SLOT_CONFIG)
 PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-pgo/Cargo.toml" --
+# The SDK's size tool and dev tool, built in the same workspace.
+PSOXIDE_SIZE = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-size/Cargo.toml" --
+PSOXIDE_DEV  = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-dev/Cargo.toml" --
 PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
 # The I-cache layout profile `+order` places functions from (see the
 # psoxide-pgo README, "order"): per-word counts and direct calls over the
@@ -379,8 +382,8 @@ disc: build
 GATE_DISC_OUT ?= $(ROOT)/build/gate/NitroXide.bin
 gate-symbols: build
 	@set -eu; mkdir -p "$(ROOT)/build"; \
-		rustc --edition=2021 "$(ROOT)/tools/gate-symbols.rs" -o "$(ROOT)/build/gate-symbols-tool"; \
-		"$(ROOT)/build/gate-symbols-tool" "$(EXE)" > "$(ROOT)/build/gate-symbols.txt"; \
+		$(PSOXIDE_SIZE) block "$(EXE)" NITR:1:256:NITRO_GATE_STATE NSET:1:36:NITRO_SETTINGS_STATE \
+			NRPL:2:56:NITRO_REPLAY_STATE > "$(ROOT)/build/gate-symbols.txt"; \
 		echo "GATE SYMBOLS -> $(ROOT)/build/gate-symbols.txt"
 
 # The gate disc is the test disc: its executable seeds everything that depends on timing from one
@@ -496,7 +499,7 @@ itch:
 	butler push --userversion "$(V_GAME)" build/itch bonnie-studios/nitroxide:psx
 
 .PHONY: fmt fmt-check
-fmt:
-	tools/style-fmt.sh
-fmt-check:
-	tools/style-fmt.sh --check
+fmt: psoxide
+	cd "$(ROOT)" && $(PSOXIDE_DEV) style-fmt
+fmt-check: psoxide
+	cd "$(ROOT)" && $(PSOXIDE_DEV) style-fmt --check
