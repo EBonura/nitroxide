@@ -372,6 +372,8 @@ music-verify:
 # `make pack PACK_EXE=x PACK_OUT=y.bin` wraps any exe in the game's disc image.
 PACK_EXE ?= $(EXE)
 PACK_OUT ?= $(OUT)/$(GAME_NAME).bin
+# `--diag` for the gate disc: its executable carries the result receipts (a diagnostic build).
+PACK_FLAGS ?=
 pack: $(ARENA_PSXT) $(if $(filter off,$(MUSIC)),,music-verify)
 	@mkdir -p "$$(dirname "$(PACK_OUT)")"
 	cd "$(MKISOPSX)" && cargo run -q --release --locked -- \
@@ -379,6 +381,7 @@ pack: $(ARENA_PSXT) $(if $(filter off,$(MUSIC)),,music-verify)
 		--out "$(PACK_OUT)" \
 		--volume NITROXIDE \
 		--world-pack-extra-dir "$(ARENA_DISC_DIR)" \
+		$(PACK_FLAGS) \
 		$(XA_ARGS)
 
 disc: build
@@ -398,9 +401,9 @@ gate-symbols: build
 # The gate disc is the test disc: its executable seeds everything that depends on timing from one
 # fixed seed (the `fixed-seed` feature), so a journey compares the song and the opponent exactly.
 # `make disc` and `make build` are the shipping executable and have none of that.
-gate-disc: override FEATURES += fixed-seed
+gate-disc: override FEATURES += fixed-seed receipts
 gate-disc: gate-symbols
-	@$(MAKE) --no-print-directory pack PACK_EXE="$(EXE)" PACK_OUT="$(GATE_DISC_OUT)"
+	@$(MAKE) --no-print-directory pack PACK_FLAGS=--diag PACK_EXE="$(EXE)" PACK_OUT="$(GATE_DISC_OUT)"
 	@echo "GATE DISC -> $(patsubst %.bin,%.cue,$(GATE_DISC_OUT))"
 
 # Regenerating the profile and picking the variant need the emulator:

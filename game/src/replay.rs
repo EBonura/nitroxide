@@ -21,13 +21,15 @@ static mut SCRATCH: Option<Sim> = None;
 /// does not use one style three times running.
 static mut RECENT: Recent = [None, None];
 
-/// Replays begun, skipped with X and played to the end: for the gate.
-pub static mut STARTED: u32 = 0;
-pub static mut SKIPPED: u32 = 0;
-pub static mut FINISHED: u32 = 0;
-/// The goal shot of the replay last begun: 0 none yet, 1 the side angle, 2 from
-/// behind the net.
-pub static mut LAST_STYLE: u32 = 0;
+psx_telemetry::receipts! {
+    /// Replays begun, skipped with X and played to the end: for the gate.
+    pub static mut STARTED: u32 = 0;
+    pub static mut SKIPPED: u32 = 0;
+    pub static mut FINISHED: u32 = 0;
+    /// The goal shot of the replay last begun: 0 none yet, 1 the side angle, 2 from
+    /// behind the net.
+    pub static mut LAST_STYLE: u32 = 0;
+}
 
 /// The music's level during the slow motion, Q12.
 const DUCKED: u16 = 1400;
@@ -88,7 +90,7 @@ impl Replay {
         let style = pick_style(ring, window, live.director_roll(), recent);
         unsafe {
             *core::ptr::addr_of_mut!(RECENT) = [Some(style), recent[0]];
-            LAST_STYLE = if style == Style::Side { 1 } else { 2 };
+            psx_telemetry::receipts! { LAST_STYLE = if style == Style::Side { 1 } else { 2 }; }
         }
         let mut replay = Self {
             window,
@@ -100,7 +102,7 @@ impl Replay {
             duck: 4096,
         };
         replay.show();
-        unsafe { STARTED += 1 };
+        psx_telemetry::receipts! { unsafe { STARTED += 1 }; }
         Some(replay)
     }
 
@@ -143,10 +145,12 @@ impl Replay {
     /// Hand the camera and the music back.
     pub fn finish(self, skipped: bool) {
         unsafe {
-            if skipped {
-                SKIPPED += 1;
-            } else {
-                FINISHED += 1;
+            psx_telemetry::receipts! {
+                if skipped {
+                    SKIPPED += 1;
+                } else {
+                    FINISHED += 1;
+                }
             }
         }
         draw::set_replay_cam(None);

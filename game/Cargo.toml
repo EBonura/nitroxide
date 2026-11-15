@@ -8,6 +8,8 @@ repository = "https://github.com/EBonura/nitroxide"
 
 [features]
 default = []
+# Result receipts for the headless journeys (gate_state.rs): the gate disc has them, a shipping build links none.
+receipts = ["psx-telemetry/receipts"]
 # Dev shortcut: boot straight into the match for headless capture.
 boot-play = []
 # Dev: boot into a match whose boost meters are driven through a fixed script

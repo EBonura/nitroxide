@@ -45,7 +45,7 @@ mod diaglog;
 mod draw;
 mod feedback;
 mod fx;
-mod gate_state;
+psx_telemetry::receipts! { mod gate_state; }
 mod hud_font;
 mod loader;
 mod music;
@@ -2816,7 +2816,7 @@ impl Scene for NitroXide {
     fn update(&mut self, ctx: &mut Ctx) {
         // Publish the prior completed simulation tick before this update can
         // return early for a menu, pause, card prompt or attract transition.
-        gate_state::publish(self, ctx.sim_tick.as_u32().saturating_sub(1));
+        psx_telemetry::receipts! { gate_state::publish(self, ctx.sim_tick.as_u32().saturating_sub(1)); }
         // An arena look chosen on the select screen or in the settings.
         self.apply_arena(ctx);
         if self.display_dirty {
