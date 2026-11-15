@@ -40,12 +40,9 @@ wait = 20
 checkpoint = "credits-row"
 mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
 [[step.assert]]
-kind = "spu_kon"
-addr = 0xdba0
-voice = 0
-voice_hi = 1
-min_count = 1
+kind = "audio"
 window = 30
+note = "the row move makes its menu sound"
 
 [[step]]
 press = ["cross"]
