@@ -35,10 +35,9 @@
 //! divider, so the arena is held as seven half-spaces (the car's own quadrant)
 //! rather than twenty-four, and the screen's pixel angles are cached.
 
-use crate::angle::atan2_q12_fine as atan2_fine;
 use crate::{Car, Sim, CAR_HALF_H, CEIL, CORNER, CORNER_JOINT_PLANES, FP, HALF_X, HALF_Z, V3};
 use psx_math::int32::isqrt_i32;
-use psx_math::sincos::{atan2_q12, cos_q12, sin_q12};
+use psx_math::sincos::{atan2_q12, atan2_q12_fine, cos_q12, sin_q12};
 
 /// The tunable shape of the rig. `Rig::DEFAULT` is the shipping camera;
 /// `Rig::WHEELS` is the close three-quarter inspection view `boot-wheels`
@@ -141,7 +140,7 @@ impl Limits {
     #[inline(never)]
     fn new(sc: Screen) -> Limits {
         let (hw, hh, p) = (sc.w / 2, sc.h / 2, sc.proj_h);
-        let a = |px: i32| atan2_fine(px, p) as i32;
+        let a = |px: i32| atan2_q12_fine(px, p) as i32;
         Limits {
             key: (sc.proj_h, sc.w, sc.h),
             car_low: a(hh / 3),
@@ -561,9 +560,9 @@ fn blocked_arc(p: &Plane, fold: Fold, slack: i32, need: i32, az: u16) -> Option<
         2048
     } else {
         let opp = isqrt_i32(need * need - slack * slack);
-        atan2_fine(opp, slack) as i32
+        atan2_q12_fine(opp, slack) as i32
     };
-    let centre = atan2_fine(p.nx * fold.sx, p.nz * fold.sz) as i32;
+    let centre = atan2_q12_fine(p.nx * fold.sx, p.nz * fold.sz) as i32;
     Some((wrap(centre - az as i32), half))
 }
 
@@ -713,11 +712,11 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     } else {
         let h = isqrt_i32(car_up.x * car_up.x + car_up.z * car_up.z);
         let az = if h >= 64 {
-            Some(atan2_fine(car_up.x, car_up.z))
+            Some(atan2_q12_fine(car_up.x, car_up.z))
         } else {
             None
         };
-        (atan2_fine(h, car_up.y) as i32, az)
+        (atan2_q12_fine(h, car_up.y) as i32, az)
     };
     if valid {
         let step = if on_surface {
@@ -755,27 +754,27 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     let nose = isqrt_i32(car_fwd.x * car_fwd.x + car_fwd.z * car_fwd.z).min(4096);
     let own_heading = if on_surface {
         if nose >= NOSE_MIN || !valid {
-            atan2_fine(car_fwd.x, car_fwd.z)
+            atan2_q12_fine(car_fwd.x, car_fwd.z)
         } else {
             st.heading
         }
     } else {
         let flat_v = V3::new(subject.v.x, 0, subject.v.z).len_xz();
         if flat_v >= AIR_HEADING_SPEED {
-            atan2_fine(subject.v.x, subject.v.z)
+            atan2_q12_fine(subject.v.x, subject.v.z)
         } else if nose >= NOSE_MIN_AIR {
-            atan2_fine(car_fwd.x, car_fwd.z)
+            atan2_q12_fine(car_fwd.x, car_fwd.z)
         } else if valid {
             st.heading
         } else {
-            atan2_fine(car_fwd.x, car_fwd.z)
+            atan2_q12_fine(car_fwd.x, car_fwd.z)
         }
     };
     let (dx, dz) = (bx - px, bz - pz);
     let line_to_ball = rq.ball_cam && dx * dx + dz * dz > MIN_SEPARATION * MIN_SEPARATION;
     st.heading = own_heading;
     let heading = if line_to_ball {
-        atan2_fine(dx, dz)
+        atan2_q12_fine(dx, dz)
     } else {
         own_heading
     };
@@ -819,16 +818,16 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     let az_vec = -((hc * trail) >> 12) + push_z;
     let mut want_len = isqrt_i32(ax * ax + az_vec * az_vec);
     let mut want_az = if want_len >= 48 {
-        atan2_fine(ax, az_vec)
+        atan2_q12_fine(ax, az_vec)
     } else if valid {
         st.az
     } else {
-        atan2_fine(-hs, -hc)
+        atan2_q12_fine(-hs, -hc)
     };
     if want_len < FLAT_MIN {
         // Prefer pushing out from the surface, then the way it was going.
         if push_x * push_x + push_z * push_z >= 100 * 100 {
-            want_az = atan2_fine(up.x, up.z);
+            want_az = atan2_q12_fine(up.x, up.z);
         }
         want_len = FLAT_MIN;
     }
@@ -916,17 +915,17 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
     // ---- look ----
     let (to_car_x, to_car_z) = (px - eye.0, pz - eye.2);
     let car_flat = isqrt_i32(to_car_x * to_car_x + to_car_z * to_car_z).max(1);
-    let to_car_yaw = atan2_fine(to_car_x, to_car_z) as i32;
-    let to_car_pitch = signed(atan2_fine(eye.1 - py, car_flat));
+    let to_car_yaw = atan2_q12_fine(to_car_x, to_car_z) as i32;
+    let to_car_pitch = signed(atan2_q12_fine(eye.1 - py, car_flat));
     let mut yaw_want;
     let pitch_want;
     let flat_to_ball = isqrt_i32((bx - eye.0) * (bx - eye.0) + (bz - eye.2) * (bz - eye.2));
     if rq.ball_cam && flat_to_ball >= FALLBACK_AIM / 2 {
         let ball_flat = flat_to_ball.max(1);
-        yaw_want = atan2_fine(bx - eye.0, bz - eye.2) as i32;
+        yaw_want = atan2_q12_fine(bx - eye.0, bz - eye.2) as i32;
         if rq.hold_car {
             // Pitches to the ball, positive down.
-            let p_ball = signed(atan2_fine(eye.1 - by, ball_flat));
+            let p_ball = signed(atan2_q12_fine(eye.1 - by, ball_flat));
             // Car on the lower third; look higher if that loses the ball off
             // the top; the car's own limit has the last word.
             let mut p = to_car_pitch - lim.car_low;
@@ -958,7 +957,7 @@ pub fn update(st: &mut CameraState, s: &Sim, subject: &Car, rq: &Request, now: u
             py + ((up.y * CAR_HALF_H) >> 12) + ((((car_fwd.y * CAR_AIM) >> 12) * lean) >> 12)
         };
         let (aim_x, aim_z) = (px + ox, pz + oz);
-        yaw_want = atan2_fine(aim_x - eye.0, aim_z - eye.2) as i32;
+        yaw_want = atan2_q12_fine(aim_x - eye.0, aim_z - eye.2) as i32;
         let flat =
             isqrt_i32((aim_x - eye.0) * (aim_x - eye.0) + (aim_z - eye.2) * (aim_z - eye.2)).max(1);
         // The SDK's octant-linear atan2, not the fine one: the chase camera's

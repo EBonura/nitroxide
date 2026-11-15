@@ -32,7 +32,6 @@
 
 #[cfg(test)]
 mod air_tests;
-pub mod angle;
 pub mod camera;
 #[cfg(test)]
 mod camera_tests;
@@ -1325,7 +1324,7 @@ fn cross_q12(a: V3, b: V3) -> V3 {
 /// show as a wobble in every spin.
 fn yaw_for_fine(up: V3, dir: V3) -> u16 {
     let (a, b) = plane_axes(up);
-    angle::atan2_q12_fine(dot_q12(dir, a), dot_q12(dir, b))
+    psx_math::atan2_q12_fine(dot_q12(dir, a), dot_q12(dir, b))
 }
 
 /// The heading a car lands with, as the yaw it has on a level floor: where its
@@ -1342,7 +1341,7 @@ fn floor_yaw(car: &Car) -> u16 {
     } else {
         (-up.x, -up.z)
     };
-    angle::atan2_q12_fine(x, z)
+    psx_math::atan2_q12_fine(x, z)
 }
 
 /// The yaw and roll the sticks ask for in the air: the steer axis is yaw,
@@ -1607,6 +1606,7 @@ impl Sim {
     /// filled in. A field added to either later is then reset by default, and
     /// cannot ride across a goal the way `slide` once did, which a list of
     /// fields to clear could not promise.
+    #[inline(never)]
     pub fn kickoff(&mut self) {
         self.tally_kickoff();
         self.ball = Ball {

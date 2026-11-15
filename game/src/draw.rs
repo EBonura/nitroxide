@@ -2735,7 +2735,7 @@ fn hold_split_cadence() {
 fn aim_area(area: &mut DrawArea, vp: Viewport, buffer_y: u16) {
     let (x0, y0) = (vp.x as u32, buffer_y as u32 + vp.y as u32);
     let (x1, y1) = ((vp.x + vp.w) as u32 - 1, buffer_y as u32 + (vp.y + vp.h) as u32 - 1);
-    area.set((x0, y0), (x1, y1));
+    area.set_in_range((x0, y0), (x1, y1));
 }
 /// Per set: the scissor its view is drawn with, first in its table, and for
 /// the second split view the whole screen again, last in its table, so the
