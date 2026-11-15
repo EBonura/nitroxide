@@ -11,7 +11,7 @@ use nitroxide_sim::WinCondition;
 use psx_engine::Ctx;
 use psx_font::FontAtlas;
 use psx_gpu::Gpu;
-use psx_math::fmt::{u32_dec, U32_DEC_MAX};
+use psx_math::fmt::{clock_dec, u32_dec, U32_DEC_MAX};
 
 use crate::draw::{self, seat_signal};
 use crate::fx::{self, Rgb, ONE};
@@ -216,10 +216,8 @@ impl NitroXide {
                 } else {
                     self.sim.clock / 60
                 };
-                clock[1] = b'0' + (secs / 60) as u8;
-                clock[2] = b':';
-                clock[3] = b'0' + ((secs % 60) / 10) as u8;
-                clock[4] = b'0' + ((secs % 60) % 10) as u8;
+                // The seconds are clamped to 599, so the clock is always M:SS, four bytes.
+                clock_dec(&mut clock[1..], secs);
                 // SAFETY: ASCII bytes.
                 unsafe {
                     core::str::from_utf8_unchecked(if overtime { &clock } else { &clock[1..] })

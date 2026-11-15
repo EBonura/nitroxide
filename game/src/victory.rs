@@ -14,7 +14,7 @@ use nitroxide_sim::{Sim, V3};
 use psx_engine::{button, Ctx};
 use psx_font::FontAtlas;
 use psx_gpu::Gpu;
-use psx_math::fmt::{u32_dec, U32_DEC_MAX};
+use psx_math::fmt::{clock_dec, u32_dec, U32_DEC_MAX};
 
 use crate::draw::{self, seat_signal, Trophy, VictoryBit};
 use crate::fx::{self, Rgb, ONE};
@@ -517,15 +517,8 @@ impl NitroXide {
                 Self::ink(IDLE),
             );
             let (mut da, mut db) = ([0u8; 12], [0u8; 12]);
-            let na = value(&mut da, va, tenths, suffix);
-            let nb = value(&mut db, vb, tenths, suffix);
-            // SAFETY: ASCII.
-            let (ta, tb) = unsafe {
-                (
-                    core::str::from_utf8_unchecked(&da[..na]),
-                    core::str::from_utf8_unchecked(&db[..nb]),
-                )
-            };
+            let ta = value(&mut da, va, tenths, suffix);
+            let tb = value(&mut db, vb, tenths, suffix);
             // The better value is lit, the other is dim.
             let (ca, cb) = if va > vb {
                 (GOLD, (110, 120, 148))
@@ -572,28 +565,12 @@ fn score_line(out: &mut [u8; 12], a: u32, b: u32) -> usize {
 }
 
 /// A stat as text: whole, or as minutes and seconds.
-fn value(out: &mut [u8; 12], v: u32, clock: bool, _suffix: u8) -> usize {
-    let mut dec = [0u8; U32_DEC_MAX];
-    let mut n = 0;
-    let mut push = |c: u8, n: &mut usize| {
-        if *n < out.len() {
-            out[*n] = c;
-            *n += 1;
-        }
-    };
+fn value(out: &mut [u8; 12], v: u32, clock: bool, _suffix: u8) -> &str {
     if clock {
-        for &c in u32_dec(&mut dec, v / 60).as_bytes() {
-            push(c, &mut n);
-        }
-        push(b':', &mut n);
-        push(b'0' + (v % 60 / 10) as u8, &mut n);
-        push(b'0' + (v % 10) as u8, &mut n);
+        clock_dec(&mut out[..], v)
     } else {
-        for &c in u32_dec(&mut dec, v).as_bytes() {
-            push(c, &mut n);
-        }
+        u32_dec(&mut out[..], v)
     }
-    n
 }
 
 /// The panel plate: a gradient body leaning like the menus' buttons, with a

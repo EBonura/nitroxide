@@ -24,7 +24,7 @@ use psx_font::fonts::KENNEY_ROCKET;
 use psx_font::FontAtlas;
 use psx_gpu::display::{DisplayConfig, Resolution, VideoMode};
 use psx_gpu::Gpu;
-use psx_math::fmt::{u32_dec, U32_DEC_MAX};
+use psx_math::fmt::{clock_dec, u32_dec, U32_DEC_MAX};
 use psx_math::sincos::{cos_q12, sin_q12};
 use psx_settings::Profile;
 use psx_vram::{Clut, TextureDepth, TexturePage};
@@ -1808,10 +1808,8 @@ impl NitroXide {
                     s.clock / 60
                 };
                 let mut clock = [b'+'; 5];
-                clock[1] = b'0' + (secs / 60) as u8;
-                clock[2] = b':';
-                clock[3] = b'0' + ((secs % 60) / 10) as u8;
-                clock[4] = b'0' + ((secs % 60) % 10) as u8;
+                // The seconds are clamped to 599, so the clock is always M:SS, four bytes.
+                clock_dec(&mut clock[1..], secs);
                 let clock = unsafe {
                     core::str::from_utf8_unchecked(if s.overtime { &clock } else { &clock[1..] })
                 };
