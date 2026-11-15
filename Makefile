@@ -203,7 +203,7 @@ SDK_REV    := $(shell sed -n '/"sdk": *{/,/"revision"/s/.*"revision": *"\([0-9a-
 # psoxide-components of 5219afbe resolves the compound workspace offline and
 # fails on a runner with a cold cargo registry (CI); the one at 7e97c246 primes
 # the registry first. Both write the same .psoxide for the same lock.
-LINK_REV   ?= cfbd045c4ac16d71ee33ae79ce5611818c4350e9
+LINK_REV   ?= 20f05ccf9120248219cad09b4cb87654b8868453
 COMPONENTS := $(ROOT)/target/psoxide-components/$(LINK_REV)
 PSOXIDE_FROM ?=
 psoxide:
@@ -250,6 +250,7 @@ GAME_CARGO   = build --release$(if $(strip $(FEATURES)), --features "$(FEATURES)
 PGO          = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-pgo/Cargo.toml" --
 # The SDK's size tool and dev tool, built in the same workspace.
 PSOXIDE_SIZE = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-size/Cargo.toml" --
+PSOXIDE_HWTEST = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-hwtest/Cargo.toml" --
 PSOXIDE_DEV  = cargo run -q --release --locked --manifest-path "$(PSOXIDE)/tools/psoxide-dev/Cargo.toml" --
 PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
 # The I-cache layout profile `+order` places functions from (see the
@@ -282,6 +283,7 @@ no64: psoxide
 compile: psoxide no64
 	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
 		--layout "$(PGO_LAYOUT)" --variant "$(PGO_VARIANT)" -- $(GAME_CARGO)
+	$(PSOXIDE_HWTEST) scan-expansion2 "$(EXE)"
 	@echo "EXE -> $(EXE)"
 
 build: compile
