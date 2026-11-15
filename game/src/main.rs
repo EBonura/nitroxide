@@ -2079,7 +2079,7 @@ impl NitroXide {
         // now rather than over a dark plane, and a single one-pixel shadow at
         // 1.375x leaves the light strokes of this face reading as grass.
         // It slides in from the left when the title opens.
-        let k = fx::ease_out(tick.wrapping_sub(self.title_at).min(24) as i32 * fx::ONE / 24);
+        let k = psx_math::ease::ease_out_cubic_q12(tick.wrapping_sub(self.title_at).min(24) as i32 * fx::ONE / 24);
         let lx = 10 - (220 * (fx::ONE - k) >> 12) as i16;
         for (dx, dy) in [(3, 3), (2, 2)] {
             font.draw_text_scaled_q8(lx + dx, 10 + dy, "NITROXIDE", 352, 352, (0, 0, 0));

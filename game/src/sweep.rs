@@ -95,9 +95,9 @@ pub fn draw_in(gpu: &mut Gpu, t: u32, half: u32, area: Area) {
             // How far through its own growth or shrink the tile is, Q12.
             let l = fx::clamp((q - start) * 10 / 3, 0, ONE);
             let scale = if covering {
-                fx::ease_out(l)
+                psx_math::ease::ease_out_cubic_q12(l)
             } else {
-                ONE - fx::ease_in(l)
+                ONE - psx_math::ease::ease_in_cubic_q12(l)
             };
             let w = TILE * scale >> 12;
             if w <= 0 {

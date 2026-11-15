@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Small helpers the screen-space effects share: a deterministic scatter, a
-//! cubic ease, colour scaling and the additive draw mode.
+//! Small helpers the screen-space effects share: a deterministic scatter,
+//! colour scaling and the additive draw mode.
 
 use psx_gpu::material::{BlendMode, TextureMaterial};
 use psx_gpu::prim::{QuadFlat, QuadGouraud};
@@ -21,20 +21,6 @@ pub fn scatter(a: u32, b: u32) -> u32 {
         .wrapping_add(b.wrapping_mul(668_265_263));
     let h = (h ^ (h >> 13)).wrapping_mul(1_274_126_177);
     ((h ^ (h >> 16)) >> 8) & 0xff
-}
-
-/// `1 - (1 - t)^3` for `t` in Q12: fast at the start, settling at the end.
-pub const fn ease_out(t: i32) -> i32 {
-    let u = ONE - clamp(t, 0, ONE);
-    let u2 = u * u >> 12;
-    ONE - (u2 * u >> 12)
-}
-
-/// `t^3` for `t` in Q12: slow at the start, fast at the end.
-pub const fn ease_in(t: i32) -> i32 {
-    let t = clamp(t, 0, ONE);
-    let t2 = t * t >> 12;
-    t2 * t >> 12
 }
 
 /// `v` limited to `lo..=hi`; `i32::clamp` is not `const`.

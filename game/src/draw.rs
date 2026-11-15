@@ -31,7 +31,7 @@ use psx_font::FontAtlas;
 use psx_gpu::frame::PrimitiveArena;
 use psx_gpu::material::{BlendMode, TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::{QuadFlat, QuadGouraud, QuadTexturedGouraud, QuadTexturedMaterial, TriGouraud};
+use psx_gpu::prim::{ClutLoad16, DrawArea, QuadFlat, QuadGouraud, QuadTexturedGouraud, QuadTexturedMaterial, TriGouraud};
 use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, project_vertex_scheduled as project};
@@ -2729,38 +2729,19 @@ fn hold_split_cadence() {
     }
 }
 
-/// GP0(E3h) and GP0(E4h) as an ordering-table packet: a view's scissor set
-/// from inside its own table, so the GPU switches between the two halves
-/// in command order while the CPU builds the next view. Filled in when the
-/// table is kicked, because the back buffer it lands in is only known then.
-#[repr(C, align(4))]
-struct AreaPacket {
-    tag: u32,
-    top_left: u32,
-    bottom_right: u32,
-}
-const AREA_WORDS: u8 = 2;
-impl AreaPacket {
-    const EMPTY: Self = Self {
-        tag: 0,
-        top_left: 0xe300_0000,
-        bottom_right: 0xe400_0000,
-    };
-    fn set(&mut self, vp: Viewport, buffer_y: u16) {
-        let (x0, y0) = (vp.x as u32, buffer_y as u32 + vp.y as u32);
-        let (x1, y1) = (
-            (vp.x + vp.w) as u32 - 1,
-            buffer_y as u32 + (vp.y + vp.h) as u32 - 1,
-        );
-        self.top_left = 0xe300_0000 | (x0 & 0x3ff) | ((y0 & 0x1ff) << 10);
-        self.bottom_right = 0xe400_0000 | (x1 & 0x3ff) | ((y1 & 0x1ff) << 10);
-    }
+/// Aim a view's scissor packet (GP0(E3h) and GP0(E4h) as an ordering-table packet: the GPU
+/// switches between the two halves in command order while the CPU builds the next view). Filled in
+/// when the table is kicked, because the back buffer it lands in is only known then.
+fn aim_area(area: &mut DrawArea, vp: Viewport, buffer_y: u16) {
+    let (x0, y0) = (vp.x as u32, buffer_y as u32 + vp.y as u32);
+    let (x1, y1) = ((vp.x + vp.w) as u32 - 1, buffer_y as u32 + (vp.y + vp.h) as u32 - 1);
+    area.set((x0, y0), (x1, y1));
 }
 /// Per set: the scissor its view is drawn with, first in its table, and for
 /// the second split view the whole screen again, last in its table, so the
 /// HUD overlay after it is not clipped to the bottom half.
-static mut AREA_HEAD: [AreaPacket; SET_COUNT] = [const { AreaPacket::EMPTY }; SET_COUNT];
-static mut AREA_TAIL: [AreaPacket; SET_COUNT] = [const { AreaPacket::EMPTY }; SET_COUNT];
+static mut AREA_HEAD: [DrawArea; SET_COUNT] = [DrawArea::EMPTY; SET_COUNT];
+static mut AREA_TAIL: [DrawArea; SET_COUNT] = [DrawArea::EMPTY; SET_COUNT];
 /// `build_view` links `AREA_TAIL[SET]` as the last packet of the table.
 static mut VIEW_TAIL: bool = false;
 static mut QUADS_SETS: [[QuadGouraud; MAX_QUADS]; SET_COUNT] = [QUADS_INIT; SET_COUNT];
@@ -2894,34 +2875,11 @@ pub fn set_banner(banner: Option<Banner>) {
 /// The black offsets the banner's outline is drawn at before its ink.
 const BANNER_OUTLINE: [(i16, i16); 5] = [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)];
 
-/// One sixteen-entry CLUT row uploaded from inside the ordering table:
-/// GP0(A0) with its data inline, then GP0(01) so no cached copy of the old
-/// row outlives it. Twelve data words, inside the silicon's sixteen.
-#[repr(C, align(4))]
-struct ClutLoad {
-    tag: u32,
-    cmd: u32,
-    xy: u32,
-    wh: u32,
-    data: [u32; 8],
-    flush: u32,
-}
-const CLUT_LOAD_WORDS: u8 = 12;
-impl ClutLoad {
-    const EMPTY: Self = Self {
-        tag: 0,
-        cmd: 0xa000_0000,
-        xy: 0,
-        wh: (1 << 16) | 16,
-        data: [0; 8],
-        flush: 0x0100_0000,
-    };
-}
 /// The crowd's two palettes, one per end, loaded every frame from inside the
 /// table (one per packet set: the other set's table may still be in flight):
 /// they carry the teams' colours and a shimmer through the fans.
-static mut CROWD_CLUT_LOAD: [[ClutLoad; 2]; SET_COUNT] =
-    [const { [ClutLoad::EMPTY, ClutLoad::EMPTY] }; SET_COUNT];
+static mut CROWD_CLUT_LOAD: [[ClutLoad16; 2]; SET_COUNT] =
+    [const { [ClutLoad16::empty(0, 0), ClutLoad16::empty(0, 0)] }; SET_COUNT];
 /// What each of those packets' palettes was last worked out for: the team
 /// colour and the shimmer's phase, which move rarely, so the sixteen entries
 /// are not rebuilt every frame.
@@ -8942,7 +8900,7 @@ fn menu_panels(b: &mut Builder<'_>, menu: &MenuRows) {
     // One bar, which slides from the row it left to the row it is on, with a
     // band of light running along it as it goes.
     let h = MENU_ROW_H;
-    let k = crate::fx::ease_out(menu.fill.clamp(0, 4096));
+    let k = psx_math::ease::ease_out_cubic_q12(menu.fill.clamp(0, 4096));
     let (y0, y1) = (
         i32::from(menu_row_y(menu.prev.min(MENU_ROWS - 1))),
         i32::from(menu_row_y(menu.selected.min(MENU_ROWS - 1))),
@@ -9357,8 +9315,8 @@ pub fn render_split(
                     // before the second's starts.
                     psx_gpu::submit_linked_list_wait();
                 }
-                AREA_HEAD[old].set(vp, buffer_y);
-                AREA_TAIL[old].set(Viewport::FULL, buffer_y);
+                aim_area(&mut AREA_HEAD[old], vp, buffer_y);
+                aim_area(&mut AREA_TAIL[old], Viewport::FULL, buffer_y);
                 SET = old;
                 submit_detached();
             }
@@ -9374,7 +9332,7 @@ pub fn render_split(
             OT_SETS[new].insert(
                 SKY_SLOT,
                 core::ptr::from_mut(&mut AREA_HEAD[new]).cast(),
-                AREA_WORDS,
+                DrawArea::WORDS,
             );
         }
         SET = cur;
@@ -9469,7 +9427,7 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
                     b.ot.add_raw(
                         0,
                         core::ptr::from_mut(&mut AREA_TAIL[SET]).cast(),
-                        AREA_WORDS,
+                        DrawArea::WORDS,
                     );
                 }
             }
@@ -9484,7 +9442,7 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
                         load.data = crowd_clut(seat, CAMERA_TICK);
                         CROWD_CLUT_KEY[SET][seat] = key;
                     }
-                    b.ot.add_raw(SKY_SLOT, core::ptr::from_mut(load).cast(), CLUT_LOAD_WORDS);
+                    b.ot.add_raw(SKY_SLOT, core::ptr::from_mut(load).cast(), ClutLoad16::WORDS);
                 }
             }
 

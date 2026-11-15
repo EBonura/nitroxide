@@ -72,7 +72,7 @@ impl Meter {
             return self.value;
         }
         let t = self.since as i32 * ONE / CLIMB_TICKS as i32;
-        self.from + ((self.value - self.from) * fx::ease_out(t) >> 12)
+        self.from + ((self.value - self.from) * psx_math::ease::ease_out_cubic_q12(t) >> 12)
     }
 
     /// Follow one seat's car after a sim tick. `taken` is `Some(big)` when a pad

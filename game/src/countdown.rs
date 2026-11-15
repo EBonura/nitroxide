@@ -86,10 +86,10 @@ fn draw_in(gpu: &mut Gpu, font: &FontAtlas, sim: &Sim, cx: i32, cy: i32, split: 
 /// small, overshoots, settles, drifts down and shrinks away at the end.
 fn punch_in(age: i32) -> i32 {
     match age {
-        ..=7 => 60 + (290 * fx::ease_out(age * ONE / 8) >> 12),
-        8..=17 => 350 - (94 * fx::ease_out((age - 8) * ONE / 10) >> 12),
+        ..=7 => 60 + (290 * psx_math::ease::ease_out_cubic_q12(age * ONE / 8) >> 12),
+        8..=17 => 350 - (94 * psx_math::ease::ease_out_cubic_q12((age - 8) * ONE / 10) >> 12),
         18..=51 => 256 - (age - 18) * 20 / 34,
-        _ => 236 - (116 * fx::ease_in((age - 52) * ONE / 8) >> 12),
+        _ => 236 - (116 * psx_math::ease::ease_in_cubic_q12((age - 52) * ONE / 8) >> 12),
     }
 }
 
@@ -174,7 +174,7 @@ fn big_text(font: &FontAtlas, text: &str, cx: i32, cy: i32, scale: i32, tint: Rg
 /// larger, added, less the number itself, subtracted by the same amount, so only the
 /// rim is left. `progress` runs from 0 to one (Q12) over its life.
 fn echo(gpu: &mut Gpu, font: &FontAtlas, text: &str, cx: i32, cy: i32, rest: i32, progress: i32) {
-    let k = fx::ease_out(progress);
+    let k = psx_math::ease::ease_out_cubic_q12(progress);
     let scale = rest * (256 + (230 * k >> 12)) >> 8;
     let alpha = (256 - (256 * progress >> 12)) * 150 >> 8;
     let tint = fx::dim((255, 232, 130), alpha);
@@ -269,7 +269,7 @@ fn go_burst(gpu: &mut Gpu, font: &FontAtlas, t: i32, cx: i32, cy: i32, rest: i32
     }
     // Rays leave the word and are gone with it.
     {
-        let grow = fx::ease_out(t * ONE / GO_TICKS as i32);
+        let grow = psx_math::ease::ease_out_cubic_q12(t * ONE / GO_TICKS as i32);
         let (r_in, r_len) = if split { (26, 40) } else { (34, 64) };
         for i in 0..6 {
             let a = (i * 683 + 150) as u16;

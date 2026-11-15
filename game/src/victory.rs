@@ -424,7 +424,7 @@ impl NitroXide {
             for i in 0..2 {
                 plate(gpu, x, top + i * step, step - 3);
             }
-            let k = fx::ease_out(draw::menu_sweep(elapsed));
+            let k = psx_math::ease::ease_out_cubic_q12(draw::menu_sweep(elapsed));
             let (y0, y1) = (top + v.prev as i32 * step, top + v.row as i32 * step);
             // Dim until the buttons answer.
             let live = v.t >= LOCK;
@@ -457,7 +457,7 @@ impl NitroXide {
         if t < 0 {
             return 400;
         }
-        let k = fx::ease_out(t * ONE / SLIDE_TICKS as i32);
+        let k = psx_math::ease::ease_out_cubic_q12(t * ONE / SLIDE_TICKS as i32);
         (ONE - k) * 170 >> 12
     }
 

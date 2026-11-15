@@ -517,9 +517,9 @@ impl Feedback {
         let age = i32::from(BANNER_TICKS - self.banner);
         let slide = 10;
         let k = if age < slide {
-            fx::ease_out(age * ONE / slide)
+            psx_math::ease::ease_out_cubic_q12(age * ONE / slide)
         } else if i32::from(self.banner) < slide {
-            fx::ease_out(i32::from(self.banner) * ONE / slide)
+            psx_math::ease::ease_out_cubic_q12(i32::from(self.banner) * ONE / slide)
         } else {
             ONE
         };
@@ -557,9 +557,9 @@ fn draw_overtime(gpu: &mut Gpu, display: &FontAtlas, hud: &FontAtlas, sim: &Sim,
     }
     let slide = 12;
     let k = if age < slide {
-        fx::ease_out(age * ONE / slide)
+        psx_math::ease::ease_out_cubic_q12(age * ONE / slide)
     } else if total - age < slide {
-        fx::ease_out((total - age) * ONE / slide)
+        psx_math::ease::ease_out_cubic_q12((total - age) * ONE / slide)
     } else {
         ONE
     };

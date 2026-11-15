@@ -163,7 +163,7 @@ impl NitroXide {
             plate(gpu, base + i as i32 * step, h);
         }
         // One bar, sliding from the row it left to the one it is on.
-        let k = fx::ease_out(draw::menu_sweep(elapsed));
+        let k = psx_math::ease::ease_out_cubic_q12(draw::menu_sweep(elapsed));
         let (y0, y1) = (base + from as i32 * step, base + selected as i32 * step);
         bar(
             gpu,
