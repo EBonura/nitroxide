@@ -2,7 +2,7 @@ name = "nitroxide-sfx-final"
 title = "NitroXide: the winning goal sounds the horn, the results screen the final whistle"
 disc = ["build/gate/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
-max_ticks = 2000
+max_ticks = 3600
 [[step]]
 wait = 440
 [[step]]
@@ -21,6 +21,13 @@ wait = 8
 press = ["cross"]
 hold = 4
 wait = 20
+# The match loads and counts three beeps in; the car is driven from the go.
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 600
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 400
 [[step]]
 wait = 30
 [[step]]
@@ -29,7 +36,7 @@ hold = 160
 wait = 0
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 700
+timeout = 1500
 [[step]]
 wait = 6
 [[step]]
@@ -51,10 +58,12 @@ min_count = 1
 max_count = 1
 [[step.assert]]
 kind = "spu_kon"
+# The three beeps are the match start countdown; the goal and the end add none.
 addr = 0x13060
 voice = 17
 voice_hi = 21
-max_count = 0
+min_count = 3
+max_count = 3
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x4e030

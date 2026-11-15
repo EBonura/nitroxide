@@ -3,7 +3,7 @@ title = "NitroXide: every menu action sounds, and sound off is silent"
 disc = ["build/gate/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
 memcard = "fresh"
-max_ticks = 4200
+max_ticks = 5200
 [card_fixture]
 path = "tests/fixtures/unformatted.mcd"
 sha256 = "fa43239bcee7b97ca62f007cc68487560a39e19f74f3dde7486db3f98df8e471"
@@ -397,6 +397,15 @@ wait = 40
 press = ["cross"]
 hold = 4
 wait = 20
+# The match loads and counts three beeps in; the go sounds when the countdown ends.
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 600
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 400
+[[step]]
+wait = 4
 [[step]]
 checkpoint = "match-start-go"
 golden = false
@@ -468,15 +477,23 @@ window = 28
 press = ["start"]
 hold = 4
 wait = 20
+# Up from RESUME wraps to QUIT TO MENU, which asks first; the question opens on NO.
 [[step]]
-press = ["down"]
+press = ["up"]
 hold = 4
 wait = 10
-repeat = 2
 [[step]]
 press = ["cross"]
 hold = 4
 wait = 20
+[[step]]
+press = ["up"]
+hold = 4
+wait = 10
+[[step]]
+press = ["cross"]
+hold = 4
+wait = 4
 [[step]]
 checkpoint = "pause-quit"
 golden = false
@@ -487,6 +504,10 @@ voice = 0
 voice_hi = 1
 min_count = 1
 window = 28
+# The sweep out of the match ends on the title.
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 1 }
+timeout = 300
 [[step]]
 checkpoint = "back-on-title"
 golden = false

@@ -2,7 +2,7 @@ name = "nitroxide-sfx-goal"
 title = "NitroXide: goal explosion, horn and crowd, then the three-two-one and the go"
 disc = ["build/gate/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
-max_ticks = 2400
+max_ticks = 4000
 [[step]]
 wait = 440
 [[step]]
@@ -22,6 +22,13 @@ repeat = 2
 press = ["cross"]
 hold = 4
 wait = 20
+# The match loads and counts three beeps in; the car is driven from the go.
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 600
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 400
 [[step]]
 wait = 30
 [[step]]
@@ -60,10 +67,12 @@ voice_hi = 11
 min_count = 1
 [[step.assert]]
 kind = "spu_kon"
+# The three beeps are the match start countdown; the goal itself adds none.
 addr = 0x13060
 voice = 17
 voice_hi = 21
-max_count = 0
+min_count = 3
+max_count = 3
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 32, op = "eq", value = 0 }
 timeout = 300
@@ -72,7 +81,7 @@ wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", v
 timeout = 120
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "eq", value = 0 }
-timeout = 400
+timeout = 900
 [[step]]
 wait = 4
 [[step]]
@@ -80,11 +89,12 @@ checkpoint = "kickoff-countdown"
 golden = false
 [[step.assert]]
 kind = "spu_kon"
+# Three beeps again for the kickoff after the goal, six in all.
 addr = 0x13060
 voice = 17
 voice_hi = 21
-min_count = 3
-max_count = 3
+min_count = 6
+max_count = 6
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x13950

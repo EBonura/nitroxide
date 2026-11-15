@@ -2,7 +2,7 @@ name = "nitroxide-sfx-match"
 title = "NitroXide: engine, crowd, jump, flip, landing, boost, empty tank, skid, bounce and pad sounds fire on their events"
 disc = ["build/gate/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
-max_ticks = 3000
+max_ticks = 3400
 [[step]]
 wait = 440
 [[step]]
@@ -13,6 +13,13 @@ wait = 20
 press = ["cross"]
 hold = 4
 wait = 20
+[[step]]
+# The match loads, counts three beeps in, and says go; the car is driven from there.
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "gt", value = 0 }
+timeout = 600
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "zero" }
+timeout = 400
 [[step]]
 wait = 30
 # Throttle: the engine and the crowd loops come on, the pad on the way is taken.

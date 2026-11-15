@@ -2,7 +2,7 @@ name = "nitroxide-sfx-timed-end"
 title = "NitroXide: the last five seconds tick and the final whistle ends a one minute match"
 disc = ["build/gate/NitroXide.cue"]
 symbols = ["build/gate-symbols.txt"]
-max_ticks = 4600
+max_ticks = 6000
 [[step]]
 wait = 440
 [[step]]
@@ -24,7 +24,7 @@ hold = 4
 wait = 20
 [[step]]
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 4 }
-timeout = 4200
+timeout = 5600
 [[step]]
 wait = 6
 [[step]]
@@ -32,10 +32,11 @@ checkpoint = "last-seconds-and-whistle"
 golden = false
 [[step.assert]]
 kind = "spu_kon"
+# Three beeps count the match in, five more tick off the last seconds.
 addr = 0x13060
 voice = 17
 voice_hi = 21
-min_count = 5
+min_count = 8
 [[step.assert]]
 kind = "spu_kon"
 addr = 0x15010
