@@ -31,7 +31,10 @@ use psx_font::FontAtlas;
 use psx_gpu::frame::PrimitiveArena;
 use psx_gpu::material::{BlendMode, TextureMaterial, TexturedGouraudPacketMaterial};
 use psx_gpu::ot::OrderingTable;
-use psx_gpu::prim::{ClutLoad16, DrawArea, QuadFlat, QuadGouraud, QuadTexturedGouraud, QuadTexturedMaterial, TriGouraud};
+use psx_gpu::prim::{
+    ClutLoad16, DrawArea, QuadFlat, QuadGouraud, QuadTexturedGouraud, QuadTexturedMaterial,
+    TriGouraud,
+};
 use psx_gte::lighting::{Light, LightRig};
 use psx_gte::math::{Mat3I16, Vec3I16, Vec3I32};
 use psx_gte::scene::{self, project_vertex_scheduled as project};
@@ -2734,7 +2737,10 @@ fn hold_split_cadence() {
 /// when the table is kicked, because the back buffer it lands in is only known then.
 fn aim_area(area: &mut DrawArea, vp: Viewport, buffer_y: u16) {
     let (x0, y0) = (vp.x as u32, buffer_y as u32 + vp.y as u32);
-    let (x1, y1) = ((vp.x + vp.w) as u32 - 1, buffer_y as u32 + (vp.y + vp.h) as u32 - 1);
+    let (x1, y1) = (
+        (vp.x + vp.w) as u32 - 1,
+        buffer_y as u32 + (vp.y + vp.h) as u32 - 1,
+    );
     area.set_in_range((x0, y0), (x1, y1));
 }
 /// Per set: the scissor its view is drawn with, first in its table, and for
@@ -9442,7 +9448,11 @@ fn build_view(s: &Sim, cars: [usize; SEATS], view: View, vp: Viewport, front: Op
                         load.data = crowd_clut(seat, CAMERA_TICK);
                         CROWD_CLUT_KEY[SET][seat] = key;
                     }
-                    b.ot.add_raw(SKY_SLOT, core::ptr::from_mut(load).cast(), ClutLoad16::WORDS);
+                    b.ot.add_raw(
+                        SKY_SLOT,
+                        core::ptr::from_mut(load).cast(),
+                        ClutLoad16::WORDS,
+                    );
                 }
             }
 
