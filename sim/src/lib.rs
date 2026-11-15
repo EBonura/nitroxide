@@ -3455,8 +3455,7 @@ fn nearest_arena_wall(x: i32, z: i32, mouth_open: bool) -> WallDistance {
     // |x| + |z| = CORNER. Multiply the intercept distance by 1/sqrt(2)
     // to get a true perpendicular distance.
     let corner = WallDistance {
-        distance: ((((uu(CORNER) - x.abs() - z.abs()) as i64) * SQRT2_Q12 as i64) >> 12)
-            .clamp(i32::MIN as i64, i32::MAX as i64) as i32,
+        distance: psx_math::int32::mul_q12_i32_wide(uu(CORNER) - x.abs() - z.abs(), SQRT2_Q12),
         inward: V3::new(-x.signum() * 2896, 0, -z.signum() * 2896),
     };
     if corner.distance < nearest.distance {

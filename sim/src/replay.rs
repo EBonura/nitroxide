@@ -169,8 +169,8 @@ impl Recorder {
     }
 
     /// The frame with sequence number `seq`, held to what the ring still has.
-    pub fn get(&self, seq: i64) -> &Frame {
-        let seq = seq.clamp(self.oldest() as i64, (self.total.max(1) - 1) as i64);
+    pub fn get(&self, seq: i32) -> &Frame {
+        let seq = seq.clamp(self.oldest() as i32, (self.total.max(1) - 1) as i32);
         &self.frames[seq as usize % FRAMES]
     }
 
@@ -181,9 +181,9 @@ impl Recorder {
             return None;
         }
         Some(Window {
-            start: (cross as i64 - PRE as i64).max(self.oldest() as i64) as u32,
+            start: (cross as i32 - PRE as i32).max(self.oldest() as i32) as u32,
             cross,
-            end: (cross as i64 + POST as i64).min(self.total as i64 - 1) as u32,
+            end: (cross as i32 + POST as i32).min(self.total as i32 - 1) as u32,
         })
     }
 }
@@ -218,8 +218,8 @@ impl Clock {
     /// A clock over `window`.
     pub fn new(window: Window) -> Self {
         Self {
-            s: (window.start as i64 - window.cross as i64) as i32 * 256,
-            end: (window.end as i64 - window.cross as i64) as i32 * 256,
+            s: (window.start as i32 - window.cross as i32) * 256,
+            end: (window.end as i32 - window.cross as i32) * 256,
         }
     }
 
@@ -245,10 +245,11 @@ fn lerp_angle(a: u16, b: u16, k: i32) -> u16 {
     (i32::from(a) + (d * k >> 8)).rem_euclid(4096) as u16
 }
 
-/// The replay's position as frames and a Q8 fraction between them.
-fn position(w: Window, s_q8: i32) -> (i64, i32) {
-    let pos = w.cross as i64 * 256 + s_q8 as i64;
-    (pos >> 8, (pos & 255) as i32)
+/// The replay's position as a frame and a Q8 fraction between it and the next. The
+/// frame is the crossing plus the whole ticks of `s_q8`, so no product with the crossing is
+/// ever formed.
+fn position(w: Window, s_q8: i32) -> (i32, i32) {
+    (w.cross as i32 + (s_q8 >> 8), s_q8 & 255)
 }
 
 /// Write the world at `s_q8` into `sim`, the scratch copy playback draws, which
@@ -293,7 +294,7 @@ pub fn apply(sim: &mut Sim, rec: &Recorder, w: Window, s_q8: i32) {
     }
 }
 
-/// Isqrt for the camera, on i64 inputs that fit i32 squares.
+/// Isqrt for the camera, on inputs whose squares fit i32.
 fn isqrt(v: i32) -> i32 {
     psx_math::int32::isqrt_i32(v)
 }
@@ -376,9 +377,8 @@ fn workable(rec: &Recorder, w: Window, style: Style) -> bool {
         if strain > MAX_STRAIN {
             return false;
         }
-        let pos = w.cross as i64 * 256 + s as i64;
         for seat in 0..2 {
-            let c = car_at(rec, w, seat, pos);
+            let c = car_at(rec, w, seat, s);
             let (dx, dz) = (c.0 - a.0, c.2 - a.2);
             if isqrt((dx * dx + dz * dz) / 16) * 4 < CAR_CLEARANCE && (c.1 - a.1).abs() < 500 {
                 return false;
@@ -459,13 +459,13 @@ fn ease(t: i32) -> i32 {
 impl Direction {
     /// Read the recording and decide the shots, the goal shot in `style`.
     pub fn new(rec: &Recorder, w: Window, style: Style) -> Self {
-        let cross = w.cross as i64;
+        let cross = w.cross as i32;
         let at_cross = rec.get(cross);
         let goal = if at_cross.ball[2] >= 0 { 1 } else { -1 };
         // The decisive touch: the last frame before the goal with a contact.
         let mut found = None;
         let mut seq = cross;
-        while seq >= w.start as i64 {
+        while seq >= w.start as i32 {
             let t = rec.get(seq).touch;
             if t != 0 {
                 found = Some((seq, t));
@@ -474,7 +474,7 @@ impl Direction {
             seq -= 1;
         }
         let (touch, toucher) = match found {
-            Some((seq, bits)) => ((seq - cross) as i32, usize::from(bits & 1 == 0)),
+            Some((seq, bits)) => (seq - cross, usize::from(bits & 1 == 0)),
             None => {
                 // No touch in the ring: a long ball, or a roll from the kick.
                 // Cut as the slow motion starts, on the car nearest the ball.
@@ -495,12 +495,12 @@ impl Direction {
         let side = if before[0] >= 0 { -1 } else { 1 };
         // The tracking shot stands on the side of the car's line that faces the
         // middle of the pitch, so it has room.
-        let tf = rec.get(cross + touch as i64);
+        let tf = rec.get(cross + touch);
         let (tx, tz, _) = unit2(
-            i32::from(rec.get(cross + touch as i64 + 8).cars[toucher].p[0])
-                - i32::from(rec.get(cross + touch as i64 - 8).cars[toucher].p[0]),
-            i32::from(rec.get(cross + touch as i64 + 8).cars[toucher].p[2])
-                - i32::from(rec.get(cross + touch as i64 - 8).cars[toucher].p[2]),
+            i32::from(rec.get(cross + touch + 8).cars[toucher].p[0])
+                - i32::from(rec.get(cross + touch - 8).cars[toucher].p[0]),
+            i32::from(rec.get(cross + touch + 8).cars[toucher].p[2])
+                - i32::from(rec.get(cross + touch - 8).cars[toucher].p[2]),
         );
         let (px, _pz) = (-tz, tx);
         let lane = if (px * i32::from(tf.cars[toucher].p[0])) > 0 {
@@ -531,11 +531,10 @@ pub struct Shot {
     pub cut: bool,
 }
 
-fn car_at(rec: &Recorder, w: Window, seat: usize, pos_q8: i64) -> (i32, i32, i32) {
-    let (i, k) = (pos_q8 >> 8, (pos_q8 & 255) as i32);
+fn car_at(rec: &Recorder, w: Window, seat: usize, s_q8: i32) -> (i32, i32, i32) {
+    let (i, k) = position(w, s_q8);
     let (a, b) = (rec.get(i), rec.get(i + 1));
     let m = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
-    let _ = w;
     (
         m(a.cars[seat].p[0], b.cars[seat].p[0]),
         m(a.cars[seat].p[1], b.cars[seat].p[1]),
@@ -543,8 +542,8 @@ fn car_at(rec: &Recorder, w: Window, seat: usize, pos_q8: i64) -> (i32, i32, i32
     )
 }
 
-fn ball_at(rec: &Recorder, pos_q8: i64) -> (i32, i32, i32) {
-    let (i, k) = (pos_q8 >> 8, (pos_q8 & 255) as i32);
+fn ball_at(rec: &Recorder, w: Window, s_q8: i32) -> (i32, i32, i32) {
+    let (i, k) = position(w, s_q8);
     let (a, b) = (rec.get(i), rec.get(i + 1));
     let m = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
     (
@@ -556,11 +555,11 @@ fn ball_at(rec: &Recorder, pos_q8: i64) -> (i32, i32, i32) {
 
 /// A car's position smoothed over `half` ticks either side: a dolly that does
 /// not follow every wobble of the car.
-fn smooth_car(rec: &Recorder, w: Window, seat: usize, pos_q8: i64, half: i64) -> (i32, i32, i32) {
+fn smooth_car(rec: &Recorder, w: Window, seat: usize, s_q8: i32, half: i32) -> (i32, i32, i32) {
     let (mut x, mut y, mut z, mut n) = (0, 0, 0, 0);
     let mut o = -half;
     while o <= half {
-        let p = car_at(rec, w, seat, pos_q8 + o * 256);
+        let p = car_at(rec, w, seat, s_q8 + o * 256);
         x += p.0;
         y += p.1;
         z += p.2;
@@ -576,16 +575,15 @@ fn smooth_car(rec: &Recorder, w: Window, seat: usize, pos_q8: i64, half: i64) ->
 /// the blast eases out. All of it a function of the recording and the clock,
 /// moves eased, nothing stepped but the one cut.
 pub fn direct(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> Shot {
-    let pos = w.cross as i64 * 256 + s_q8 as i64;
     let rel = s_q8 >> 8;
-    let ball = ball_at(rec, pos);
+    let ball = ball_at(rec, w, s_q8);
     if rel < d.touch {
         // The tracking shot: low, beside the car, a little ahead of it, on a long
         // lens, looking between the car and the ball.
-        let car = smooth_car(rec, w, d.toucher, pos, 12);
+        let car = smooth_car(rec, w, d.toucher, s_q8, 12);
         let (a, b) = (
-            smooth_car(rec, w, d.toucher, pos + 10 * 256, 8),
-            smooth_car(rec, w, d.toucher, pos - 10 * 256, 8),
+            smooth_car(rec, w, d.toucher, s_q8 + 10 * 256, 8),
+            smooth_car(rec, w, d.toucher, s_q8 - 10 * 256, 8),
         );
         let (tx, tz, len) = unit2(a.0 - b.0, a.2 - b.2);
         // Standing still, face the ball instead.
@@ -620,15 +618,17 @@ pub fn direct(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> Shot {
 /// pulls back as the blast eases out. Returns the shot and the eye it wanted
 /// before the arena pushed it about.
 fn goal_shot(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> (Shot, (i32, i32, i32)) {
-    let pos = w.cross as i64 * 256 + s_q8 as i64;
     let rel = s_q8 >> 8;
-    let ball = ball_at(rec, pos);
+    let ball = ball_at(rec, w, s_q8);
     let t0 = d.touch.max(-90);
-    let into = ease((((s_q8 - t0 * 256) as i64 * 256) / ((8 - t0).max(1) as i64 * 256)) as i32);
-    let out = ease(((s_q8 - 8 * 256) as i64 * 256 / (RAMP_OUT as i64 * 256 - 8 * 256)) as i32);
+    let into = ease((s_q8 - t0 * 256) * 256 / ((8 - t0).max(1) * 256));
+    let out = ease((s_q8 - 8 * 256) * 256 / (RAMP_OUT * 256 - 8 * 256));
     // The ball with room to move into: the aim runs ahead of it along its path
     // until it is in the net.
-    let (v0, v1) = (ball_at(rec, pos - 3 * 256), ball_at(rec, pos + 3 * 256));
+    let (v0, v1) = (
+        ball_at(rec, w, s_q8 - 3 * 256),
+        ball_at(rec, w, s_q8 + 3 * 256),
+    );
     let (vx, vz, vlen) = unit2(v1.0 - v0.0, v1.2 - v0.2);
     let lead = if vlen > 6 { 230 * (256 - out) / 256 } else { 0 };
     let target = (
@@ -636,7 +636,7 @@ fn goal_shot(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> (Shot, (i32
         ball.1 + 24,
         ball.2 + (vz * lead >> 12),
     );
-    let at_cross = rec.get(w.cross as i64).ball;
+    let at_cross = rec.get(w.cross as i32).ball;
     let (eye0, plane0, plane1, box_) = if d.behind_goal {
         (
             (
@@ -781,7 +781,7 @@ mod tests {
         assert_eq!(sim.ball.p.z >> FP, 3900);
         let mut mid = sim_at(0, 0);
         apply(&mut mid, &rec, w, -10 * 256 + 128);
-        let (a, b) = (rec.get(w.cross as i64 - 10), rec.get(w.cross as i64 - 9));
+        let (a, b) = (rec.get(w.cross as i32 - 10), rec.get(w.cross as i32 - 9));
         let want = (i32::from(a.ball[2]) + i32::from(b.ball[2])) / 2;
         assert!(((mid.ball.p.z >> FP) - want).abs() <= 1);
         // Flags come from the earlier frame, and the explosion's countdown too.
@@ -844,8 +844,7 @@ mod tests {
                     * 4;
             assert!(dist >= 180, "the eye is on the ball at {n}: {dist}");
             assert!((180..=430).contains(&shot.plane), "{}", shot.plane);
-            let (pos, _) = (w.cross as i64 * 256 + c.s as i64, 0);
-            let b = ball_at(rec, pos);
+            let b = ball_at(rec, w, c.s);
             if (c.s >> 8) >= d.touch {
                 assert!(
                     (t.0 - b.0).abs() <= 260

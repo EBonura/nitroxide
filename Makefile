@@ -272,7 +272,14 @@ PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # the gameplay runs (`apply` stops below 98% bound).
 PGO_VARIANT ?= off
 
-compile: psoxide
+# Guest code names no 64-bit integer and no float. The two files are host tests that the sim
+# declares under #[cfg(test)]; the scanner reads files, not cfg, so they are exempt by name.
+.PHONY: no64
+no64: psoxide
+	cd "$(ROOT)" && $(PSOXIDE_DEV) no64-scan --exempt sim/src/air_tests.rs \
+		--exempt sim/src/camera_tests.rs game/src sim/src
+
+compile: psoxide no64
 	PSOXIDE="$(PSOXIDE)" $(PGO) apply --crate "$(GAME)" --profile "$(PGO_PROFILE)" \
 		--layout "$(PGO_LAYOUT)" --variant "$(PGO_VARIANT)" -- $(GAME_CARGO)
 	@echo "EXE -> $(EXE)"
