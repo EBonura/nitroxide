@@ -22,8 +22,8 @@
 //! row of the settings menu steps through the same order.
 
 use nitroxide_sim::playlist::Playlist;
-use psx_fmv::iso;
 use psx_io::cd::xa::{DriveSpeed, Event, File, Player};
+use psx_io::iso;
 use psx_io::periph::Cd;
 use psx_io::timers::{counter, Timer};
 use psx_pack::cd::{SectorReader, SECTOR_WORDS};
@@ -123,11 +123,11 @@ impl Music {
         let mut sector = [0u32; SECTOR_WORDS];
         self.available = false;
         if read_sector(&mut reader, iso::PVD_LBA, &mut sector) {
-            if let Some((root_lba, _)) = iso::root_directory(sector_bytes(&sector)) {
+            if let Some((root_lba, _)) = iso::root_directory(iso::as_bytes(&sector)) {
                 if read_sector(&mut reader, root_lba, &mut sector) {
                     self.available = true;
                     for (i, slot) in self.files.iter_mut().enumerate() {
-                        *slot = iso::find_in_directory(sector_bytes(&sector), XA_FILE_NAMES[i])
+                        *slot = iso::find_in_directory(iso::as_bytes(&sector), XA_FILE_NAMES[i])
                             .map(|(lba, size)| {
                                 File::from_directory_entry(lba, size, XA_FILE_NUMBERS[i], SPEED)
                             });
@@ -287,12 +287,6 @@ fn read_sector(reader: &mut SectorReader, lba: u32, sector: &mut [u32; SECTOR_WO
     let ok = reader.prepare() && reader.start_read(lba) && reader.read_sector(sector);
     reader.stop();
     ok
-}
-
-fn sector_bytes(sector: &[u32; SECTOR_WORDS]) -> &[u8] {
-    // SAFETY: `[u32; N]` reinterpreted as its own bytes; alignment shrinks and
-    // the length is the array's.
-    unsafe { core::slice::from_raw_parts(sector.as_ptr().cast::<u8>(), SECTOR_WORDS * 4) }
 }
 
 /// How long the disc took to spin up, to the cycle, as the root counters show it;
