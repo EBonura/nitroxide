@@ -261,12 +261,14 @@ PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
 # tape's frames at 60 linked plain and 95.3% placed. With the net always drawn
 # (no packet governor) the placed layouts measured no better than the plain
 # link on the gate tapes, 2 to 3 k cycles a frame worse on the heavy one, and
-# the plain link holds every tape at the late frames of the installed build,
-# so the shipping build links plain and no layout is committed. To try a
-# placed link again, `make pgo-order FRONTEND=x` and build with
-# PGO_VARIANT=off+order; the layout goes stale with any change to the code
-# the gameplay runs (`apply` stops below 98% bound).
-PGO_VARIANT ?= off
+# the plain link held every tape at the late frames of the installed build.
+# At SDK 3168e2cbcb37 the plain link lost 13 flips of the train window against
+# the installed build (765 against 778 at offset 0: SDK size changes moved its
+# code), and the layout placed from pgo/nitroxide.layout holds it at 779 and
+# keeps the table when the SDK grows (see NOTES). So the shipping build links
+# `off+order`; regenerate the layout with `make pgo-order FRONTEND=x` after
+# any change to the code the gameplay runs (`apply` stops below 98% bound).
+PGO_VARIANT ?= off+order
 
 # Guest code names no 64-bit integer and no float. The two files are host tests that the sim
 # declares under #[cfg(test)]; the scanner reads files, not cfg, so they are exempt by name.
