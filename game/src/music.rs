@@ -17,11 +17,11 @@
 //! before the first song starts, and nothing reads the disc afterwards. A
 //! future runtime read has to stop the song first and start one again after.
 //!
-//! The order is a shuffle (`nitroxide_sim::playlist`): each song once, then a
+//! The order is a shuffle (`psx_fx::playlist`): each song once, then a
 //! fresh shuffle that does not open with the song that just ended. The TRACK
 //! row of the settings menu steps through the same order.
 
-use nitroxide_sim::playlist::Playlist;
+use psx_fx::playlist::{OffSlot, Playlist};
 use psx_io::cd::xa::{DriveSpeed, Event, File, Player};
 use psx_io::iso;
 use psx_io::periph::Cd;
@@ -105,7 +105,7 @@ impl Music {
             // finished before any song starts, and nothing reads the disc
             // afterwards.
             player: Player::new(unsafe { Cd::steal() }),
-            list: Playlist::new(XA_SONGS.len(), 1),
+            list: Playlist::new(XA_SONGS.len(), 1, OffSlot::Without),
             start_at: None,
             playing: false,
             announced_at: None,
@@ -136,7 +136,7 @@ impl Music {
         // How long the disc took to spin up and answer, to the cycle: the
         // one thing that differs between boots of the same program.
         let seed = boot_seed();
-        self.list = Playlist::new(XA_SONGS.len(), seed);
+        self.list = Playlist::new(XA_SONGS.len(), seed, OffSlot::Without);
         self.player.set_volume(0x80, 0x80);
     }
 
@@ -152,7 +152,7 @@ impl Music {
 
     /// What the current song is called.
     pub fn track_name(&self) -> &'static str {
-        SONG_NAMES[self.list.current()]
+        SONG_NAMES[usize::from(self.list.current_song())]
     }
 
     /// The song to announce and how long it has been up, while a start is
@@ -176,9 +176,9 @@ impl Music {
     /// will use.
     pub fn cycle_track(&mut self, step: i32, tick: u32) {
         if step >= 0 {
-            self.list.next();
+            self.list.skip_forward();
         } else {
-            self.list.prev();
+            self.list.skip_back();
         }
         if self.available && self.enabled {
             self.begin_song(tick, true);
@@ -239,7 +239,7 @@ impl Music {
             // Finished: the song reached its end and the drive paused. Idle:
             // the drive stopped without our asking, which is also the end.
             Event::Finished | Event::Idle => {
-                self.list.next();
+                self.list.song_finished();
                 self.begin_song(tick, false);
             }
             // The songs of a file are padded with silence to the longest, and
@@ -248,7 +248,7 @@ impl Music {
             Event::Playing | Event::Looped => {
                 if self.player.is_streaming() && self.player.elapsed_millis() >= self.song_ms {
                     self.player.stop();
-                    self.list.next();
+                    self.list.song_finished();
                     self.begin_song(tick, false);
                 }
             }
@@ -257,7 +257,7 @@ impl Music {
 
     /// Ask the drive for the current song.
     fn start(&mut self, tick: u32, attempts: u8) {
-        let (file, channel, ms) = XA_SONGS[self.list.current()];
+        let (file, channel, ms) = XA_SONGS[usize::from(self.list.current_song())];
         let Some(file) = self.files[file as usize] else {
             self.start_at = None;
             return;
