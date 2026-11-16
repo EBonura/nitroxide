@@ -37,12 +37,7 @@ pub const fn clamp(v: i32, lo: i32, hi: i32) -> i32 {
 /// `colour` at `alpha` of full, `alpha` in Q8 (`0..=256`). An additive draw has
 /// no alpha channel of its own: dimming the colour is how it fades.
 pub fn dim(colour: Rgb, alpha: i32) -> Rgb {
-    let a = clamp(alpha, 0, 256);
-    (
-        (colour.0 as i32 * a >> 8) as u8,
-        (colour.1 as i32 * a >> 8) as u8,
-        (colour.2 as i32 * a >> 8) as u8,
-    )
+    psx_math::color::scale_rgb(colour, clamp(alpha, 0, 256), 256)
 }
 
 /// Linear blend of two colours, `t` in Q8.
