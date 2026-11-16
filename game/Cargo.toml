@@ -165,6 +165,7 @@ psx-sfx    = { path = "../.psoxide/sdk/crates/psx-sfx" }
 psx-gte    = { path = "../.psoxide/sdk/crates/psx-gte" }
 psx-font   = { path = "../.psoxide/sdk/crates/psx-font" }
 psx-math   = { path = "../.psoxide/sdk/crates/psx-math" }
+psx-fx     = { path = "../.psoxide/sdk/crates/psx-fx" }
 # Startup asset streaming from the disc's shared WORLD.PAK container.
 psx-pack   = { path = "../.psoxide/sdk/crates/psx-pack" }
 # Port 2, for the split-screen game. The engine's `Ctx` only carries port 1.

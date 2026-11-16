@@ -1602,7 +1602,7 @@ impl NitroXide {
         // One multiply-and-shift each, off the same seed. This is the whole
         // randomness budget: a car and a colour that are not the same two
         // every time the screen opens.
-        let n = tick.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let n = psx_fx::NrLcg::step(tick);
         self.cars[1] = (n >> 16) as usize % draw::CAR_COUNT;
         self.paints[1] = (n >> 24) as usize % draw::PAINT_COUNT;
         if self.paints[1] == self.paints[0] {
