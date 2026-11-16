@@ -5120,7 +5120,7 @@ impl Builder<'_> {
 
     fn screen_quad(&mut self, slot: usize, rect: [(i16, i16); 4], colors: [Rgb; 4]) {
         if let Some(q) = self.arena.push(QuadGouraud::new(rect, colors)) {
-            self.ot.add_packet(slot, q);
+            self.ot.add(slot, q);
         }
     }
 
@@ -5394,7 +5394,7 @@ impl Builder<'_> {
         // before the pitch's.
         let (ca, cb) = (tinted(GRASS_A, ta), tinted(GRASS_A, tb));
         if let Some(q) = self.arena.push(QuadGouraud::new(sp, [ca, cb, ca, cb])) {
-            self.ot.add_packet(UNDERDRAW_SLOT, q);
+            self.ot.add(UNDERDRAW_SLOT, q);
         }
     }
 
@@ -5489,7 +5489,7 @@ impl Builder<'_> {
         prim.color2 = tints[2];
         prim.color3 = tints[3];
         if let Some(q) = self.textured.push(prim) {
-            self.ot.add_packet(FLOOR_SLOT, q);
+            self.ot.add(FLOOR_SLOT, q);
         } else {
             count_overflow!();
         }
@@ -6405,12 +6405,12 @@ impl Builder<'_> {
                 let dif = |u: u8, v: u8| (u as i32 - v as i32).abs();
                 if dif(c0.0, c1.0).max(dif(c0.1, c1.1)).max(dif(c0.2, c1.2)) > LINE_FLAT_SPREAD {
                     if let Some(quad) = self.arena.push(QuadGouraud::new(sp, [c0, c0, c1, c1])) {
-                        self.ot.add_packet(LINE_SLOT, quad);
+                        self.ot.add(LINE_SLOT, quad);
                     } else {
                         count_overflow!();
                     }
                 } else if let Some(quad) = self.flats.push(QuadFlat::new(sp, c0.0, c0.1, c0.2)) {
-                    self.ot.add_packet(LINE_SLOT, quad);
+                    self.ot.add(LINE_SLOT, quad);
                 } else {
                     count_overflow!();
                 }
@@ -7141,7 +7141,7 @@ impl Builder<'_> {
             sp,
             [APRON_TOP, APRON_TOP, APRON_BOTTOM, APRON_BOTTOM],
         )) {
-            self.ot.add_packet(STAND_SLOT, q);
+            self.ot.add(STAND_SLOT, q);
         } else {
             count_overflow!();
         }
@@ -7276,7 +7276,7 @@ impl Builder<'_> {
                         packet,
                     );
                     if let Some(q) = self.textured.push(prim) {
-                        self.ot.add_packet(STAND_SLOT, q);
+                        self.ot.add(STAND_SLOT, q);
                     } else {
                         count_overflow!();
                     }
@@ -7742,7 +7742,7 @@ impl Builder<'_> {
 
     fn emit_goal_floor(&mut self, sp: [(i16, i16); 4], colors: [Rgb; 4]) {
         if let Some(q) = self.arena.push(QuadGouraud::new(sp, colors)) {
-            self.ot.add_packet(FLOOR_SLOT, q);
+            self.ot.add(FLOOR_SLOT, q);
         } else {
             count_overflow!();
         }
@@ -10107,7 +10107,7 @@ impl Builder<'_> {
             }
             if let Some(quad) = self.flats.push(QuadFlat::new(sp, c.0, c.1, c.2)) {
                 quad.color_cmd |= SEMI_TRANSPARENT;
-                self.ot.add_packet(TRACK_SLOT, quad);
+                self.ot.add(TRACK_SLOT, quad);
             } else {
                 #[cfg(feature = "diag-log")]
                 unsafe {
@@ -10209,7 +10209,7 @@ impl Builder<'_> {
             let sp = [(a.sx, a.sy), (b.sx, b.sy), (e.sx, e.sy), (f.sx, f.sy)];
             if let Some(quad) = self.flats.push(QuadFlat::new(sp, tint.0, tint.1, tint.2)) {
                 quad.color_cmd |= SEMI_TRANSPARENT;
-                self.ot.add_packet(TRACK_SLOT, quad);
+                self.ot.add(TRACK_SLOT, quad);
                 #[cfg(feature = "diag-log")]
                 unsafe {
                     DIAG_TRK_QUADS += 1;
@@ -10717,7 +10717,7 @@ impl Builder<'_> {
         unsafe { BANNER_BUILT[SET] = Some((key, n)) };
         // The table prepends within a slot, so the last glyph goes in first.
         for k in (0..n).rev() {
-            self.ot.add_packet(0, unsafe { &mut BANNER_QUADS[SET][k] });
+            self.ot.add(0, unsafe { &mut BANNER_QUADS[SET][k] });
         }
         if n > 0 {
             // Last in, so first drawn: the font's draw mode ahead of the glyphs.
