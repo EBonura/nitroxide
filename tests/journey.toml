@@ -62,7 +62,8 @@ value = 1
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 120
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 425 }
 [[step]]
 checkpoint = "select"
 mask = [{ x = 70, y = 106, w = 204, h = 31 }]

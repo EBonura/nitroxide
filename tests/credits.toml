@@ -35,7 +35,8 @@ value = 1
 [[step]]
 press = ["up"]
 hold = 4
-wait = 20
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 174 }
 [[step]]
 checkpoint = "credits-row"
 mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
@@ -47,7 +48,8 @@ note = "the row move makes its menu sound"
 [[step]]
 press = ["cross"]
 hold = 4
-wait = 20
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 198 }
 [[step]]
 checkpoint = "credits-page-1"
 mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
@@ -55,7 +57,8 @@ mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }
 [[step]]
 press = ["right"]
 hold = 4
-wait = 20
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 222 }
 [[step]]
 checkpoint = "credits-page-2"
 mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
