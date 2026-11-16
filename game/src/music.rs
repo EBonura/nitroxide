@@ -216,6 +216,9 @@ impl Music {
     /// One tick. Starts a song that is due, and once one is playing, watches
     /// for its end so the next can follow.
     pub fn update(&mut self, tick: u32) {
+        // A stop sends the Pause without waiting for the drive (a Pause out of a read takes
+        // about seven frames); one look a tick completes it, music on or off.
+        self.player.poll_stop();
         if !self.available || !self.enabled {
             return;
         }
