@@ -10,6 +10,9 @@ repository = "https://github.com/EBonura/nitroxide"
 default = []
 # Result receipts for the headless journeys (gate_state.rs): the gate disc has them, a shipping build links none.
 receipts = ["psx-telemetry/receipts"]
+# Lab (never shipped): every song is cut at 12 seconds, so a headless run reaches the stop
+# of a song's end (and the start of the next) in seconds instead of minutes.
+music-lab = []
 # Dev shortcut: boot straight into the match for headless capture.
 boot-play = []
 # Dev: boot into a match whose boost meters are driven through a fixed script
