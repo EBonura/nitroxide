@@ -13,6 +13,7 @@
 use nitroxide_sim::{Car, Sim, DEMO_RESPAWN, FP};
 use psx_font::FontAtlas;
 use psx_gpu::Gpu;
+use psx_math::int32::isqrt_i32;
 
 use crate::draw::{self, seat_signal, Viewport};
 use crate::fx::{self, Rgb, ONE};
@@ -406,7 +407,7 @@ fn drop_line(gpu: &mut Gpu, from: (i32, i32), to: (i32, i32)) {
 
 /// A small arrowhead at `at` pointing along `dir`, pulsing gently.
 fn arrow(gpu: &mut Gpu, at: (i32, i32), dir: (i32, i32), tick: u32) {
-    let len = isqrt(dir.0 * dir.0 + dir.1 * dir.1).max(1);
+    let len = isqrt_i32(dir.0 * dir.0 + dir.1 * dir.1).max(1);
     let (ux, uy) = (dir.0 * 64 / len, dir.1 * 64 / len);
     let pulse = ((tick >> 2) & 1) as i32;
     let s = 10 + pulse * 2;
@@ -426,10 +427,6 @@ fn arrow(gpu: &mut Gpu, at: (i32, i32), dir: (i32, i32), tick: u32) {
         (10, 12, 22),
     );
     fx::quad(gpu, [tip, tip, a, b], (255, 222, 110));
-}
-
-fn isqrt(v: i32) -> i32 {
-    psx_math::int32::isqrt_i32(v)
 }
 
 /// Speed lines at the rim of a view while the car is supersonic: short bright
