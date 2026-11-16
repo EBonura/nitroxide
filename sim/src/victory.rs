@@ -19,8 +19,7 @@ pub struct Shot {
 
 fn ease_out(t: i32, len: i32) -> i32 {
     // Q12 cubic ease-out over `len` ticks.
-    let u = (4096 - (t.clamp(0, len) * 4096 / len)).max(0);
-    4096 - (u * u >> 12) * u / 4096
+    psx_math::ease::ease_out_cubic_q12(t.clamp(0, len) * 4096 / len)
 }
 
 /// The camera `t` ticks into the scene. It swings round the winner a turn every
@@ -207,7 +206,9 @@ mod tests {
         let mut last = orbit(0, true);
         for t in 1..4000 {
             let s = orbit(t, true);
-            let r = isqrt((s.eye.0 - SPOT.0).pow(2) / 16 + (s.eye.2 - SPOT.1).pow(2) / 16) * 4;
+            let r = psx_math::int32::isqrt_i32(
+                (s.eye.0 - SPOT.0).pow(2) / 16 + (s.eye.2 - SPOT.1).pow(2) / 16,
+            ) * 4;
             assert!((330..=1000).contains(&r), "radius {r} at {t}");
             assert!(s.eye.0.abs() < crate::HALF_X - 300 && s.eye.2.abs() < crate::HALF_Z - 300);
             assert!((60..=240).contains(&s.eye.1));
@@ -216,10 +217,6 @@ mod tests {
             assert!(d <= 40, "jump of {d} at {t}");
             last = s;
         }
-    }
-
-    fn isqrt(v: i32) -> i32 {
-        psx_math::int32::isqrt_i32(v)
     }
 
     #[test]

@@ -14,6 +14,8 @@
 //! the renderer is handed in place of the real one.
 
 use crate::{uu, Sim, FP, GOAL_FREEZE_TICKS, V3};
+use psx_math::ease::{lerp_q8, smoothstep_q8};
+use psx_math::int32::isqrt_i32;
 
 /// Frames in the ring: four seconds of ticks.
 pub const FRAMES: usize = 240;
@@ -235,10 +237,6 @@ impl Clock {
     }
 }
 
-fn lerp(a: i32, b: i32, k: i32) -> i32 {
-    a + ((b - a) * k >> 8)
-}
-
 /// Angles in Q12 turns, the short way round.
 fn lerp_angle(a: u16, b: u16, k: i32) -> u16 {
     let d = ((i32::from(b) - i32::from(a) + 2048).rem_euclid(4096)) - 2048;
@@ -257,7 +255,7 @@ fn position(w: Window, s_q8: i32) -> (i32, i32) {
 pub fn apply(sim: &mut Sim, rec: &Recorder, w: Window, s_q8: i32) {
     let (i, k) = position(w, s_q8);
     let (a, b) = (rec.get(i), rec.get(i + 1));
-    let mix = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
+    let mix = |x: i16, y: i16| lerp_q8(i32::from(x), i32::from(y), k);
     sim.ball.p = V3::new(
         uu(mix(a.ball[0], b.ball[0])),
         uu(mix(a.ball[1], b.ball[1])),
@@ -295,10 +293,6 @@ pub fn apply(sim: &mut Sim, rec: &Recorder, w: Window, s_q8: i32) {
 }
 
 /// Isqrt for the camera, on inputs whose squares fit i32.
-fn isqrt(v: i32) -> i32 {
-    psx_math::int32::isqrt_i32(v)
-}
-
 /// What the director has settled about this goal before the replay starts.
 #[derive(Copy, Clone, Debug)]
 pub struct Direction {
@@ -373,14 +367,15 @@ fn workable(rec: &Recorder, w: Window, style: Style) -> bool {
     while s <= (RAMP_OUT + 8) * 256 {
         let (shot, wanted) = goal_shot(rec, w, &d, s);
         let (a, b) = (shot.eye, wanted);
-        let strain = isqrt(((a.0 - b.0).pow(2) + (a.1 - b.1).pow(2) + (a.2 - b.2).pow(2)) / 16) * 4;
+        let strain =
+            isqrt_i32(((a.0 - b.0).pow(2) + (a.1 - b.1).pow(2) + (a.2 - b.2).pow(2)) / 16) * 4;
         if strain > MAX_STRAIN {
             return false;
         }
         for seat in 0..2 {
             let c = car_at(rec, w, seat, s);
             let (dx, dz) = (c.0 - a.0, c.2 - a.2);
-            if isqrt((dx * dx + dz * dz) / 16) * 4 < CAR_CLEARANCE && (c.1 - a.1).abs() < 500 {
+            if isqrt_i32((dx * dx + dz * dz) / 16) * 4 < CAR_CLEARANCE && (c.1 - a.1).abs() < 500 {
                 return false;
             }
         }
@@ -393,7 +388,7 @@ fn workable(rec: &Recorder, w: Window, style: Style) -> bool {
 const RAMP_OUT: i32 = 38;
 
 fn unit2(dx: i32, dz: i32) -> (i32, i32, i32) {
-    let len = isqrt(dx * dx + dz * dz).max(1);
+    let len = isqrt_i32(dx * dx + dz * dz).max(1);
     (dx * 4096 / len, dz * 4096 / len, len)
 }
 
@@ -448,12 +443,11 @@ fn keep_inside(e: (i32, i32, i32), goal_box: bool) -> (i32, i32, i32) {
 }
 
 fn mix3(a: (i32, i32, i32), b: (i32, i32, i32), k: i32) -> (i32, i32, i32) {
-    (lerp(a.0, b.0, k), lerp(a.1, b.1, k), lerp(a.2, b.2, k))
-}
-
-fn ease(t: i32) -> i32 {
-    let t = t.clamp(0, 256);
-    (3 * t * t >> 8) - (2 * t * t >> 8) * t / 256
+    (
+        lerp_q8(a.0, b.0, k),
+        lerp_q8(a.1, b.1, k),
+        lerp_q8(a.2, b.2, k),
+    )
 }
 
 impl Direction {
@@ -534,7 +528,7 @@ pub struct Shot {
 fn car_at(rec: &Recorder, w: Window, seat: usize, s_q8: i32) -> (i32, i32, i32) {
     let (i, k) = position(w, s_q8);
     let (a, b) = (rec.get(i), rec.get(i + 1));
-    let m = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
+    let m = |x: i16, y: i16| lerp_q8(i32::from(x), i32::from(y), k);
     (
         m(a.cars[seat].p[0], b.cars[seat].p[0]),
         m(a.cars[seat].p[1], b.cars[seat].p[1]),
@@ -545,7 +539,7 @@ fn car_at(rec: &Recorder, w: Window, seat: usize, s_q8: i32) -> (i32, i32, i32) 
 fn ball_at(rec: &Recorder, w: Window, s_q8: i32) -> (i32, i32, i32) {
     let (i, k) = position(w, s_q8);
     let (a, b) = (rec.get(i), rec.get(i + 1));
-    let m = |x: i16, y: i16| lerp(i32::from(x), i32::from(y), k);
+    let m = |x: i16, y: i16| lerp_q8(i32::from(x), i32::from(y), k);
     (
         m(a.ball[0], b.ball[0]),
         m(a.ball[1], b.ball[1]),
@@ -600,9 +594,9 @@ pub fn direct(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> Shot {
             car.2 + (pz * 900 >> 12) + (tz * 300 >> 12),
         );
         let target = (
-            lerp(car.0, ball.0, 110),
-            lerp(car.1, ball.1, 110) + 30,
-            lerp(car.2, ball.2, 110),
+            lerp_q8(car.0, ball.0, 110),
+            lerp_q8(car.1, ball.1, 110) + 30,
+            lerp_q8(car.2, ball.2, 110),
         );
         return Shot {
             eye: keep_inside(eye, false),
@@ -621,8 +615,8 @@ fn goal_shot(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> (Shot, (i32
     let rel = s_q8 >> 8;
     let ball = ball_at(rec, w, s_q8);
     let t0 = d.touch.max(-90);
-    let into = ease((s_q8 - t0 * 256) * 256 / ((8 - t0).max(1) * 256));
-    let out = ease((s_q8 - 8 * 256) * 256 / (RAMP_OUT * 256 - 8 * 256));
+    let into = smoothstep_q8((s_q8 - t0 * 256) * 256 / ((8 - t0).max(1) * 256));
+    let out = smoothstep_q8((s_q8 - 8 * 256) * 256 / (RAMP_OUT * 256 - 8 * 256));
     // The ball with room to move into: the aim runs ahead of it along its path
     // until it is in the net.
     let (v0, v1) = (
@@ -663,7 +657,7 @@ fn goal_shot(rec: &Recorder, w: Window, d: &Direction, s_q8: i32) -> (Shot, (i32
         (2 * eye0.0 - target.0, eye0.1 + 40, 2 * eye0.2 - target.2),
         55 * out / 256,
     );
-    let plane = lerp(plane0, plane1, into) - (plane1 - plane0 + 30) * out / 256;
+    let plane = lerp_q8(plane0, plane1, into) - (plane1 - plane0 + 30) * out / 256;
     (
         Shot {
             eye: keep_inside(eye, box_),
@@ -839,9 +833,9 @@ mod tests {
                     "{e:?} behind the line"
                 );
             }
-            let dist =
-                isqrt((e.0 - t.0).pow(2) / 16 + (e.1 - t.1).pow(2) / 16 + (e.2 - t.2).pow(2) / 16)
-                    * 4;
+            let dist = isqrt_i32(
+                (e.0 - t.0).pow(2) / 16 + (e.1 - t.1).pow(2) / 16 + (e.2 - t.2).pow(2) / 16,
+            ) * 4;
             assert!(dist >= 180, "the eye is on the ball at {n}: {dist}");
             assert!((180..=430).contains(&shot.plane), "{}", shot.plane);
             let b = ball_at(rec, w, c.s);
@@ -853,7 +847,7 @@ mod tests {
                 );
             }
             if let Some(l) = last {
-                let step = isqrt(
+                let step = isqrt_i32(
                     ((e.0 - l.eye.0).pow(2) + (e.1 - l.eye.1).pow(2) + (e.2 - l.eye.2).pow(2)) / 16,
                 ) * 4;
                 if step > 150 {
