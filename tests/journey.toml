@@ -27,6 +27,10 @@ min_changes = 5
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 301 }
 [[step]]
 checkpoint = "menu"
+# golden_on: proven unreachable on mister,gpu-irq=never (that core presents the title at 30 fps with fixed parity,
+# so the frame the golden shows, a scene built at an even tick, is never on screen at any anchor). Proof: campaign
+# pin-wave-1116/nvc/NOTES.md "wave 6", pictures nvc/w6/. The installed build fails these checkpoints the same way.
+golden_on = ["real", "mister"]
 mask = [{ x = 10, y = 10, w = 176, h = 16 }]
 [[step.assert]]
 kind = "presenting"
@@ -66,6 +70,10 @@ hold = 4
 wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 12, op = "ge", value = 425 }
 [[step]]
 checkpoint = "select"
+# golden_on: proven unreachable on mister,gpu-irq=never (that core presents the title at 30 fps with fixed parity,
+# so the frame the golden shows, a scene built at an even tick, is never on screen at any anchor). Proof: campaign
+# pin-wave-1116/nvc/NOTES.md "wave 6", pictures nvc/w6/. The installed build fails these checkpoints the same way.
+golden_on = ["real", "mister"]
 mask = [{ x = 70, y = 106, w = 204, h = 31 }]
 [[step.assert]]
 kind = "not_flat"
