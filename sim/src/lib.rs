@@ -36,7 +36,7 @@ pub mod camera;
 #[cfg(test)]
 mod camera_tests;
 pub mod ink;
-pub mod playlist;
+
 pub mod replay;
 pub mod skip;
 mod stats;
