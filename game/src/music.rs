@@ -123,18 +123,13 @@ impl Music {
         let mut reader = SectorReader::with_cd(unsafe { Cd::steal() });
         let mut sector = [0u32; SECTOR_WORDS];
         self.available = false;
-        if read_sector(&mut reader, iso::PVD_LBA, &mut sector) {
-            if let Some((root_lba, _)) = iso::root_directory(iso::as_bytes(&sector)) {
-                if read_sector(&mut reader, root_lba, &mut sector) {
-                    self.available = true;
-                    for (i, slot) in self.files.iter_mut().enumerate() {
-                        *slot = iso::find_in_directory(iso::as_bytes(&sector), XA_FILE_NAMES[i])
-                            .map(|(lba, size)| {
-                                File::from_directory_entry(lba, size, XA_FILE_NUMBERS[i], SPEED)
-                            });
-                        self.available &= slot.is_some();
-                    }
-                }
+        if iso::read_root_sector(&mut sector, |lba, into| read_sector(&mut reader, lba, into)) {
+            self.available = true;
+            for (i, slot) in self.files.iter_mut().enumerate() {
+                *slot = iso::find_in_directory(iso::as_bytes(&sector), XA_FILE_NAMES[i]).map(
+                    |(lba, size)| File::from_directory_entry(lba, size, XA_FILE_NUMBERS[i], SPEED),
+                );
+                self.available &= slot.is_some();
             }
         }
         psx_io::irq::set_mask(saved_irq_mask);
