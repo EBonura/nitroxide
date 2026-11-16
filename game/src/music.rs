@@ -71,6 +71,8 @@ const POLL_TICKS: u32 = 6;
 const POLL_LEAD_TICKS: u32 = 60 * 12;
 /// Sim ticks per second.
 const TICKS_PER_SECOND: u32 = 60;
+/// The length every song is cut to in a `music-lab` build.
+const LAB_SONG_MS: u32 = 12_000;
 
 pub struct Music {
     /// The disc carries the song files.
@@ -261,6 +263,7 @@ impl Music {
     /// Ask the drive for the current song.
     fn start(&mut self, tick: u32, attempts: u8) {
         let (file, channel, ms) = XA_SONGS[self.list.current()];
+        let ms = if cfg!(feature = "music-lab") { LAB_SONG_MS } else { ms };
         let Some(file) = self.files[file as usize] else {
             self.start_at = None;
             return;
