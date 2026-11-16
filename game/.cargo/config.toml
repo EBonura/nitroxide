@@ -22,3 +22,4 @@ build-std-features = ["compiler-builtins-mem"]
 # The architecture gate (sdk/docs/GATE.md) reads this program's exceptions from here.
 [env]
 PSX_GATE_FILE = { value = "../psx-gate.toml", relative = true }
+PSX_HAZARD_TRAMPOLINE_WORDS = "256"

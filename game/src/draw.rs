@@ -25,7 +25,7 @@
 use nitroxide_sim as sim;
 use psx_asset::{Mesh, Texture};
 use psx_engine::{
-    ActorTransform, CameraDepth, DepthRange, DepthSlot, GpuPacket, OtFrame, Vec3World,
+    ActorTransform, CameraDepth, DepthRange, DepthSlot, GpuPacket, OtFrame, OtFrameDepth, Vec3World,
 };
 use psx_font::FontAtlas;
 use psx_gpu::frame::PrimitiveArena;

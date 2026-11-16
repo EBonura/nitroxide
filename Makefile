@@ -219,8 +219,8 @@ psoxide:
 # Every search can leave a load in a slot whose consumer runs inside the load
 # delay, so the link is always followed by the SDK's hazard-patch, which reroutes
 # those branches through psx-rt's HAZARD_TRAMPOLINES and rescans (46 of the
-# default 96 words in the shipping PGO build; psx-rt's hazard-trampolines-256
-# feature is the room to grow into). `--config` appends to game/.cargo/config.toml; an exported
+# default 96 words in the shipping PGO build; PSX_HAZARD_TRAMPOLINE_WORDS=256
+# in game/.cargo/config.toml is the room to grow into). `--config` appends to game/.cargo/config.toml; an exported
 # RUSTFLAGS would replace it.
 comma := ,
 PSX_DELAY_SLOT_FLAGS = $(filter -C%,$(subst ", ,$(subst $(comma), ,$(shell sed -n 's/^PSX_DELAY_SLOT_FLAGS :*= *//p' "$(PSOXIDE)/tools/sdk-examples.mk"))))
