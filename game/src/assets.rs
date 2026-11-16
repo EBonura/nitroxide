@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Startup loading for assets stored in the disc's shared `WORLD.PAK`.
 
+use psx_io::periph::Cd;
 use psx_pack::cd::{load_chunk, SectorReader, SECTOR_WORDS, WORLD_PACK_DEFAULT_LBA};
 
 use crate::draw;
@@ -21,7 +22,8 @@ const ARENA_TEXTURE_WORDS: usize = ARENA_TEXTURE_CAPACITY.div_ceil(4);
 #[inline(never)]
 pub fn load_arena_texture() -> bool {
     let saved_irq_mask = psx_io::irq::mask();
-    let mut reader = SectorReader::new();
+    // SAFETY: boot only, before the music claims the drive: nothing else drives the CD controller.
+    let mut reader = SectorReader::with_cd(unsafe { Cd::steal() });
     let mut scratch = [0u32; SECTOR_WORDS];
     let data = draw::boot_buffer(ARENA_TEXTURE_WORDS);
     // The buffer holds whatever the packet sets last held: `load_chunk` writes

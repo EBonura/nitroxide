@@ -119,7 +119,8 @@ impl Music {
     /// Boot only: this reads the disc, which the music must not be doing.
     pub fn locate(&mut self) {
         let saved_irq_mask = psx_io::irq::mask();
-        let mut reader = SectorReader::new();
+        // SAFETY: boot only, before any song: nothing else drives the CD controller.
+        let mut reader = SectorReader::with_cd(unsafe { Cd::steal() });
         let mut sector = [0u32; SECTOR_WORDS];
         self.available = false;
         if read_sector(&mut reader, iso::PVD_LBA, &mut sector) {
