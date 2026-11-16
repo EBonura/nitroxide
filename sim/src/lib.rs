@@ -1839,10 +1839,7 @@ impl Sim {
 
     /// xorshift32. Deterministic, and never zero, which would stick it.
     fn ai_rand(&mut self) -> u32 {
-        let mut x = self.ai_rng;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
+        let x = psx_fx::Xorshift32::step(self.ai_rng);
         self.ai_rng = x;
         x
     }

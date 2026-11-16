@@ -19,6 +19,7 @@ path = "src/lib.rs"
 # Q0.12 sin/cos and integer sqrt. Pure integer, no_std, builds for host and
 # console alike, so the sim needs nothing of its own.
 psx-math = { path = "../.psoxide/sdk/crates/psx-math" }
+psx-fx = { path = "../.psoxide/sdk/crates/psx-fx" }
 # The shared settings record, for the FOV save migration. Without the card
 # feature this is the profile and its codec only.
 psx-settings = { path = "../.psoxide/sdk/crates/psx-settings", default-features = false }

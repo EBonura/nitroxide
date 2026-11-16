@@ -69,10 +69,7 @@ impl Playlist {
     }
 
     fn step(&mut self) -> u32 {
-        let mut x = self.rng;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
+        let x = psx_fx::Xorshift32::step(self.rng);
         self.rng = x;
         x
     }

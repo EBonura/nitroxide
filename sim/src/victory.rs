@@ -113,10 +113,7 @@ impl Confetti {
     }
 
     fn rand(&mut self, range: i32) -> i32 {
-        let mut x = self.rng;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
+        let x = psx_fx::Xorshift32::step(self.rng);
         self.rng = x;
         (x >> 8) as i32 % range.max(1)
     }
