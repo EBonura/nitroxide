@@ -35,7 +35,7 @@ value = 1
 [[step]]
 press = ["up"]
 hold = 4
-wait = 20
+wait = 19
 [[step]]
 checkpoint = "credits-row"
 mask = [{ x = 10, y = 10, w = 176, h = 16 }, { x = 216, y = 0, w = 104, h = 36 }]
