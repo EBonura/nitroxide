@@ -1,0 +1,80 @@
+# Cross-emulator smoke (psoxide-test [cross]): the gate disc (the shipping code plus the state
+# receipts and a fixed seed) boots to the title, a press reaches
+# car select, a press starts a match, the countdown runs, and driving with accelerate and boost takes
+# a boost pad. Closed loop only: every press is held until the game's own state says it
+# took, every wait ends on game state, every checkpoint reads RAM. The same file runs on PSoXide
+# (the gate), PCSX-ReARMed and PCSX-Redux; the harness swaps the pad for each run of [cross] pads.
+# NITRO_GATE_STATE words: +16 phase (1 title, 2 select, 3 play), +24 blue score, +36 kickoff hold,
+# +44 boost pads spent.
+name = "nitroxide-smoke"
+title = "NitroXide smoke: title, select, play, input moves the game"
+disc = "build/gate/NitroXide.cue"
+symbols = "build/gate-symbols.txt"
+pad = "dualshock"
+
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 1 }
+timeout = 3000
+
+[[step]]
+checkpoint = "title"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+value = 1
+
+# Start, not Cross: the next press (Cross on car select) then has a fresh edge, no fixed rest.
+[[step]]
+press = ["start"]
+hold_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 2 }
+timeout = 600
+
+[[step]]
+checkpoint = "select"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+value = 2
+
+[[step]]
+press = ["cross"]
+hold_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 16, op = "eq", value = 3 }
+timeout = 600
+
+[[step]]
+checkpoint = "play"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 16
+value = 3
+
+# The countdown runs (the kickoff hold counts down from 180), then play is live.
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "between", value = 1, value_hi = 179 }
+timeout = 1500
+
+[[step]]
+wait_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 36, op = "eq", value = 0 }
+timeout = 600
+
+[[step]]
+label = "drive into a boost pad"
+press = ["r2", "circle"]
+hold_until = { kind = "ram", sym = "NITRO_GATE_STATE", offset = 44, op = "gt", value = 0 }
+timeout = 600
+
+[[step]]
+checkpoint = "input-moves-the-game"
+golden = false
+[[step.assert]]
+kind = "ram"
+sym = "NITRO_GATE_STATE"
+offset = 44
+op = "gt"
+value = 0

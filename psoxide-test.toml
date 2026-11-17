@@ -1,0 +1,89 @@
+# NitroXide's test description for psoxide-test (the SDK's harness, tools/psoxide-test).
+# It declares what to build and check; the harness decides how. Baseline: psoxide-test.baseline.toml.
+schema = 1
+name = "NitroXide"
+repository = "EBonura/nitroxide"
+
+# The shipping disc (what the library gets). Its state blocks are compiled out (receipts feature).
+[[build]]
+name = "ship"
+out = "build/ship"
+commands = [
+  ["make", "build"],
+  ["make", "pack", "PACK_OUT={out}/NitroXide.bin"],
+]
+collect = { "nitroxide.exe" = "game/target/mipsel-sony-psx/release/nitroxide.exe", "link.map" = "game/target/mipsel-sony-psx/psoxide-pgo-maps/*" }
+disc = "NitroXide.cue"
+map = "link.map"
+
+# The gate disc: fixed seed and the state receipts (`make gate-disc`), what the journeys and the
+# smoke play; `make gate-disc` also locates the state blocks in its exe (build/gate-symbols.txt).
+[[build]]
+name = "gate"
+out = "build/gate"
+commands = [["make", "gate-disc"]]
+collect = { "nitroxide.exe" = "game/target/mipsel-sony-psx/release/nitroxide.exe", "link.map" = "game/target/mipsel-sony-psx/psoxide-pgo-maps/*" }
+disc = "NitroXide.cue"
+map = "link.map"
+
+[size]
+build = "ship"
+
+# The three tapes the placement layout is trained on; gameplay polls only.
+[[speed]]
+name = "train"
+build = "ship"
+tape = "pgo/train.pxtape"
+polls = [396, 1200]
+offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
+launch_args = ["--embedded-playtest"]
+
+[[speed]]
+name = "wall"
+build = "ship"
+tape = "pgo/wall.pxtape"
+polls = [1500, 3300]
+offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
+launch_args = ["--embedded-playtest"]
+
+[[speed]]
+name = "heavy"
+build = "ship"
+tape = "pgo/heavy.pxtape"
+polls = [3150, 3600]
+offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
+launch_args = ["--embedded-playtest"]
+
+[journeys]
+files = "tests/*.toml"
+precheck = ["journey", "smoke-boot-play"]
+
+[cross]
+smoke = ["tests/smoke-boot-play.toml"]
+# The shipping disc has no state blocks: it must boot and present with no input on every emulator.
+boot = { build = "ship", frames = 3000 }
+
+[[host]]
+name = "test"
+command = ["make", "test"]
+
+[[host]]
+name = "fmt-check"
+command = ["make", "fmt-check"]
+
+[[host]]
+name = "no64"
+command = ["make", "no64"]
+
+# Load-delay hazards in guest asm (fleet rule since SDK 580daa02), with the pin's own scanner.
+[[host]]
+name = "check-mfc0"
+command = ["cargo", "run", "-q", "--release", "--locked", "--manifest-path", ".psoxide/tools/psoxide-hazard/Cargo.toml", "--bin", "check-mfc0", "--", "game", "sim"]
+
+[clean]
+build = "ship"
+seed = [".psoxide"]
+compare = ["NitroXide.bin", "NitroXide.cue", "nitroxide.exe"]
+
+[install]
+build = "ship"
