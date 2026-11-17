@@ -13,6 +13,7 @@ name = "nitroxide-sim"
 version = "0.1.0"
 dependencies = [
  "psx-font",
+ "psx-fx",
  "psx-math",
  "psx-pad",
  "psx-settings",
@@ -38,6 +39,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "psx-fx"
+version = "0.1.0"
+dependencies = [
+ "psx-gpu",
+]
+
+[[package]]
 name = "psx-gpu"
 version = "0.1.0"
 dependencies = [
@@ -58,6 +66,7 @@ name = "psx-io"
 version = "0.1.0"
 dependencies = [
  "psx-hw",
+ "psx-math",
 ]
 
 [[package]]
@@ -78,6 +87,7 @@ name = "psx-settings"
 version = "0.1.0"
 dependencies = [
  "psx-display",
+ "psx-math",
  "psx-pad",
 ]
 
