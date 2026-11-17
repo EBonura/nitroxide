@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-goal"
 title = "NitroXide: goal explosion, horn and crowd, then the three-two-one and the go"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 4000
 [[step]]

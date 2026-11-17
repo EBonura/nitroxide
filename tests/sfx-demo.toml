@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-demo"
 title = "NitroXide: the attract demo plays supersonic, bump, net, post, demolition and goal sounds"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 13200
 [[step]]

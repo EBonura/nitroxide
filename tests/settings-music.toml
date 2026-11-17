@@ -1,6 +1,7 @@
 name = "nitroxide-settings-music"
 title = "NitroXide: ten settings rows fit the installed music variant"
-disc = ["build/gate-music/NitroXide.cue"]
+disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 memcard = "fresh"
 max_ticks = 900

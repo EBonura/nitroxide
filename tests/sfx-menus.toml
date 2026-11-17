@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-menus"
 title = "NitroXide: every menu action sounds, and sound off is silent"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 memcard = "fresh"
 max_ticks = 5200

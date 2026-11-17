@@ -2,6 +2,7 @@
 name = "nitroxide-settings-unformatted"
 title = "NitroXide: unformatted card remains untouched until explicit Save and format consent"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2400
 memcard = "fresh"

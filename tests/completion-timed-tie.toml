@@ -1,6 +1,7 @@
 name = "nitroxide-timed-tie"
 title = "NitroXide: level timed match, overtime, golden goal, results and return"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 pad2 = "analog"
 max_ticks = 7500

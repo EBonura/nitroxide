@@ -2,6 +2,7 @@
 name = "nitroxide-credits"
 title = "NitroXide: no credits on the splash, a Credits row opens two pages"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 1000
 

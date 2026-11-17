@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-final"
 title = "NitroXide: the winning goal sounds the horn, the results screen the final whistle"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 3600
 [[step]]

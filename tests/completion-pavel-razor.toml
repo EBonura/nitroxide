@@ -1,6 +1,7 @@
 name = "nitroxide-pavel-razor"
 title = "NitroXide: RAZOR (the first Pavel 3D car) selected, started and driven"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2400
 [[step]]

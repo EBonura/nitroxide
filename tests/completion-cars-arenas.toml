@@ -1,6 +1,7 @@
 name = "nitroxide-cars-arenas"
 title = "NitroXide: all three cars and arena rigs through normal completed matches"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 12000
 [[step]]

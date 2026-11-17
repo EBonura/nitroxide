@@ -1,6 +1,7 @@
 name = "nitroxide-overtime-orange"
 title = "NitroXide: overtime won by the second player, results and return"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 pad2 = "analog"
 max_ticks = 7500

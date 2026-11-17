@@ -1,6 +1,7 @@
 name = "nitroxide-demo-cycle"
 title = "NitroXide: complete authored four-show attract cycle and automatic return"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 13000
 [[step]]

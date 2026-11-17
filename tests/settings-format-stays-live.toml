@@ -5,6 +5,7 @@
 name = "nitroxide-settings-format-stays-live"
 title = "NitroXide: formatting a blank card keeps the game presenting"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2600
 memcard = "fresh"

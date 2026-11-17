@@ -1,6 +1,7 @@
 name = "nitroxide-completion-chain"
 title = "NitroXide: six match rules, bounded practice and complete attract cycle"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 80000
 [[step]]

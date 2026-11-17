@@ -1,6 +1,7 @@
 name = "nitroxide-practice-timed"
 title = "NitroXide: normal practice-timed match, celebration, results and return"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 6100
 

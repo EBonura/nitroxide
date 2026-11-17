@@ -1,6 +1,7 @@
 name = "nitroxide-two-player-reassignment"
 title = "NitroXide: normal two-player match, celebration, results and return"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 pad2 = "analog"
 max_ticks = 6100

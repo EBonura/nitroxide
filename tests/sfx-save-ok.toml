@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-save-ok"
 title = "NitroXide: a successful Save Settings sounds its chime"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 memcard = "fresh"
 max_ticks = 1200

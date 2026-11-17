@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-timed-end"
 title = "NitroXide: the last five seconds tick and the final whistle ends a one minute match"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 6000
 [[step]]

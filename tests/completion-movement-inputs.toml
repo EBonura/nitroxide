@@ -1,6 +1,7 @@
 name = "nitroxide-movement-inputs"
 title = "NitroXide: camera, movement inputs, quit and fresh match reset"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2400
 [[step]]

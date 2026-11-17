@@ -1,6 +1,7 @@
 name = "nitroxide-victory-rematch"
 title = "NitroXide: the winning goal is replayed, the victory scene builds in, a press before it is ready does nothing, REMATCH starts the same match again"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 6000
 

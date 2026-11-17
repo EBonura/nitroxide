@@ -1,6 +1,7 @@
 name = "nitroxide-pavel-cinder"
 title = "NitroXide: CINDER (the last of the nine cars) selected, started and driven"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2400
 [[step]]

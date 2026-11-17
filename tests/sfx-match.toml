@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-match"
 title = "NitroXide: engine, crowd, jump, flip, landing, boost, empty tank, skid, bounce and pad sounds fire on their events"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 3400
 [[step]]

@@ -1,6 +1,7 @@
 name = "nitroxide-first-to-three"
 title = "NitroXide: normal first-to-three match, celebration, results and return"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 6500
 

@@ -1,6 +1,7 @@
 name = "nitroxide-sfx-garage-two-player"
 title = "NitroXide: a seat locking in chimes, unlocking sounds back, the last lock-in says go"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2000
 pad2 = "analog"

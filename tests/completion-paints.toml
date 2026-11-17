@@ -1,6 +1,7 @@
 name = "nitroxide-paints"
 title = "NitroXide: all eight paints through both seat selection panels"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 3000
 [[step]]

@@ -1,6 +1,7 @@
 name = "nitroxide-supported-settings"
 title = "NitroXide: supported settings changes, real card save and cold reboot"
-disc = ["build/gate-music/NitroXide.cue"]
+disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2400
 [[step]]

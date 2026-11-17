@@ -1,6 +1,7 @@
 name = "nitroxide-goal-replay"
 title = "NitroXide: goal replay, GOAL banner, slow motion, a watched replay and a skipped one"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 9000
 

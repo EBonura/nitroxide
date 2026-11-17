@@ -2,6 +2,7 @@
 name = "nitroxide-settings-manual"
 title = "NitroXide: settings exits preserve card, explicit Save survives reboot"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2200
 memcard = "fresh"

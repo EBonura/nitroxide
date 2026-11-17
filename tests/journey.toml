@@ -3,6 +3,7 @@
 name = "nitroxide"
 title = "NitroXide: splash through scored goal and kickoff reset"
 disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 3000
 

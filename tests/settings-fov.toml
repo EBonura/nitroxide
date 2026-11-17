@@ -4,7 +4,8 @@
 # Screen Y, Save, Back, so FOV is the fifth and Save the ninth.
 name = "nitroxide-settings-fov"
 title = "NitroXide: FOV change, real card save and cold reboot"
-disc = ["build/gate-music/NitroXide.cue"]
+disc = ["build/gate/NitroXide.cue"]
+pad = "dualshock"
 symbols = ["build/gate-symbols.txt"]
 max_ticks = 2400
 [[step]]
