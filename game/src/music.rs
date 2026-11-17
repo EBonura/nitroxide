@@ -263,7 +263,11 @@ impl Music {
     /// Ask the drive for the current song.
     fn start(&mut self, tick: u32, attempts: u8) {
         let (file, channel, ms) = XA_SONGS[usize::from(self.list.current_song())];
-        let ms = if cfg!(feature = "music-lab") { LAB_SONG_MS } else { ms };
+        let ms = if cfg!(feature = "music-lab") {
+            LAB_SONG_MS
+        } else {
+            ms
+        };
         let Some(file) = self.files[file as usize] else {
             self.start_at = None;
             return;
