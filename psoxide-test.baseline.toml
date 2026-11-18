@@ -1,7 +1,7 @@
 # Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
 # psoxide-test.toml with a reason, never by hand-editing these numbers).
 schema = 1
-blessed_commit = "b95968024ad8072c5c06c7884a3cedb5de4dac27+dirty"
+blessed_commit = "5d96a80a8fb8142e5ac453de39b2457ecf4bbfac"
 sdk_pin = "aaf06b0ffa5d3fbf0868e7e6c40f4f3999d695f6"
 
 [size.ship]
@@ -18,6 +18,13 @@ frame_work_p99 = [1120464, 1120464, 1120464, 1120465, 1120465, 1120465, 1120465,
 vblanks = ["1:356,2:46", "1:356,2:46", "1:356,2:46", "1:350,2:49", "1:350,2:49", "1:338,2:49", "1:326,2:49", "1:314,2:49"]
 
 [speed.train]
+offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
+flips = [789, 789, 785, 783, 777, 777, 777, 777]
+work_per_frame = [558356, 559746, 561228, 563482, 567094, 567094, 567094, 567094]
+frame_work_p99 = [1098766, 1099408, 1118805, 1119118, 1119856, 1119856, 1119856, 1119856]
+vblanks = ["1:774,2:14", "1:773,2:15", "1:766,2:18", "1:762,2:20", "1:750,2:26", "1:750,2:26", "1:750,2:26", "1:750,2:26"]
+
+[speed.train-state]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
 flips = [789, 789, 785, 783, 777, 777, 777, 777]
 work_per_frame = [558356, 559746, 561228, 563482, 567094, 567094, 567094, 567094]
@@ -196,3 +203,6 @@ ticks = 640
 open_loop = 0
 
 [host]
+
+[maps]
+ship = "36235ede9bc0025d0e4ff0946a78009c9e94f60b91985804c724604f70797ba6"
