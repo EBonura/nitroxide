@@ -1,8 +1,8 @@
 # Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
 # psoxide-test.toml with a reason, never by hand-editing these numbers).
 schema = 1
-blessed_commit = "5d96a80a8fb8142e5ac453de39b2457ecf4bbfac"
-sdk_pin = "aaf06b0ffa5d3fbf0868e7e6c40f4f3999d695f6"
+blessed_commit = "90a3a5a7de78db3f1a73a9a8643ea4d041d6e9c9"
+sdk_pin = "0187c5f4fab876cbeaa9a99a37df305ccae1e4a3"
 
 [size.ship]
 text = 592248
@@ -41,168 +41,209 @@ vblanks = ["1:1734,2:32", "1:1734,2:32", "1:1734,2:32", "1:1734,2:32", "1:1725,2
 [journeys.completion-cars-arenas]
 ticks = 5109
 open_loop = 36
+clock_waits = 0
 
 [journeys.completion-chain]
 ticks = 57963
 open_loop = 103
+clock_waits = 0
 
 [journeys.completion-demo-cycle]
 ticks = 6773
 open_loop = 7
+clock_waits = 0
 
 [journeys.completion-first-to-five]
 ticks = 4890
 open_loop = 24
+clock_waits = 0
 
 [journeys.completion-first-to-one]
 ticks = 1946
 open_loop = 12
+clock_waits = 0
 
 [journeys.completion-first-to-three]
 ticks = 3423
 open_loop = 18
+clock_waits = 0
 
 [journeys.completion-goal-replay]
 ticks = 3778
 open_loop = 21
+clock_waits = 0
 
 [journeys.completion-movement-inputs]
 ticks = 1155
 open_loop = 16
+clock_waits = 0
 
 [journeys.completion-music-brightness]
 ticks = 1460
 open_loop = 14
+clock_waits = 0
 
 [journeys.completion-overtime-orange]
 ticks = 5767
 open_loop = 14
+clock_waits = 0
 
 [journeys.completion-paints]
 ticks = 816
 open_loop = 22
+clock_waits = 0
 
 [journeys.completion-pavel-cinder]
 ticks = 1137
 open_loop = 13
+clock_waits = 0
 
 [journeys.completion-pavel-razor]
 ticks = 1077
 open_loop = 8
+clock_waits = 0
 
 [journeys.completion-practice-timed]
 ticks = 5630
 open_loop = 13
+clock_waits = 0
 
 [journeys.completion-settled-results]
 ticks = 1946
 open_loop = 12
+clock_waits = 0
 
 [journeys.completion-supported-settings]
 ticks = 1532
 open_loop = 18
+clock_waits = 0
 
 [journeys.completion-timed-five]
 ticks = 19996
 open_loop = 12
+clock_waits = 0
 
 [journeys.completion-timed-one]
 ticks = 5612
 open_loop = 12
+clock_waits = 0
 
 [journeys.completion-timed-three]
 ticks = 12801
 open_loop = 10
+clock_waits = 0
 
 [journeys.completion-timed-tie]
 ticks = 5767
 open_loop = 14
+clock_waits = 0
 
 [journeys.completion-two-player-reassignment]
 ticks = 4770
 open_loop = 22
+clock_waits = 0
 
 [journeys.completion-victory]
 ticks = 1967
 open_loop = 15
+clock_waits = 0
 
 [journeys.credits]
 ticks = 537
 open_loop = 6
+clock_waits = 0
 
 [journeys.journey]
 ticks = 1822
 open_loop = 8
+clock_waits = 0
 
 [journeys.save-repin]
 ticks = 1376
 open_loop = 12
+clock_waits = 0
 
 [journeys.settings-format-stays-live]
 ticks = 1629
 open_loop = 14
+clock_waits = 0
 
 [journeys.settings-fov]
 ticks = 1215
 open_loop = 11
+clock_waits = 0
 
 [journeys.settings-load]
 ticks = 347
 open_loop = 0
+clock_waits = 0
 
 [journeys.settings-manual]
 ticks = 1195
 open_loop = 18
+clock_waits = 0
 
 [journeys.settings-music]
 ticks = 568
 open_loop = 9
+clock_waits = 0
 
 [journeys.settings-unformatted]
 ticks = 1227
 open_loop = 14
+clock_waits = 0
 
 [journeys.sfx-demo]
 ticks = 6767
 open_loop = 4
+clock_waits = 0
 
 [journeys.sfx-final]
 ticks = 1749
 open_loop = 8
+clock_waits = 0
 
 [journeys.sfx-garage-two-player]
 ticks = 940
 open_loop = 7
+clock_waits = 0
 
 [journeys.sfx-goal]
 ticks = 2066
 open_loop = 8
+clock_waits = 0
 
 [journeys.sfx-match]
 ticks = 1517
 open_loop = 12
+clock_waits = 0
 
 [journeys.sfx-menus]
 ticks = 2153
 open_loop = 40
+clock_waits = 0
 
 [journeys.sfx-save-no-card]
 ticks = 578
 open_loop = 5
+clock_waits = 0
 
 [journeys.sfx-save-ok]
 ticks = 585
 open_loop = 5
+clock_waits = 0
 
 [journeys.sfx-timed-end]
 ticks = 5386
 open_loop = 6
+clock_waits = 0
 
 [journeys.smoke-boot-play]
 ticks = 640
 open_loop = 0
+clock_waits = 0
 
 [host]
 
 [maps]
-ship = "36235ede9bc0025d0e4ff0946a78009c9e94f60b91985804c724604f70797ba6"
+ship = "1508de5743755ab280d5f22250cf0918e993b3fcc54a93b0d5445e2fd029e2fb"
