@@ -54,6 +54,19 @@ polls = [3150, 3600]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
 launch_args = ["--embedded-playtest"]
 
+# The train tape's span again, declared by game state instead of poll numbers: the renderer's
+# sim tick (CAMERA_TICK, the match clock) from 272 to 1076. A change to the menus before the
+# match moves the poll numbers but not this window.
+[[speed]]
+name = "train-state"
+build = "ship"
+tape = "pgo/train.pxtape"
+from = { kind = "ram", sym = "nitroxide::draw::CAMERA_TICK (.0)", op = "ge", value = 272 }
+until = { kind = "ram", sym = "nitroxide::draw::CAMERA_TICK (.0)", op = "ge", value = 1076 }
+max_polls = 1300
+offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
+launch_args = ["--embedded-playtest"]
+
 [journeys]
 files = "tests/*.toml"
 precheck = ["journey", "smoke-boot-play"]
