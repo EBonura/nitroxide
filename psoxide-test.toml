@@ -25,6 +25,10 @@ commands = [["make", "gate-disc"]]
 collect = { "nitroxide.exe" = "game/target/mipsel-sony-psx/release/nitroxide.exe", "link.map" = "game/target/mipsel-sony-psx/psoxide-pgo-maps/*" }
 disc = "NitroXide.cue"
 map = "link.map"
+# The layout is collected on the shipping build; the gate build adds the receipts feature, so the
+# functions that carry receipts differ (2 of 138 in the layout).
+bind_min = 99.9
+bind_reason = "the receipts feature changes 2 of the layout's 138 functions in the gate build"
 
 [[size]]
 build = "ship"
