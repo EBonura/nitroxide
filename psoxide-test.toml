@@ -26,7 +26,7 @@ collect = { "nitroxide.exe" = "game/target/mipsel-sony-psx/release/nitroxide.exe
 disc = "NitroXide.cue"
 map = "link.map"
 
-[size]
+[[size]]
 build = "ship"
 
 # The three tapes the placement layout is trained on; gameplay polls only.
@@ -85,5 +85,5 @@ build = "ship"
 seed = [".psoxide"]
 compare = ["NitroXide.bin", "NitroXide.cue", "nitroxide.exe"]
 
-[install]
+[[install]]
 build = "ship"
