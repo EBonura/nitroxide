@@ -3,3 +3,4 @@
 id nitro
 front nitroxide-aerial.png
 back nitroxide-aerial.png nitroxide-goal.png
+shots nitroxide-boost.png nitroxide-aerial.png nitroxide-goal.png
