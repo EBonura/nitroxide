@@ -61,10 +61,10 @@ use psx_sfx::space::{
 use psx_sfx::{Bank, Sample as SfxSample};
 use psx_spu::{self as spu, Adsr, CdVolume, Pitch, SpuAddr, Volume};
 
-static HIT_SFX: &[u8] = include_bytes!("../assets/audio/hit_punch.psau");
-static PAD_SFX: &[u8] = include_bytes!("../assets/audio/pickup_coin.psau");
-static GOAL_SFX: &[u8] = include_bytes!("../assets/audio/explosion_short.psau");
-static BOOST_SFX: &[u8] = include_bytes!("../assets/audio/swoosh.psau");
+static HIT_SFX: &[u8] = psx_sfx::include_psau!("../assets/audio/hit_punch.psau");
+static PAD_SFX: &[u8] = psx_sfx::include_psau!("../assets/audio/pickup_coin.psau");
+static GOAL_SFX: &[u8] = psx_sfx::include_psau!("../assets/audio/explosion_short.psau");
+static BOOST_SFX: &[u8] = psx_sfx::include_psau!("../assets/audio/swoosh.psau");
 
 /// Every sound in the bank, in upload order. The index into [`BANK`].
 #[derive(Clone, Copy)]
@@ -112,34 +112,88 @@ const BANK: [(&[u8], u32); SND_COUNT] = [
     (PAD_SFX, 44_100),
     (GOAL_SFX, 44_100),
     (BOOST_SFX, 44_100),
-    (include_bytes!("../assets/audio/ui_move.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_tick.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_select.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_back.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_deny.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_chime.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_saved.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_open.psau"), 22_050),
-    (include_bytes!("../assets/audio/ui_close.psau"), 22_050),
-    (include_bytes!("../assets/audio/beep.psau"), 22_050),
-    (include_bytes!("../assets/audio/go.psau"), 22_050),
-    (include_bytes!("../assets/audio/whistle.psau"), 22_050),
-    (include_bytes!("../assets/audio/horn.psau"), 22_050),
-    (include_bytes!("../assets/audio/crowd_roar.psau"), 16_000),
-    (include_bytes!("../assets/audio/crowd_gasp.psau"), 16_000),
-    (include_bytes!("../assets/audio/crowd_loop.psau"), 16_000),
-    (include_bytes!("../assets/audio/engine_loop.psau"), 22_050),
-    (include_bytes!("../assets/audio/skid_loop.psau"), 22_050),
-    (include_bytes!("../assets/audio/jump.psau"), 22_050),
-    (include_bytes!("../assets/audio/flip.psau"), 22_050),
-    (include_bytes!("../assets/audio/land.psau"), 22_050),
-    (include_bytes!("../assets/audio/bounce.psau"), 22_050),
-    (include_bytes!("../assets/audio/net.psau"), 22_050),
-    (include_bytes!("../assets/audio/bump.psau"), 22_050),
-    (include_bytes!("../assets/audio/sonic.psau"), 22_050),
-    (include_bytes!("../assets/audio/pad_big.psau"), 22_050),
-    (include_bytes!("../assets/audio/empty.psau"), 22_050),
-    (include_bytes!("../assets/audio/crowd_cheer.psau"), 16_000),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_move.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_tick.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_select.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_back.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_deny.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_chime.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_saved.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_open.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/ui_close.psau"),
+        22_050,
+    ),
+    (psx_sfx::include_psau!("../assets/audio/beep.psau"), 22_050),
+    (psx_sfx::include_psau!("../assets/audio/go.psau"), 22_050),
+    (
+        psx_sfx::include_psau!("../assets/audio/whistle.psau"),
+        22_050,
+    ),
+    (psx_sfx::include_psau!("../assets/audio/horn.psau"), 22_050),
+    (
+        psx_sfx::include_psau!("../assets/audio/crowd_roar.psau"),
+        16_000,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/crowd_gasp.psau"),
+        16_000,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/crowd_loop.psau"),
+        16_000,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/engine_loop.psau"),
+        22_050,
+    ),
+    (
+        psx_sfx::include_psau!("../assets/audio/skid_loop.psau"),
+        22_050,
+    ),
+    (psx_sfx::include_psau!("../assets/audio/jump.psau"), 22_050),
+    (psx_sfx::include_psau!("../assets/audio/flip.psau"), 22_050),
+    (psx_sfx::include_psau!("../assets/audio/land.psau"), 22_050),
+    (
+        psx_sfx::include_psau!("../assets/audio/bounce.psau"),
+        22_050,
+    ),
+    (psx_sfx::include_psau!("../assets/audio/net.psau"), 22_050),
+    (psx_sfx::include_psau!("../assets/audio/bump.psau"), 22_050),
+    (psx_sfx::include_psau!("../assets/audio/sonic.psau"), 22_050),
+    (
+        psx_sfx::include_psau!("../assets/audio/pad_big.psau"),
+        22_050,
+    ),
+    (psx_sfx::include_psau!("../assets/audio/empty.psau"), 22_050),
+    (
+        psx_sfx::include_psau!("../assets/audio/crowd_cheer.psau"),
+        16_000,
+    ),
 ];
 
 /// A `.psau` is a 12 byte container header and a 20 byte audio header in
@@ -312,6 +366,9 @@ const UNSET: Sound = Sound::one_shot(
     0,
 );
 static mut SOUNDS: [Sound; SND_COUNT] = [UNSET; SND_COUNT];
+/// Bit `i` is set when sound `i` did not reach SPU RAM at boot; it is never started.
+static mut LOST: u32 = 0;
+const _: () = assert!(SND_COUNT <= u32::BITS as usize);
 /// The menu's own samples are contiguous in the bank (`UiMove` to `UiClose`),
 /// so "everything but the menu" is two address ranges: below `UI_LO` and from
 /// `UI_HI` up. [`stop_all`] uses them.
@@ -496,7 +553,10 @@ fn at_rate(snd: Snd, rate_hz: u32) -> u16 {
 /// Start `snd` on its lane at these ear levels. `key` is non-zero to replace
 /// the sound already playing with the same key (a flip taking over its jump).
 fn start(snd: Snd, left: i16, right: i16, pitch_q12: u16, key: u16) -> Option<Handle> {
-    // SAFETY: the table is written once, at boot.
+    // SAFETY: the table and LOST are written once, at boot.
+    if unsafe { LOST } & (1 << snd as usize) != 0 {
+        return None;
+    }
     let sound = unsafe { (*(&raw const SOUNDS))[snd as usize] };
     mixer().play(
         hw(),
@@ -546,7 +606,12 @@ pub fn init(report: &mut dyn FnMut(i32)) {
     // off by its length (it knows the block count from the upload).
     let mut bank = Bank::new(SpuAddr::new(SPU_SAMPLE_BASE));
     for (i, (bytes, _)) in BANK.iter().enumerate() {
-        let sample = bank.upload(bytes);
+        // A sample whose upload failed is never played: its bit goes in LOST and `start`
+        // refuses it. No retry here; the SDK retries inside the transfer.
+        let Ok(sample) = bank.upload(bytes) else {
+            unsafe { LOST |= 1 << i };
+            continue;
+        };
         let (lane, class, prio, looped) = PROPS[i];
         let id = SoundId(i as u16);
         let sound = if looped {
