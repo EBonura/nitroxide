@@ -1,42 +1,42 @@
 # Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
 # psoxide-test.toml with a reason, never by hand-editing these numbers).
 schema = 1
-blessed_commit = "90a3a5a7de78db3f1a73a9a8643ea4d041d6e9c9"
-sdk_pin = "0187c5f4fab876cbeaa9a99a37df305ccae1e4a3"
+blessed_commit = "a3d50ba28f518eff334d70c0415faebea6e04d37"
+sdk_pin = "fce1f6855bc1c3e8336cc68be98a3df06ef9a967"
 
 [size.ship]
-text = 592248
-data = 811496
-bss = 473100
-free = 121732
+text = 593764
+data = 811512
+bss = 473108
+free = 120188
 
 [speed.heavy]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
 flips = [403, 403, 403, 400, 400, 388, 376, 364]
-work_per_frame = [608313, 608313, 608313, 612864, 612536, 616080, 618221, 620503]
-frame_work_p99 = [1120464, 1120464, 1120464, 1120465, 1120465, 1120465, 1120465, 1120465]
+work_per_frame = [608348, 608348, 608348, 612899, 612569, 616114, 618257, 620540]
+frame_work_p99 = [1120394, 1120394, 1120394, 1120452, 1120452, 1120452, 1120452, 1120452]
 vblanks = ["1:356,2:46", "1:356,2:46", "1:356,2:46", "1:350,2:49", "1:350,2:49", "1:338,2:49", "1:326,2:49", "1:314,2:49"]
 
 [speed.train]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [789, 789, 785, 783, 777, 777, 777, 777]
-work_per_frame = [558356, 559746, 561228, 563482, 567094, 567094, 567094, 567094]
-frame_work_p99 = [1098766, 1099408, 1118805, 1119118, 1119856, 1119856, 1119856, 1119856]
-vblanks = ["1:774,2:14", "1:773,2:15", "1:766,2:18", "1:762,2:20", "1:750,2:26", "1:750,2:26", "1:750,2:26", "1:750,2:26"]
+flips = [790, 790, 786, 784, 778, 778, 778, 778]
+work_per_frame = [557659, 559047, 560524, 563446, 566377, 566376, 566376, 566376]
+frame_work_p99 = [1098433, 1099122, 1119950, 1119953, 1119953, 1119953, 1119953, 1119953]
+vblanks = ["1:776,2:13", "1:775,2:14", "1:768,2:17", "1:763,2:20", "1:752,2:25", "1:752,2:25", "1:752,2:25", "1:752,2:25"]
 
 [speed.train-state]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [789, 789, 785, 783, 777, 777, 777, 777]
-work_per_frame = [558356, 559746, 561228, 563482, 567094, 567094, 567094, 567094]
-frame_work_p99 = [1098766, 1099408, 1118805, 1119118, 1119856, 1119856, 1119856, 1119856]
-vblanks = ["1:774,2:14", "1:773,2:15", "1:766,2:18", "1:762,2:20", "1:750,2:26", "1:750,2:26", "1:750,2:26", "1:750,2:26"]
+flips = [790, 790, 786, 784, 778, 778, 778, 778]
+work_per_frame = [557659, 559047, 560524, 563446, 566377, 566376, 566376, 566376]
+frame_work_p99 = [1098433, 1099122, 1119950, 1119953, 1119953, 1119953, 1119953, 1119953]
+vblanks = ["1:776,2:13", "1:775,2:14", "1:768,2:17", "1:763,2:20", "1:752,2:25", "1:752,2:25", "1:752,2:25", "1:752,2:25"]
 
 [speed.wall]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [1767, 1767, 1767, 1767, 1758, 1746, 1734, 1722]
-work_per_frame = [558365, 558365, 558365, 558365, 558639, 558705, 558773, 558841]
-frame_work_p99 = [1076858, 1076858, 1076858, 1076858, 1076858, 1076858, 1076858, 1076858]
-vblanks = ["1:1734,2:32", "1:1734,2:32", "1:1734,2:32", "1:1734,2:32", "1:1725,2:32", "1:1713,2:32", "1:1701,2:32", "1:1689,2:32"]
+flips = [1769, 1769, 1769, 1769, 1760, 1748, 1736, 1724]
+work_per_frame = [557649, 557649, 557648, 557648, 557918, 557979, 558041, 558104]
+frame_work_p99 = [1076763, 1076763, 1076763, 1076763, 1076763, 1076763, 1076763, 1076763]
+vblanks = ["1:1738,2:30", "1:1738,2:30", "1:1738,2:30", "1:1738,2:30", "1:1729,2:30", "1:1717,2:30", "1:1705,2:30", "1:1693,2:30"]
 
 [journeys.completion-cars-arenas]
 ticks = 5109
@@ -44,7 +44,7 @@ open_loop = 36
 clock_waits = 0
 
 [journeys.completion-chain]
-ticks = 57963
+ticks = 57959
 open_loop = 103
 clock_waits = 0
 
@@ -104,7 +104,7 @@ open_loop = 8
 clock_waits = 0
 
 [journeys.completion-practice-timed]
-ticks = 5630
+ticks = 5628
 open_loop = 13
 clock_waits = 0
 
@@ -144,17 +144,17 @@ open_loop = 22
 clock_waits = 0
 
 [journeys.completion-victory]
-ticks = 1967
+ticks = 1966
 open_loop = 15
 clock_waits = 0
 
 [journeys.credits]
-ticks = 537
+ticks = 533
 open_loop = 6
 clock_waits = 0
 
 [journeys.journey]
-ticks = 1822
+ticks = 1818
 open_loop = 8
 clock_waits = 0
 
@@ -174,7 +174,7 @@ open_loop = 11
 clock_waits = 0
 
 [journeys.settings-load]
-ticks = 347
+ticks = 343
 open_loop = 0
 clock_waits = 0
 
@@ -199,7 +199,7 @@ open_loop = 4
 clock_waits = 0
 
 [journeys.sfx-final]
-ticks = 1749
+ticks = 1748
 open_loop = 8
 clock_waits = 0
 
@@ -209,17 +209,17 @@ open_loop = 7
 clock_waits = 0
 
 [journeys.sfx-goal]
-ticks = 2066
+ticks = 2065
 open_loop = 8
 clock_waits = 0
 
 [journeys.sfx-match]
-ticks = 1517
+ticks = 1516
 open_loop = 12
 clock_waits = 0
 
 [journeys.sfx-menus]
-ticks = 2153
+ticks = 2152
 open_loop = 40
 clock_waits = 0
 
@@ -234,16 +234,16 @@ open_loop = 5
 clock_waits = 0
 
 [journeys.sfx-timed-end]
-ticks = 5386
+ticks = 5385
 open_loop = 6
 clock_waits = 0
 
 [journeys.smoke-boot-play]
-ticks = 640
+ticks = 636
 open_loop = 0
 clock_waits = 0
 
 [host]
 
 [maps]
-ship = "1508de5743755ab280d5f22250cf0918e993b3fcc54a93b0d5445e2fd029e2fb"
+ship = "c3af0b8ac7aa5bce7be5bcac330d24969331ffe37fd5c7adb7a69c000a64b1d5"
