@@ -253,6 +253,12 @@ PGO_PROFILE  = $(ROOT)/pgo/nitroxide.prof
 # gameplay polls of the tapes below. Not committed while the variant is `off`;
 # `make pgo-order FRONTEND=x` writes it.
 PGO_LAYOUT   = $(ROOT)/pgo/nitroxide.layout
+# The gate disc's layout: the greedy counts `pgo-order` writes, kept as they are. The shipping
+# layout above is then searched (`psoxide-pgo search`), and a searched layout places exact
+# sections: the gate build's receipts and fixed seed change five of them, so `place` refuses it
+# there, while greedy counts bind at 99.9% and place the gate build much as before. The journey
+# goldens are captured on this placement (the select turntable shows the frame the render reached).
+PGO_GATE_LAYOUT = $(ROOT)/pgo/nitroxide-gate.layout
 # `off` since 60 fps: hot=500+profi wins on average work per frame (the
 # number `pgo-choose` ranks by) but loses on the heavy frames with both cars
 # on screen, which are the ones that miss a vblank. Judge a variant by the
@@ -399,6 +405,7 @@ gate-symbols: build
 # fixed seed (the `fixed-seed` feature), so a journey compares the song and the opponent exactly.
 # `make disc` and `make build` are the shipping executable and have none of that.
 gate-disc: override FEATURES += fixed-seed receipts
+gate-disc: override PGO_LAYOUT = $(PGO_GATE_LAYOUT)
 gate-disc: gate-symbols
 	@$(MAKE) --no-print-directory pack PACK_FLAGS=--diag PACK_EXE="$(EXE)" PACK_OUT="$(GATE_DISC_OUT)"
 	@echo "GATE DISC -> $(patsubst %.bin,%.cue,$(GATE_DISC_OUT))"
@@ -440,6 +447,7 @@ pgo-order: psoxide
 		--tape "$(HEAVY_TAPE)" --polls $(HEAVY_POLLS) --pack $(PGO_PACK) \
 		--launch-arg --embedded-playtest $(PGO_LAUNCH_ARGS) --profile "$(PGO_PROFILE)" \
 		--variant "$(patsubst %+order,%,$(PGO_VARIANT))" --out "$(PGO_LAYOUT)" -- $(GAME_CARGO)
+	cp "$(PGO_LAYOUT)" "$(PGO_GATE_LAYOUT)"
 
 # NitroXide waits out the rest of each frame's vblank (or two, in split
 # screen), so `choose` ranks the variants by the work cycles `measure` counts

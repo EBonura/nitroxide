@@ -15,6 +15,8 @@ commands = [
 collect = { "nitroxide.exe" = "game/target/mipsel-sony-psx/release/nitroxide.exe", "link.map" = "game/target/mipsel-sony-psx/psoxide-pgo-maps/*" }
 disc = "NitroXide.cue"
 map = "link.map"
+# The searched layout; the gate build's greedy copy (pgo/nitroxide-gate.layout) is not shipped.
+layout_files = ["pgo/nitroxide.layout"]
 
 # The gate disc: fixed seed and the state receipts (`make gate-disc`), what the journeys and the
 # smoke play; `make gate-disc` also locates the state blocks in its exe (build/gate-symbols.txt).
@@ -25,8 +27,10 @@ commands = [["make", "gate-disc"]]
 collect = { "nitroxide.exe" = "game/target/mipsel-sony-psx/release/nitroxide.exe", "link.map" = "game/target/mipsel-sony-psx/psoxide-pgo-maps/*" }
 disc = "NitroXide.cue"
 map = "link.map"
-# The layout is collected on the shipping build; the gate build adds the receipts feature, so the
-# functions that carry receipts differ (2 of 138 in the layout).
+# The gate build links pgo/nitroxide-gate.layout, the greedy counts collected on the shipping
+# build; the gate build adds the receipts feature, so the functions that carry receipts differ
+# (2 of 138 in the layout).
+layout_files = ["pgo/nitroxide-gate.layout"]
 bind_min = 99.9
 bind_reason = "the receipts feature changes 2 of the layout's 138 functions in the gate build"
 
