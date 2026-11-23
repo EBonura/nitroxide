@@ -44,6 +44,22 @@ drive after boot either.
 Rows 2 and 3 are optional. On the demo disc NitroXide would be one Program row in the host's table with
 its own `lba_offset`; it already chain-loads there through `disc_base` today.
 
+## Scene table v2 (v2, row layout pending)
+
+The table moves to version 2 with two row kinds: IMAGE rows are load units (LBA and flags, sectors, load address, size, FNV, residency class BOOT_RESIDENT, RESIDENT_SET n or SWAP) and SCENE rows are entry points (scene id, image index, entry, name). Several scenes can share an image, several images can be in RAM at once, and switching to a scene whose image is loaded reads nothing. The byte layout is not fixed yet; the v1 rows above stay as the record of what was measured.
+
+In v2 terms the program is one base image, `PSX.EXE` (image 0, BOOT_RESIDENT) and one scene, 0 `NITROXIDE`. Everything reachable in play (menus, races, pause, results, credits) is in image 0; the arena atlas is data loaded by the program. No screen needs a scene switch. `WORLD.PAK` and the two XA files stay data the program reads itself (v1 rows 1 to 3).
+
+## Boot splash: via .boot, one per disc (pending the SDK change)
+
+Decision (scene-system plan, "Splash: one mechanism, no extra load"): the splash is not dropped and is not a separate scene. psx-splash links into the boot-only `.boot` section of the boot image (sdk/psoxide-boot.ld): stored after `.data`, run from the start of the heap, moved there by `__boot_entry` before `_start`, played once. Only a disc's first program plays it.
+
+NitroXide plays the splash today through the engine's `BootSplash` and keeps it. psx_splash's 6,342 B move into the boot image's `.boot` section; they are in the exe today, so the load does not grow by the splash. NitroXide links no heap allocator (no `psx_rt::heap::ALLOCATOR` in the dfdaa75 map), so the memory sits unused above `__bss_end` after boot, which is fine.
+
+The existing `scene-core` feature (commit 8fd7e14) drops the splash and is superseded. Its searched PGO layout (off+order) names sections the boot link moves, so the layout needs a re-search once the scene-core build links; that search waits for the SDK change.
+
+Why this is not built here yet: ld.lld's `--oformat=binary` places sections by run address and ignores `AT()`, so a psoxide-boot.ld link through the flat output these builds use writes `.boot` past `.bss` instead of after `.data` (checked on a small link at the 6bfe scripts: the ELF has the right load address, the flat file does not). It waits for the one SDK-side change (lane/disc-scenes-1123): `.boot` with its run address in the reclaimed region and its load address after `.data`, the exe writer and overlay-compose working from the ELF program headers. Opting in then takes: a repin to that SDK, the `scene-core` feature linking `-T psoxide-boot.ld` ahead of psoxide.ld with `__boot_entry` kept, and the splash call at boot.
+
 ## Shared code versus per scene
 
 One row: renderer (`nitroxide::draw`, 220,408 B of text), sim, audio and bank, menus, replay and victory
