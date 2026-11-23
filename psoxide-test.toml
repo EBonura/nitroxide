@@ -104,3 +104,4 @@ compare = ["NitroXide.bin", "NitroXide.cue", "nitroxide.exe"]
 
 [[install]]
 build = "ship"
+name = "NitroXide"
