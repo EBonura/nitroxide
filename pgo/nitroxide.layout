@@ -1,4 +1,5 @@
 # psoxide-pgo layout 1
+# psoxide-pgo searched: rounds 600 seed 1
 # features: (default)
 # variant: off
 # Per-word counts over the gameplay polls (w index:count) and the direct
@@ -3992,3 +3993,390 @@ f e306183dc040ccda 35 psx_rt::present::wait_drawn_idle_on::<psx_rt::present::Har
 w 0:2900 1:2900 2:2900 3:2900 4:2900 5:2900 6:2900 7:2900 8:2900 9:2900 10:2900 11:17826505 12:17826505 13:17826505 14:17826505 15:2899
 w 16:2899 17:2899 18:2899 19:2899 20:17823605 21:17823605 22:17823605 23:17823605 24:17823605 25:17823605 26:17823605 27:17823605 28:17823605 31:2899 32:2899 33:2899
 w 34:2899
+# placement: psoxide-pgo search, seed 1 rounds 600 batch 24: 43203 window replays, 92 moves kept, objective 3.0000 -> 2.6708
+# placement windows: train (weight 1), wall (weight 1), heavy (weight 1)
+s 800103bc
+o 80f1719a0d395077 1948 800103bc nitroxide::draw::build_view::{closure#2} @nitroxide
+o b4572f713ba110f8 1725 8001222c <nitroxide::NitroXide>::draw_hud
+o 5f992418503dc7e2 891 80013d20 nitroxide::draw::lamp_light
+o 49a009dd3e0607b2 36 80014b0c <core::fmt::Formatter>::pad_integral::write_prefix
+o a80edd0c46f3d51c 32 80014b9c psx_gpu::gpu::draw::<psx_gpu::prim::QuadFlat> @psx_gpu
+o 1d3d14cc31de3d2a 42 80014c1c psx_io::cd::read_response_fifo
+o 0216b91aee95e4bd 123 80014cc4 <nitroxide::draw::Builder>::quad_biased
+o 5826996a4367e85e 610 80014eb0 psx_engine::ui::draw_transformed_text_paint
+o c2c3fe5355cf15c2 28 80015838 <nitroxide::NitroXide>::start_demo
+o 28f5898518645c23 4853 800158a8 nitroxide::draw::build_view::{closure#5} @nitroxide
+o c7116ef53fcb6810 758 8001a47c <psx_engine::music::MusicPlayer>::update
+o 7b6f35655d381bba 90 8001b054 <psx_io::cd::xa::Engine>::poll::<psx_io::periph::Cd> @psx_io
+o 443c017547fb03c0 2 8001b1bc __psx_rt_jump_on_stack
+o 4df9af4e242ad256 199 8001b1c4 <nitroxide::draw::Builder>::floor_tile_far::<false> @nitroxide
+o d998c264506e1267 549 8001b4e0 psx_engine::ui::linked_focus_bounds
+o 59359ff5a438164d 94 8001bd74 <psx_mc::fs::DataCursor>::read_exact::<psx_mc::hardware::HardwareCard<&mut psx_io::periph::ControllerPort>> @nitroxide
+o 2d77f4ef7649e8be 4276 8001beec nitroxide::draw::build_view
+o 7310b92622fb0766 518 800201bc <char as core::fmt::Debug>::fmt
+o 453bc0f345b31580 79 800209d4 <nitroxide::NitroXide>::apply_demo_look
+o 314561e4b1fbf451 444 80020b10 <nitroxide_sim::Car>::basis
+o 1ace7e30c061100b 22 80021200 <psx_cdstream::console::Mmio as psx_cdstream::hw::CdHw>::finish_response @psx_cdstream
+o db8384dc1d57e351 2 80021258 core::option::unwrap_failed
+o 2d52352d44e8a2e1 336 80021260 <nitroxide::draw::Builder>::conform_tile
+o 823c2bd51c33491e 8 800217a0 psx_cdstream::console::enter::<psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>> @psx_cdstream
+o 892fa49c30d5cd6a 5078 800217c0 <nitroxide::NitroXide as psx_engine::scene::Scene>::update
+o bc242a4ca512e314 15 80026718 __psx_rt_dispatch_update
+o c89b65bd18594cb4 476 80026754 <nitroxide::draw::Builder>::goal_quad
+o 718e579685dfd946 662 80026ec4 psx_engine::transitions::render_transition_overlay
+o f2c180f73d0c0b27 17 8002791c <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<usize, nitroxide::draw::draw_trophy::{closure#1}> @nitroxide
+o 5f0cacbf0e0966c2 507 80027960 <nitroxide::draw::Builder>::goal_quad_tex
+o 6ed56d14b11d1531 748 8002814c psx_engine::ui::resolved_from_parent
+o 58236ade4275542f 166 80028cfc <core::ops::range::Range<usize> as core::fmt::Debug>::fmt @core
+o 387ea93de2baac3a 2585 80028f94 <nitroxide_sim::Sim>::advance
+o 8298d99a4b4b907a 434 8002b7f8 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::shoulder_tab_press @nitroxide
+o d255a7d6d9a11697 5 8002bec0 core::panicking::panic
+o e132fb42bfafd01c 149 8002bed4 <nitroxide::draw::Builder>::glow_quad
+o a4f6cf86e1f04efc 331 8002c128 nitroxide::draw::set_seat_paints
+o db8384dc1d57e351 2 8002c654 core::str::slice_error_fail
+o 4ed73ce0e9ccd8f1 2017 8002c65c nitroxide::draw::render_view
+o 7d62a927152e081a 210 8002e5e0 psx_engine::ui::node_resolved_memo
+o aeb49e1a09ace95c 6 8002e928 core::panicking::assert_failed::<usize, usize> @core
+o 98d0919ff2b9679d 59 8002e940 psx_gpu::gpu::set_draw_mode
+o 295558a961b94ca8 660 8002ea2c psx_splash::show::<<psx_engine::app::App>::run_with_flow<nitroxide::NitroXide>::{closure#0}> @nitroxide
+o 320ccaa44be678bb 97 8002f47c <nitroxide_sim::V3>::unit_q12
+o 04c6d1abb71e058d 274 8002f600 <psx_font::FontAtlas>::draw_text_with_spacing
+o 188ce5b2ee8ae60f 512 8002fa48 <psx_engine::ui::UiAffine>::subrect
+o 7d572c1437c32581 448 80030248 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::perform_action @nitroxide
+o 3aaf66715ffc4d13 5 80030948 core::panicking::panic_const::panic_const_div_by_zero
+o db8384dc1d57e351 2 8003095c psx_rt::report_panic
+o f5d321247ed8a477 1039 80030964 <nitroxide::draw::Builder>::lines
+o 579421a06e66ed9b 499 800319a0 nitroxide::draw::draw_far_car
+o 51842adb7f9ee3ce 9 8003216c <psx_font::FontAtlas>::draw_text
+o 66e232e4f28ef153 10 80032190 __psx_rt_call_on_stack
+o 5350e9f52080268e 243 800321b8 <nitroxide::draw::Builder>::turntable
+o 0e3f118612958cdd 2 80032584 psx_rt::halt
+o 17ce2242be9bd0d5 6495 8003258c nitroxide::draw::build_view::{closure#4} @nitroxide
+o 2844e947a03c2148 259 80038b08 <psx_io::cd::reader::SectorReader>::read_sector
+o 341f1c63477774f2 11 80038f14 <psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>>::pause @psx_cdstream
+o d2ffc9bb69c1e1b5 221 80038f40 <nitroxide::draw::Builder>::underdraw_edge
+o cf39661ca8895378 499 800392b4 psx_cdstream::console::on_cd_interrupt
+o 00bbb004b6f877a2 122 80039a80 <nitroxide::NitroXide>::end_demo
+o 94df0481b7a08ab5 4784 80039c68 <nitroxide_sim::Sim>::tick_car
+o c82b2d04764167c5 487 8003e728 <nitroxide::NitroXide>::new
+o 904bf3ceeb2d8b54 35 8003eec4 psx_gpu::gpu::draw::<psx_gpu::prim::TriGouraud> @psx_gpu
+o 83526c2b52d08594 135 8003ef50 <psx_io::cd::reader::SectorReader>::start_read
+o 7cd7ce59150a06aa 90 8003f16c psx_math::sincos::atan2_q12_fine
+o 8c9e5a1c06326e54 84 8003f2d4 <psx_mc::fs::DataWriter>::finish::<psx_mc::job::Staged<70>> @nitroxide
+o f75e0f953ab08eb6 480 8003f424 <nitroxide::feedback::Feedback>::update
+o 42b0a808c8a48307 358 8003fba4 psx_pad::poll_state::<psx_io::periph::ControllerPort> @psx_engine
+o 28c0ff3f041e604e 313 8004013c core::str::slice_error_fail_rt
+o c7a4501586710ae8 200 80040620 <nitroxide::draw::Builder>::goal_reach
+o dba61f390d3b7a32 470 80040940 <nitroxide::NitroXide>::start_match
+o 29a8d0ab79fec9be 423 80041098 <psx_font::FontAtlas>::draw_text_scaled_gouraud_with_spacing_q8
+o 1fb985231f8f3b65 19 80041734 psx_rt::cache::flush_instruction_cache
+o 9537114491a06321 525 80041780 nitroxide::fx::ink_origin
+o d4e334fee4feceab 341 80041fb4 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::resolved_focus @nitroxide
+o 6c4a66de5a16fac1 22 80042508 psx_cdstream::console::leave::<psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>> @psx_cdstream
+o a94baa3a9ad2c32c 24 80042560 psx_math::fmt::u32_dec
+o ac193ab61bb3b0c5 444 800425c0 <psx_engine::game_app::GameApp<nitroxide::NitroXide> as psx_engine::scene::Scene>::init @nitroxide
+o a7e4765c598f3068 201 80042cb0 psx_engine::ui::draw_shape_polygon
+o 8b904e88138a7953 5 80042fd4 core::panicking::panic_const::panic_const_rem_by_zero
+o c0c74ba250b814d9 2434 80042fe8 nitroxide::audio::update
+o 7536b66587327eac 85 800455f0 psx_pad::pad_exchange::<psx_io::periph::ControllerPort> @psx_pad
+o 8ede932fa47dbaf8 409 80045744 <nitroxide::loader::Loader>::finish
+o d3075b69eebcdf35 409 80045da8 <nitroxide::draw::Builder>::sweep_wall_jobs
+o 470928c92903a1df 152 8004640c <psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>>::fail @psx_cdstream
+o 21e8edc71812c5cc 9 8004666c psx_rt::dispatch::detach
+o e19f971d42c480e3 516 80046690 <psx_sfx::mixer::Mixer<5>>::tick::<nitroxide::audio::SpuHw> @nitroxide
+o 1c7a1bc844bb2a67 408 80046ea0 psx_engine::ui::draw_shape_node
+o 9e0f980a7bfb5c43 70 80047500 nitroxide::audio::set_muted
+o 0a00b8ccfba39a30 104 80047618 <nitroxide::NitroXide>::apply_arena
+o 8c5171d4549eca1f 406 800477b8 <nitroxide::NitroXide>::demo_show
+o 08842f6656d72a75 180 80047e10 nitroxide::draw::car_materials_for
+o 8fd60dcfc0876e9a 56 800480e0 <psx_io::cd::xa::Engine>::poll_stopping::<psx_io::periph::Cd> @psx_io
+o fe29504e6bf98717 58 800481c0 <psx_io::cd::reader::SectorReader>::stop
+o 82a269c48f2e64ec 160 800482a8 memcpy
+o b67d450388eb4b8d 18 80048528 psx_rt_fatal_fault
+o c0f0129c3b9f0a5a 220 80048570 <nitroxide::NitroXide>::read_pad
+o cd4ebb3fed3f4226 227 800488e0 psx_engine::ui::draw_linked_focus_background
+o 7022320b57a1c91f 5 80048c6c core::panicking::panic_const::panic_const_div_overflow
+o 3dc6dc0b6c2bbe2f 41 80048c80 <nitroxide_sim::Sim>::finished
+o 9522e47b47de26fa 401 80048d24 nitroxide::assets::load_arena_texture
+o 7c98ca7c1dcd1f05 392 80049368 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::update_ui_music @nitroxide
+o aa546fa2c2d81119 208 80049988 <nitroxide::NitroXide>::draw_controls
+o a39f42b45124062e 185 80049cc8 <nitroxide::boost_meter::Meters>::track
+o 1ea07ef35b068e33 368 80049fac <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::move_focus @nitroxide
+o f7585eb2b68a509d 365 8004a56c <psx_font::FontAtlas>::upload
+o 39123ae68c4d76a3 199 8004ab20 psx_engine::ui::draw_perimeter_run
+o 2348cf093c1ce4bc 673 8004ae3c nitroxide::draw::track_tick
+o c0fde810bc046bbe 83 8004b8c0 <psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>>::sync_source @psx_cdstream
+o bad955f565d33819 359 8004ba0c <nitroxide_sim::replay::Recorder>::push
+o aadaead575ccd5e6 339 8004bfa8 psx_engine::ui::shape_polygon
+o 023924b58667209a 63 8004c4f4 <psx_gpu::display::DoubleBuffer>::swap
+o 03a6fafb17ca4cd3 471 8004c5f0 nitroxide_sim::confine
+o aab3cc23d8a27cfa 337 8004cd4c <nitroxide::NitroXide>::settings_input
+o 492f6801eee0e279 261 8004d290 nitroxide_sim::nearest_arena_wall
+o c494a35ee1f6f464 41 8004d6a4 psx_gpu::gpu::draw::<psx_gpu::prim::QuadGouraud> @nitroxide
+o dd9e9bd275cae125 127 8004d748 <nitroxide::draw::Builder>::quad_tex
+o 59f2e8e99ca8c739 334 8004d944 <nitroxide_sim::Sim>::score
+o e94be6c694b6b238 331 8004de7c <nitroxide_sim::replay::Direction>::new
+o 95ce378ae4889d72 258 8004e3a8 <nitroxide::NitroXide>::any_input
+o edccd8787febbab3 10 8004e7b0 core::panicking::panic_fmt
+o 3e4d0115536c62e7 167 8004e7d8 nitroxide::draw::thin_quad_faded
+o 5ae08afee9b0307b 310 8004ea74 <psx_engine::ui::UiShapeColors>::new
+o f8e0dac5ae6e07c1 10 8004ef4c psx_io::gpu::handoff::write_commands_slow
+o 8c31b6d9c802e2e1 51 8004ef74 psx_math::fmt::clock_dec
+o af762db655ca2544 325 8004f040 <psx_io::cd::reader::SectorReader>::prepare
+o b023f24135388ec3 324 8004f554 psx_engine::ui::draw_focus_shape_tracer
+o 98d1fdbe8b1bd212 668 8004fa64 <nitroxide::draw::Builder>::shadow
+o a3d4a10d87916faa 305 800504d4 <psx_engine::ui::UiAffine>::point
+o f3eba7e9736ea832 301 80050998 <nitroxide::NitroXide>::update_victory
+o 049324dbf4b531f8 296 80050e4c <nitroxide::NitroXide>::draw_goal_banner
+o e220d2e78b531f80 113 800512ec <nitroxide::NitroXide>::draw_select::{closure#1} @nitroxide
+o 6812787a1ea0d2be 124 800514b0 <psx_font::FontAtlas>::text_width
+o a8871a75ace947a2 288 800516a0 <psx_mc::hardware::HardwareCard<&mut psx_io::periph::ControllerPort> as psx_mc::Block>::read_frame @nitroxide
+o d55d56106089bf5b 95 80051b20 <psx_mc::Card<psx_mc::job::Staged<70>>>::chain @nitroxide
+o 2eadadbcd58c76dd 201 80051c9c nitroxide::fx::arc
+o e3f181884f0d2baa 287 80051fc0 <nitroxide::replay::Replay>::begin
+o 4c782252ad8a2929 280 8005243c nitroxide::draw::paint_lines
+o f274eb294f4d9c2c 279 8005289c nitroxide::draw::decode_car_geometry
+o 31080aac036956ce 67 80052cf8 core::slice::index::slice_index_fail
+o 1223a11cceffb8e8 601 80052e04 <psx_engine::app::App>::present_pending::<psx_engine::game_app::GameApp<nitroxide::NitroXide>> @nitroxide
+o a04a536c50deaab0 279 80053768 psx_engine::ui::draw_focus_corners
+o b21c4b154d060b2b 78 80053bc4 core::slice::memchr::memchr_aligned
+o 57b4d7097be6dc4f 234 80053cfc <nitroxide::draw::Builder>::puffs
+o 706b8ababdfe2e45 278 800540a4 <nitroxide::feedback::Feedback>::reset
+o 962e1a0d1e8640fe 273 800544fc psx_spu::dma_write
+o 0f1297922384bfb7 242 80054940 nitroxide::sweep::draw_in
+o 3ba31e0bc04a97a7 294 80054d08 nitroxide_sim::camera::escape
+o 6b019b4e50397a54 272 800551a0 nitroxide::loader::bar
+o c97f698892784bd7 256 800555e0 nitroxide_sim::replay::workable
+o 58b8b984770f098f 59 800559e0 <psx_mc::Card<psx_mc::job::Staged<70>>>::free_blocks_in @nitroxide
+o 27e13407232f9d8c 521 80055acc <nitroxide::draw::Builder>::draw_pieces
+o efc9a34519e1f787 242 800562f0 <core::str::iter::SplitInternal<char>>::next @psx_engine
+o 570cf9754baefdde 239 800566b8 <psx_asset::ParseError as core::fmt::Debug>::fmt
+o dcf1767be5ae32ca 225 80056a74 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_str
+o 900f4b69d05c6ca3 184 80056df8 nitroxide::draw::set_appearance
+o 05ccd8e01af85a42 34 800570d8 <nitroxide::NitroXide>::open_select
+o c56e20d12fc6da38 126 80057160 <psx_pad::controllers::Controllers>::step::<psx_io::periph::ControllerPort> @psx_engine
+o a1e6f0eff5079a5c 221 80057358 <core::fmt::Formatter>::pad_integral
+o a2400cf5a07aa356 181 800576cc <psx_io::cd::reader::SectorReader>::send_command_waiting
+o cae03ca1e8c65f1f 176 800579a0 <&u16 as core::fmt::Debug>::fmt @nitroxide
+o a457b574a9ce126f 58 80057c60 <psx_rt::present::Presenter>::begin_frame
+o 6f1eb88c27e79738 179 80057d48 core::fmt::write
+o 8a292f7ff35c26d8 175 80058014 <&str as core::fmt::Display>::fmt @core
+o e421cc9e212b226f 173 800582d0 <nitroxide_sim::Sim>::kickoff
+o a81df9041525c6d0 106 80058584 psx_engine::ui::draw_focus_sweep_half
+o 6f0445f92e56400c 322 8005872c <psx_engine::transform::ActorTransform>::load_gte
+o 01e9ecb97bed08b9 167 80058c34 <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::wait_seek_end
+o 8dea7e201b38695d 122 80058ed0 core::str::count::do_count_chars
+o 0e54cc0037d48a7f 90 800590b8 <nitroxide::draw::Builder>::emit
+o 93052bcb617825df 166 80059220 psx_splash::logo::expand
+o 80e46787dc1d06f7 165 800594b8 <psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>>::settle_drive @psx_cdstream
+o 7f1a45a255a9ad52 162 8005974c psx_engine::ui::draw_focus_sweep
+o f5e2dbfe2ceccc36 151 800599d4 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::scene_combat_music_cue @nitroxide
+o 74944f010a207964 151 80059c30 nitroxide::audio::stop_all
+o b93826dae93a85e9 149 80059e8c <nitroxide::loader::Loader>::draw
+o 0d230e76d4806e67 16 8005a0e0 nitroxide::draw::setup::{closure#0} @nitroxide
+o 01103a2461e8a0ca 876 8005a120 <nitroxide::draw::Builder>::tracks
+o a2b661d78efcc9a0 101 8005aed0 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::adjust_option @nitroxide
+o fc7195a37167976d 406 8005b064 <psx_font::FontAtlas>::draw_text_scaled_with_spacing_q8
+o 821bb5a07ae3270f 138 8005b6bc psx_io::cd::try_command_until_complete_inner
+o fd5bdde2ee0ae328 533 8005b8e4 <nitroxide::draw::Builder>::floor_tile_far::<true> @nitroxide
+o a319063951b991cc 114 8005c138 <nitroxide::draw::Builder>::flush_goal_jobs
+o 9eebe8ee54f2c0c3 148 8005c300 <core::fmt::builders::DebugStruct>::field
+o 667ae9157a53148c 147 8005c550 psx_engine::ui::node_resolved_inner
+o 0084345be1c2195c 147 8005c79c <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::status
+o 13ee4e20cee71149 142 8005c9e8 psx_engine::ui::draw_shape_perimeter_run
+o ac324dc337db811f 134 8005cc20 psx_pad::controllers::config::<psx_io::periph::ControllerPort> @psx_engine
+o 7291acf19b99a7e5 133 8005ce38 <i32 as core::fmt::Display>::fmt
+o 68a73899d7db4c1f 88 8005d04c __psx_rt_dispatch_tramp
+o 28165b4e12daa18e 1014 8005d1ac <nitroxide_sim::Sim>::collide_car_ball
+o 343cd6250bf37d83 133 8005e184 <psx_engine::music::MusicPlayer>::release_for_data_reads
+o 15447ff7bfc2fd85 132 8005e398 <psx_io::cd::xa::Engine>::begin_read_at::<psx_io::periph::Cd> @psx_io
+o 27a906714188106c 131 8005e5a8 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::play_node_sfx_event @nitroxide
+o 10b04a1cca5a7af1 131 8005e7b4 <usize as core::fmt::Display>::fmt
+o 929e8d3c5a94422e 130 8005e9c0 <u32 as core::fmt::Display>::fmt
+o 03ffca3a16ad3d92 42 8005ebc8 <psx_rt::cache::HwBus as psx_rt::cache::Bus>::dma_busy
+o 535843ba257e4ec6 495 8005ec70 nitroxide_sim::car_contact
+o c2f93b29d10f5bea 83 8005f42c <psx_io::cd::xa::Engine>::launch::<psx_io::periph::Cd> @psx_io
+o ef4ca2e29bca0633 575 8005f578 <psx_gte_core::math::Mat3I16>::mul
+o f88864ce06876584 15 8005fe74 core::panicking::panic_bounds_check
+o 80cd6ddb7d59c108 5533 8005feb0 <nitroxide::NitroXide>::draw_overlay_scene
+o 431e73022a1f60c4 21 80065524 psx_io::cd::drain_response_limited
+o 2d6e833e07b8ff2e 5762 80065578 <psx_engine::app::App>::run_scheduled::<psx_engine::game_app::GameApp<nitroxide::NitroXide>> @nitroxide
+o 32b41006d19f96ec 130 8006af80 <psx_asset::Mesh>::from_bytes
+o e6ed0379a6292fd7 130 8006b188 <psx_io::periph::Cd>::command_within
+o 388f1122509eaaf4 22 8006b390 psx_engine::transitions::draw_fullscreen
+o 2962f85514f002b9 1032 8006b3e8 <nitroxide::draw::Builder>::banner
+o 9bf7dc6c0d101d11 129 8006c408 psx_vram::upload_bytes
+o e61230494943fb41 127 8006c60c <psx_asset::Audio>::from_bytes
+o 0d827948e45d03c7 16 8006c808 <psx_fx::playlist::Playlist>::skip_back
+o d783970dfb7a91d4 26 8006c848 psx_gpu::gpu::draw::<psx_gpu::prim::FillRect> @psx_gpu
+o 9fbe4a8f5ce95cc5 127 8006c8b0 psx_engine::ui::draw_ring_edges
+o 84caa0c9044944c0 127 8006caac psx_spu::upload_adpcm_pio
+o 6d2960da17cf6508 41 8006cca8 <nitroxide::music::Music>::set_enabled
+o 7eb521c9e456d50c 449 8006cd4c nitroxide_sim::camera::pivot
+o 4aa32f832ffcf910 126 8006d450 <psx_mc::hardware::Link<psx_io::periph::ControllerPort>>::xfer @nitroxide
+o 78a532c33b7aa7a1 124 8006d648 psx_engine::ui::draw_focus_ring
+o d249e02bd119d2ba 76 8006d838 psx_engine::ui::draw_shape_outline
+o 7dd1008925578873 129 8006d968 nitroxide::draw::clip_x
+o 356c3320f8631532 121 8006db6c psx_engine::ui::draw_quad_paint
+o 9e13e1a98a904672 116 8006dd50 <psx_io::cd::reader::ReaderPause as psx_io::cd::pause::PauseDrive>::wait_completion
+o f7b22ffd9f19dd67 113 8006df20 <nitroxide::NitroXide>::to_title
+o 602a5e52b206302f 113 8006e0e4 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::ui_state_index_for_scene @nitroxide
+o d2287ea93b419bdd 113 8006e2a8 psx_engine::ui::draw_focus_tracer
+o 274d95b5441e430b 112 8006e46c <psx_io::cd::reader::SectorReader>::ack_unexpected
+o 1874a8e2ec3f8c7a 103 8006e62c <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::horizontal_press @nitroxide
+o 1a4b655975ae6f65 273 8006e7c8 nitroxide_sim::camera::rays
+o c755cd1fa86fb6ec 32 8006ec0c <psx_rt::present::Presenter>::new
+o b43ca914ee60a48b 11 8006ec8c memmove
+o 809173202f9affcf 111 8006ecb8 core::unicode::unicode_data::grapheme_extend::lookup_slow
+o 27e80bff189ef85a 100 8006ee74 psx_vram::upload_16bpp
+o 549946c51e3955e4 1031 8006f004 <nitroxide::NitroXide>::draw_now_playing
+o 514227d9aa1659da 472 80070020 nitroxide_sim::ball_friction
+o f6b6ae8ed6a0c710 116 80070780 <nitroxide::draw::Builder>::walls::{closure#1} @nitroxide
+o f66c11bbeb7fccb6 762 80070950 nitroxide::countdown::draw_in
+o 4a922f1dade4bc7f 93 80071538 <psx_mc::Card<psx_mc::hardware::HardwareCard<&mut psx_io::periph::ControllerPort>>>::chain @nitroxide
+o 7cf00708ee3e061a 133 800716ac <nitroxide::draw::Builder>::emit_glow
+o aa4be9ad0a57b167 111 800718c0 psx_mc::fs::entry_name_eq
+o 7484900412dcfbc6 1763 80071a7c nitroxide::draw::build_view::{closure#6} @nitroxide
+o f881027339bdd09c 96 80073608 <psx_mc::fs::DataWriter>::push::<psx_mc::job::Staged<70>> @nitroxide
+o 18058024d8648efb 2072 80073788 <nitroxide::draw::Builder>::clip_piece
+o d66b8038282fe83c 110 800757e8 <psx_asset::Mesh>::face
+o 6542795a4a427e65 96 800759a0 <psx_gpu::gpu::Gpu>::set_display
+o 962397a5701cd514 94 80075b20 psx_spu::init_with
+o 1d131fa7b1808b77 93 80075c98 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::enter_or_load_flow_state @nitroxide
+o 7b0a8988b2d9bcbd 82 80075e0c <psx_gpu::prim::QuadTexturedMaterial>::with_material
+o e6f6638a9ee40824 82 80075f54 psx_rt::cache::wait_for_quiet::<psx_rt::cache::HwBus> @psx_rt
+o ab8dafeb9f4c2c04 78 8007609c <psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>>::pause_complete @psx_cdstream
+o 754de24b482b2e6b 78 800761d4 psx_engine::ui::text_paint
+o 90e120a63cd5be42 14 8007630c nitroxide::draw::init_view
+o b0b9b81059f19de4 123 80076344 <nitroxide::draw::Builder>::fx_sprite
+o c380f3dbbbaee73a 123 80076530 <nitroxide::draw::Builder>::quad_tex_projected
+o f0a0010da02cc82d 77 8007671c <&usize as core::fmt::Debug>::fmt @nitroxide
+o d4b1183370a1a5a1 77 80076850 <&usize as core::fmt::Debug>::fmt @core
+o 843ea5fa73ba7f8a 75 80076984 <i32 as core::fmt::Debug>::fmt
+o 843ea5fa73ba7f8a 75 80076ab0 <u32 as core::fmt::Debug>::fmt
+o 1907eb37eb54e159 403 80076bdc <nitroxide::NitroXide>::draw_skip_hint
+o 628af8c916b7531c 74 80077228 <psx_sfx::OneShot>::play
+o e6f48e7b9bd245bf 72 80077350 <nitroxide::NitroXide as psx_engine::scene::Scene>::init::{closure#0} @nitroxide
+o e6f48e7b9bd245bf 72 80077470 <<nitroxide::NitroXide as psx_engine::scene::Scene>::init::{closure#0} as core::ops::function::FnOnce<(i32,)>>::call_once::{shim:vtable#0} @nitroxide
+o abc77bf4a57dfff3 70 80077590 <nitroxide_sim::Sim>::new
+o 92a116eddc12bc82 70 800776a8 <psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>>::command @psx_cdstream
+o 6a6d34ebdde6bb77 70 800777c0 psx_cdstream::engine::location
+o 904193079d76fd6a 70 800778d8 <psx_pad::controllers::Slot>::settle::<psx_io::periph::ControllerPort> @psx_engine
+o 23c5d23e5d76d02b 68 800779f0 <psx_mc::Card<psx_mc::job::Staged<70>>>::read_dir @nitroxide
+o 31bf32fc85497b1d 68 80077b00 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::head_lba
+o 6efd28357dda8552 65 80077c10 psx_splash::draw_line::{closure#0} @psx_splash
+o a9c7e195cd5c2770 20 80077d14 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_fmt @core
+o d59192075c95db54 451 80077d64 <nitroxide::feedback::Feedback>::car_effects
+o ec574b09f6bc70df 29 80078470 main
+o 407eb1dacef1dcc2 79 800784e4 <nitroxide::draw::Builder>::queue_floor_quad
+o 7595584f3133934a 64 80078620 <nitroxide::NitroXide>::to_results
+o 1b125969d55dbfb3 64 80078720 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::tag_at @nitroxide
+o 137ba281e97f543e 64 80078820 psx_engine::transitions::draw_fullscreen_average
+o 509151361962cff4 61 80078920 psx_mc::fs::default_icon
+o 5c674b450d4bac5c 59 80078a14 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::first_gameplay_index @nitroxide
+o 679398d84624f091 59 80078b00 psx_math::color::lerp_rgb
+o 33d68fc261963f4e 59 80078bec psx_rt::interrupts::install_vblank_counter
+o 053dd710f7c121df 59 80078cd8 <psx_vram::VramRect>::new
+o 14136cf05e109fa3 58 80078dc4 psx_rt::interrupts::pace_direct_flip
+o 9c17958cc3396b85 53 80078eac <nitroxide::NitroXide>::apply_arena::{closure#0} @nitroxide
+o 222cc18cd23b618d 53 80078f80 <psx_fx::playlist::Playlist>::shuffle
+o c49cb0f2eefeb705 53 80079054 psx_rt::present::count_signal
+o dbf843f8d92b1ca0 51 80079128 <psx_mc::Card<psx_mc::hardware::HardwareCard<&mut psx_io::periph::ControllerPort>>>::read_dir @nitroxide
+o 06d408ac298c4041 50 800791f4 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::state_ref_at @nitroxide
+o 70c7420b9a6173ac 49 800792bc <nitroxide::music::Music>::cycle_track
+o 633cb8d493f80efd 38 80079380 <psx_engine::scene::Ctx>::poll_pad
+o c580dc7acdddea02 65 80079418 psx_io::gpu::kick_draw_done_list
+o b65758244b48111f 49 8007951c <psx_mc::Card<psx_mc::job::Staged<70>>>::write_dir @nitroxide
+o 2964bbc5d6e72acb 41 800795e0 nitroxide_sim::curve
+o 3c79b75bafa2e9a5 40 80079684 core::panicking::assert_failed_inner
+o 9c8404f1800842c1 12 80079724 <psx_engine::app::App>::run_with_flow::<nitroxide::NitroXide>::{closure#0} @nitroxide
+o 52783dbf08ade573 408 80079754 nitroxide::draw::submit_car_faces
+o 0829fb1302f9aad5 40 80079db4 <core::fmt::builders::PadAdapter as core::fmt::Write>::write_char
+o b04a6b55dc63ebb1 40 80079e54 <psx_cdstream::console::Mmio as psx_cdstream::hw::CdHw>::pop_sector @psx_cdstream
+o d54866b776201b42 40 80079ef4 <psx_gpu::prim::TriGouraud>::new
+o 0279586da1e4c39b 40 80079f94 psx_io::cd::begin_polled_command
+o 17046b35b489e151 38 8007a034 psx_rt::entry::settle_channel
+o 65729def56a70f41 36 8007a0cc psx_cdstream::console::publish::<psx_cdstream::engine::Engine<psx_cdstream::console::Mmio, 5, 8>> @psx_cdstream
+o 49afb163879c1962 36 8007a15c <psx_io::cd::xa::Engine>::stop_without_waiting::<psx_io::periph::Cd> @psx_io
+o 22b25be910442731 1133 8007a1ec <nitroxide::draw::Builder>::car_flame
+o 48b8237e7ad9f010 13 8007b3a0 <core::fmt::Arguments as core::fmt::Display>::fmt
+o aabb402cea55499c 67 8007b3d4 psx_pad::pad_begin::<psx_io::periph::ControllerPort> @psx_pad
+o ec8a84c8d6733e45 35 8007b4e0 psx_rt::present::stop_walk_and_raise
+o e265ae432e13c8e4 31 8007b56c __psx_rt_flush_i_cache
+o 4ac07f124b47d982 31 8007b5e8 <psx_io::cd::xa::Engine>::start::<psx_io::periph::Cd> @psx_io
+o ca90d317b6b01f99 30 8007b664 <psx_fx::playlist::Playlist>::advance
+o 4120102607e07a31 29 8007b6dc psx_engine::transitions::draw_rect
+o 411c6f6e79360493 29 8007b750 psx_io::gpu::wait_ready_slow
+o 0845c9a4ae4a47a1 29 8007b7c4 psx_rt::cache::spin_until_idle::<psx_rt::cache::HwBus> @psx_rt
+o 621466a7844283fa 28 8007b838 psx_cdstream::console::wait_room
+o 4114d0c1467e6d09 28 8007b8a8 <psx_gpu::display::DoubleBuffer>::clear
+o 75abbc95ee7e6f8c 28 8007b918 psx_io::cd::finish_failed_polled_command
+o 4754c9130c4ad544 27 8007b988 <psx_engine::game_app::GameApp<nitroxide::NitroXide>>::flow_index_for_scene_state @nitroxide
+o 269ab9f55247d6e7 27 8007b9f4 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::look_pause
+o d81713b8b5af954e 25 8007ba60 psx_engine::ui::shape_edge_point
+o ddde7f1de21cc835 25 8007bac4 <psx_io::cd::xa::Engine>::reach_end::<psx_io::periph::Cd> @psx_io
+o 810d7549ec0703d2 25 8007bb28 psx_io::gpu::write_commands_when_ready_slow
+o 475fba2b194a91f0 25 8007bb8c psx_pad::command_byte_failed::<psx_io::periph::ControllerPort> @psx_pad
+o e514bd6296c0152e 21 8007bbf0 <psx_io::periph::Cd as psx_io::cd::xa::Drive>::begin_stop
+o c912a17eaeaa4b1b 20 8007bc44 core::result::unwrap_failed
+o b039be957c2ff0dd 20 8007bc94 psx_pad::nobody_answered::<psx_io::periph::ControllerPort> @psx_pad
+o dd4ac97a9daa7df4 19 8007bce4 psx_rt::dispatch::attach
+o 4ac775379a697727 19 8007bd30 <psx_spu::SpuAddr>::new
+o fe14467a7c295701 17 8007bd7c psx_io::cd::xa::set_mixer
+o 654aca53f14f6419 17 8007bdc0 <psx_io::cd::xa::Player>::set_volume
+o 44104ee7a9fe811b 17 8007be04 <psx_io::cd::xa::Engine>::stop::<psx_io::periph::Cd> @psx_io
+o 9f394916852c453a 17 8007be48 <psx_vram::TexturePage>::uv_word
+o ef99681f7272a839 16 8007be8c <psx_io::periph::Cd as psx_io::cd::xa::Drive>::end_stop
+o b58618e8325291c8 16 8007becc __rustc::rust_begin_unwind
+o d8a05abb9a06fec2 12 8007bf0c <&dyn core::fmt::Debug as core::fmt::Debug>::fmt @core
+o fcb6be83b24fa48c 12 8007bf3c core::option::expect_failed
+o b73527f394d364cd 12 8007bf6c psx_io::cd::ack_all_and_reset_parameters
+o ea2725c4d549902d 12 8007bf9c <psx_spu::Voice>::new
+o a58729e449027b15 266 8007bfcc compiler_builtins::mem::memmove
+o 5c0f9a190e9622fd 39 8007c3f4 <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::build_view::{closure#1}> @nitroxide
+o 320e99a7342d427d 86 8007c490 <nitroxide::draw::Builder>::queue_goal_job
+o 298b54fd1985d799 311 8007c5e8 <nitroxide::draw::Builder>::clip_edge
+o a50462edd988f0e0 1174 8007cac4 <nitroxide::draw::Builder>::clip_wall
+o ff24c84ca5136afc 29 8007dd1c <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<usize, nitroxide::draw::draw_cars::{closure#0}> @nitroxide
+o 51c2fa52156d819e 16 8007dd90 <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::draw_trophy::{closure#2}> @nitroxide
+o 5f6a0869c337cfa6 363 8007ddd0 nitroxide::draw::project_car_animated
+o 5b5b098993154c9d 1334 8007e37c <nitroxide_sim::Sim>::drive_ai
+o 6ae19d9710c5b186 616 8007f854 <nitroxide::draw::Builder>::pad_burst
+o eef3b0bcc305c68f 1605 800801f4 nitroxide::audio::place
+o 253a76f9dfc5a5b4 468 80081b08 <nitroxide::draw::Builder>::track_chunk
+o c3db8035a691a97c 874 80082258 <nitroxide::NitroXide>::update_replay
+o 74d8bd506fbfb73b 205 80083000 nitroxide::draw::look_at
+o 3248ad326c2943b1 10 80083334 <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::build_view::{closure#0}> @nitroxide
+o 87ca77096cbf62c9 16 8008335c <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::build_view::{closure#3}> @nitroxide
+o 78094dc2ccb7ccec 11 8008339c <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::build_view::{closure#4}> @nitroxide
+o 0e1d3eb3c15ea2e1 21 800833c8 <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::build_view::{closure#5}> @nitroxide
+o 87ca77096cbf62c9 16 8008341c <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::build_view::{closure#6}> @nitroxide
+o f837aeb22336fb87 1216 8008345c nitroxide::draw::build_view::{closure#3} @nitroxide
+o 834368d85978b26a 107 8008475c <nitroxide::draw::Builder>::victory_fx
+o b7b999efec1dfe1e 27 80084908 psx_io::gpu::settle_busy_gpu_channel
+o 78094dc2ccb7ccec 11 80084974 <psx_rt::scratchpad::ScratchpadStack<72, 1024>>::stack_entry::<(), nitroxide::draw::build_view::{closure#2}> @nitroxide
+o e306183dc040ccda 35 800849a0 psx_rt::present::wait_drawn_idle_on::<psx_rt::present::Hardware> @psx_rt
+o f05401943acd3dc5 110 80084a2c nitroxide_sim::camera::slack_at
+o d9c86a976f99a981 300 80084be4 <nitroxide::draw::Builder>::draw_wall_jobs
+o 52a2de046fff3066 123 80085094 <nitroxide::NitroXide>::step_skip
+o ebe3e549e301b143 79 80085280 <psx_sfx::mixer::Mixer<5>>::update::<nitroxide::audio::SpuHw> @nitroxide
+o 1468f8ac3f17c166 257 800853bc nitroxide_sim::plane_axes
+o 28cf41d7790d8754 29 800857c0 psx_gpu::gpu::draw::<psx_gpu::prim::TriFlat> @psx_gpu
+o 77f863f0fe14bd3d 263 80085834 nitroxide::countdown::plate
+o 3d353a3b9d1af913 332 80085c50 <nitroxide::draw::Builder>::fx_streak
+o e6fd06ef3eb5a363 441 80086180 <nitroxide::draw::Builder>::flame_streak
+o 1482c62576419104 1148 80086864 <nitroxide::draw::Builder>::burst
+o 2387eec1c104a2c5 394 80087a54 nitroxide::draw::intro_aim
+o 254bf88eb765b929 114 8008807c <nitroxide_sim::camera::Limits>::new
+o 689778b13c169687 149 80088244 <psx_sfx::space::Curve>::level
+o b35fef76b220f8ef 870 80088498 nitroxide_sim::replay::direct
+o 2d7b1c84aae0f215 331 80089230 nitroxide::countdown::ink_origin
+o d69e9a4fa9b15c0c 118 8008975c nitroxide_sim::replay::car_at
+o 789c9abdf0303402 366 80089934 nitroxide_sim::replay::apply
+o 76c9b43bfdd426a0 842 80089eec nitroxide_sim::replay::goal_shot
+o a8700d58b17e6bd4 279 8008ac14 nitroxide::countdown::additive_text
+o d787ca44d9c75c75 1020 8008b070 nitroxide::audio::start
+o 348f3f2a57eac3ec 47 8008c060 psx_gpu::gpu::draw::<psx_gpu::prim::QuadTexturedMaterial> @psx_gpu
+o 631bb45130b0787f 86 8008c11c <psx_sfx::mixer::Mixer<5>>::stop::<nitroxide::audio::SpuHw> @nitroxide
+o c3dbcf1bd3aadbe6 17 8008c274 <psx_io::periph::ControllerPort as psx_io::controller_port::Transport>::cs_high_gap @psx_pad
+o a633cea320d2aaab 247 8008c2b8 __psx_rt_exception_handler
