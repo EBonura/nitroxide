@@ -7,6 +7,10 @@ license = "GPL-2.0-or-later"
 repository = "https://github.com/EBonura/nitroxide"
 
 [features]
+# Scene core (campaign scene-system-1123, SCENES.md): the core's boot scene shows the
+# "Built with PSoXide" splash, so boot_splash returns None and the game keeps only its card
+# read. Off by default and not yet usable on a disc: no core exists to show the splash instead.
+scene-core = []
 default = []
 # Result receipts for the headless journeys (gate_state.rs): the gate disc has them, a shipping build links none.
 receipts = ["psx-telemetry/receipts"]

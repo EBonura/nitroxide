@@ -2541,7 +2541,7 @@ impl Scene for NitroXide {
         if let Ok(profile) = psx_settings::load_from_slot_one(port, SETTINGS_FILE) {
             self.profile = profile;
         }
-        Some(BootSplash::new("Built with PSoXide").with_brightness(self.profile.brightness))
+        if cfg!(feature = "scene-core") { None } else { Some(BootSplash::new("Built with PSoXide").with_brightness(self.profile.brightness)) } // scene-core: the core's boot scene shows it
     }
 
     fn init(&mut self, ctx: &mut Ctx) {
