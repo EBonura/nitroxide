@@ -60,7 +60,7 @@ STEPS  ?= 120000000
 PULSES ?= 0x0200@30+4000
 SHOT   ?= /tmp/nitroxide.ppm
 
-.PHONY: help test assets trophy assets-pavel textures bake compile build pack disc gate-disc gate-symbols run shot clean psoxide sfx recordings \
+.PHONY: help test assets trophy assets-pavel textures bake compile build ship-order pack disc gate-disc gate-symbols run shot clean psoxide sfx recordings \
 	pgo-collect pgo-choose pgo-order demo-check
 
 help:
@@ -290,6 +290,22 @@ compile: psoxide no64
 	@echo "EXE -> $(EXE)"
 
 build: compile
+
+# The ordering file the shipping link follows, with the `.placed` sidecar, for the harness to prove
+# the ship map follows the searched layout (psoxide-test.toml `order`): the layout placed on the
+# unordered first link (PGO_VARIANT=off, the code `off+order` relinks) by `psoxide-pgo place`, as
+# the SDK's pgo-search-flow checks it. The first link's map is moved out of the maps directory so
+# the ship build's map is the only one left there.
+ORDER_OUT ?= $(ROOT)/build/order
+PGO_MAPS  := $(dir $(EXE))../psoxide-pgo-maps
+ship-order:
+	@mkdir -p "$(ORDER_OUT)"
+	rm -f "$(PGO_MAPS)"/*.map
+	$(MAKE) --no-print-directory compile PGO_VARIANT=off
+	cp "$(EXE)" "$(ORDER_OUT)/first.exe"
+	mv "$$(/bin/ls -t "$(PGO_MAPS)"/*.map | head -1)" "$(ORDER_OUT)/first.map"
+	PSOXIDE="$(PSOXIDE)" $(PGO) place "$(PGO_LAYOUT)" "$(ORDER_OUT)/first.map" "$(ORDER_OUT)/first.exe" \
+		"$(PSOXIDE)/sdk/psoxide.ld" "$(ORDER_OUT)/nitroxide.order"
 
 # The game plays six tracks of XA-ADPCM music (game/src/music.rs). The cooked
 # files are committed in game/assets/music/ (MUSIC1.XA, MUSIC2.XA, the pack

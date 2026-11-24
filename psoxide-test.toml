@@ -9,12 +9,16 @@ repository = "EBonura/nitroxide"
 name = "ship"
 out = "build/ship"
 commands = [
+  ["make", "ship-order", "ORDER_OUT={out}"],
   ["make", "build"],
   ["make", "pack", "PACK_OUT={out}/NitroXide.bin"],
 ]
 collect = { "nitroxide.exe" = "game/target/mipsel-sony-psx/release/nitroxide.exe", "link.map" = "game/target/mipsel-sony-psx/psoxide-pgo-maps/*" }
 disc = "NitroXide.cue"
 map = "link.map"
+# The ordering file the ship link followed (`make ship-order`: the searched layout placed on the
+# unordered first link), with its .placed sidecar beside it.
+order = "nitroxide.order"
 # The searched layout; the gate build's greedy copy (pgo/nitroxide-gate.layout) is not shipped.
 layout_files = ["pgo/nitroxide.layout"]
 
