@@ -17,12 +17,18 @@ fn main() {
     // 0x801FDF00..0x80200000 to the core's window (8,192 B) and its 256 B handoff block. Sections
     // run apart from where they are stored, so the link is an ELF and the driver (psoxide-pgo)
     // writes the EXE by load address.
-    const RAM_SIZE_OVERRIDE: u32 = 0x1F_E000;
+    const RAM_SIZE_OVERRIDE: u32 = 0x1f_e000;
     let ram_size = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("ram-size.ld");
-    std::fs::write(&ram_size, format!("RAM_SIZE_OVERRIDE = {RAM_SIZE_OVERRIDE:#X};\n"))
-        .expect("write ram-size.ld");
+    std::fs::write(
+        &ram_size,
+        format!("RAM_SIZE_OVERRIDE = {RAM_SIZE_OVERRIDE:#X};\n"),
+    )
+    .expect("write ram-size.ld");
     println!("cargo:rustc-link-arg=-T{}", ram_size.display());
-    for name in [".psoxide/sdk/psoxide-core.ld", ".psoxide/sdk/psoxide-boot.ld"] {
+    for name in [
+        ".psoxide/sdk/psoxide-core.ld",
+        ".psoxide/sdk/psoxide-boot.ld",
+    ] {
         let script = repo_root.join(name);
         let script = script.canonicalize().unwrap_or(script);
         println!("cargo:rustc-link-arg=-T{}", script.display());

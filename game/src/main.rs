@@ -2543,7 +2543,8 @@ impl Scene for NitroXide {
         if let Ok(profile) = psx_settings::load_from_slot_one(port, SETTINGS_FILE) {
             self.profile = profile;
         }
-        Some(BootSplash::new("Built with PSoXide").with_brightness(self.profile.brightness)) // from boot-only memory (.boot, build.rs)
+        // From boot-only memory (.boot, build.rs).
+        Some(BootSplash::new("Built with PSoXide").with_brightness(self.profile.brightness))
     }
 
     fn init(&mut self, ctx: &mut Ctx) {
