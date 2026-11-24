@@ -294,16 +294,17 @@ build: compile
 # The ordering file the shipping link follows, with the `.placed` sidecar, for the harness to prove
 # the ship map follows the searched layout (psoxide-test.toml `order`): the layout placed on the
 # unordered first link (PGO_VARIANT=off, the code `off+order` relinks) by `psoxide-pgo place`, as
-# the SDK's pgo-search-flow checks it. The first link's map is moved out of the maps directory so
-# the ship build's map is the only one left there.
+# the SDK's pgo-search-flow checks it. The crate's source is touched so cargo links again and the
+# driver writes the first link's map (it stays in the maps directory for the ship build's own
+# first link).
 ORDER_OUT ?= $(ROOT)/build/order
 PGO_MAPS  := $(dir $(EXE))../psoxide-pgo-maps
 ship-order:
 	@mkdir -p "$(ORDER_OUT)"
-	rm -f "$(PGO_MAPS)"/*.map
+	touch "$(GAME)/src/main.rs"
 	$(MAKE) --no-print-directory compile PGO_VARIANT=off
 	cp "$(EXE)" "$(ORDER_OUT)/first.exe"
-	mv "$$(/bin/ls -t "$(PGO_MAPS)"/*.map | head -1)" "$(ORDER_OUT)/first.map"
+	cp "$$(/bin/ls -t "$(PGO_MAPS)"/*.map | head -1)" "$(ORDER_OUT)/first.map"
 	PSOXIDE="$(PSOXIDE)" $(PGO) place "$(PGO_LAYOUT)" "$(ORDER_OUT)/first.map" "$(ORDER_OUT)/first.exe" \
 		"$(PSOXIDE)/sdk/psoxide.ld" "$(ORDER_OUT)/nitroxide.order"
 
