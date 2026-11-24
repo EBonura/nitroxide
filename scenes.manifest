@@ -1,0 +1,5 @@
+# NitroXide's scene disc (mkisopsx --scenes, SCENES.md): one Program on the scene core, every screen
+# resident in it; WORLD.PAK (the arena) and the XA music are read by the program itself. Image 0 is the
+# boot exe (`-`: the --exe).
+program PSX.EXE   -
+scene   NITROXIDE PSX.EXE    start

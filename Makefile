@@ -383,6 +383,8 @@ pack: $(ARENA_PSXT) $(if $(filter off,$(MUSIC)),,music-verify)
 		--exe "$(PACK_EXE)" \
 		--out "$(PACK_OUT)" \
 		--volume NITROXIDE \
+		--scenes "$(ROOT)/scenes.manifest" \
+		--core-image "$(PSOXIDE)/sdk/crates/psx-core/prebuilt/psx-core.bin" \
 		--world-pack-extra-dir "$(ARENA_DISC_DIR)" \
 		$(PACK_FLAGS) \
 		$(XA_ARGS)
