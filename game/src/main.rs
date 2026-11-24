@@ -15,7 +15,7 @@
 
 extern crate psx_rt;
 // The scene core's program side (`__core_boot`, the header's entry): linked though no code names it.
-extern crate psx_core;
+use psx_core as _;
 
 use psx_display::Label;
 use psx_engine::{
