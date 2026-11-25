@@ -1,7 +1,7 @@
 # Written by `psoxide-test bless`; edit only by blessing again (decision 4: a bar changes by editing
 # psoxide-test.toml with a reason, never by hand-editing these numbers).
 schema = 1
-blessed_commit = "baef59317e2de1db7246439881ea489f380c19d9"
+blessed_commit = "dfc5012af4d8a6d2604fd2e2a7296db158966369"
 sdk_pin = "80d432926e69dc0bc6ac328c3c9b143a8d875754"
 
 [size.ship]
@@ -13,13 +13,13 @@ free = 115816
 [speed.heavy]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
 flips = [405, 405, 405, 402, 402, 390, 378, 366]
-work_per_frame = [604475, 604475, 604475, 608975, 608624, 612019, 614019, 616151]
-frame_work_p99 = [1120277, 1120277, 1120277, 1120277, 1120277, 1120458, 1120458, 1120458]
+work_per_frame = [604417, 604417, 604417, 608916, 608564, 611957, 613954, 616083]
+frame_work_p99 = [1120404, 1120404, 1120404, 1120461, 1120461, 1120461, 1120461, 1120461]
 vblanks = ["1:360,2:44", "1:360,2:44", "1:360,2:44", "1:354,2:47", "1:354,2:47", "1:342,2:47", "1:330,2:47", "1:318,2:47"]
 
 [[speed.heavy.layouts]]
 path = "pgo/nitroxide.layout"
-sha256 = "c7b797288033f988c28142a20006a8bb38c00753ac2a27dd4757278499e63df2"
+sha256 = "980b6141e06b358da75e3b8851310158d1c3850503977d7c30c734de0efbdfce"
 
 [speed.heavy.layouts.searched]
 rounds = 600
@@ -35,14 +35,14 @@ gate_revision = "97cd078f9d2a33eb6aff274541bccc118f5b12e8"
 
 [speed.train]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [797, 797, 797, 797, 797, 797, 797, 797]
-work_per_frame = [552688, 552688, 552739, 552881, 552880, 552880, 552881, 552886]
-frame_work_p99 = [549975, 549975, 549975, 549975, 549975, 549975, 549975, 549975]
-vblanks = ["1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6"]
+flips = [797, 797, 795, 795, 793, 793, 793, 793]
+work_per_frame = [552700, 552700, 554140, 554287, 555683, 555683, 555683, 555688]
+frame_work_p99 = [550144, 550144, 1074912, 1074912, 1077419, 1077419, 1077419, 1077419]
+vblanks = ["1:790,2:6", "1:790,2:6", "1:786,2:8", "1:786,2:8", "1:782,2:10", "1:782,2:10", "1:782,2:10", "1:782,2:10"]
 
 [[speed.train.layouts]]
 path = "pgo/nitroxide.layout"
-sha256 = "c7b797288033f988c28142a20006a8bb38c00753ac2a27dd4757278499e63df2"
+sha256 = "980b6141e06b358da75e3b8851310158d1c3850503977d7c30c734de0efbdfce"
 
 [speed.train.layouts.searched]
 rounds = 600
@@ -58,14 +58,14 @@ gate_revision = "97cd078f9d2a33eb6aff274541bccc118f5b12e8"
 
 [speed.train-state]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
-flips = [797, 797, 797, 797, 797, 797, 797, 797]
-work_per_frame = [552688, 552688, 552739, 552881, 552880, 552880, 552881, 552886]
-frame_work_p99 = [549975, 549975, 549975, 549975, 549975, 549975, 549975, 549975]
-vblanks = ["1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6", "1:790,2:6"]
+flips = [797, 797, 795, 795, 793, 793, 793, 793]
+work_per_frame = [552700, 552700, 554140, 554287, 555683, 555683, 555683, 555688]
+frame_work_p99 = [550144, 550144, 1074912, 1074912, 1077419, 1077419, 1077419, 1077419]
+vblanks = ["1:790,2:6", "1:790,2:6", "1:786,2:8", "1:786,2:8", "1:782,2:10", "1:782,2:10", "1:782,2:10", "1:782,2:10"]
 
 [[speed.train-state.layouts]]
 path = "pgo/nitroxide.layout"
-sha256 = "c7b797288033f988c28142a20006a8bb38c00753ac2a27dd4757278499e63df2"
+sha256 = "980b6141e06b358da75e3b8851310158d1c3850503977d7c30c734de0efbdfce"
 
 [speed.train-state.layouts.searched]
 rounds = 600
@@ -82,13 +82,13 @@ gate_revision = "97cd078f9d2a33eb6aff274541bccc118f5b12e8"
 [speed.wall]
 offsets = [-48, -36, -24, -12, 0, 12, 24, 36]
 flips = [1793, 1793, 1793, 1793, 1784, 1772, 1760, 1748]
-work_per_frame = [549849, 549849, 549849, 549849, 550068, 550075, 550082, 550089]
-frame_work_p99 = [549975, 549975, 549975, 549975, 549975, 549975, 549975, 549975]
+work_per_frame = [549896, 549896, 549896, 549896, 550114, 550122, 550129, 550137]
+frame_work_p99 = [549957, 549957, 549957, 549957, 549957, 549957, 549957, 549957]
 vblanks = ["1:1786,2:6", "1:1786,2:6", "1:1786,2:6", "1:1786,2:6", "1:1777,2:6", "1:1765,2:6", "1:1753,2:6", "1:1741,2:6"]
 
 [[speed.wall.layouts]]
 path = "pgo/nitroxide.layout"
-sha256 = "c7b797288033f988c28142a20006a8bb38c00753ac2a27dd4757278499e63df2"
+sha256 = "980b6141e06b358da75e3b8851310158d1c3850503977d7c30c734de0efbdfce"
 
 [speed.wall.layouts.searched]
 rounds = 600
@@ -103,7 +103,7 @@ launch_args = ["--embedded-playtest"]
 gate_revision = "97cd078f9d2a33eb6aff274541bccc118f5b12e8"
 
 [journeys.completion-cars-arenas]
-ticks = 5109
+ticks = 5108
 open_loop = 36
 clock_waits = 0
 
@@ -113,7 +113,7 @@ open_loop = 103
 clock_waits = 0
 
 [journeys.completion-demo-cycle]
-ticks = 6774
+ticks = 6773
 open_loop = 7
 clock_waits = 0
 
@@ -168,7 +168,7 @@ open_loop = 8
 clock_waits = 0
 
 [journeys.completion-practice-timed]
-ticks = 5628
+ticks = 5630
 open_loop = 13
 clock_waits = 0
 
@@ -258,7 +258,7 @@ open_loop = 14
 clock_waits = 0
 
 [journeys.sfx-demo]
-ticks = 6768
+ticks = 6767
 open_loop = 4
 clock_waits = 0
 
@@ -298,7 +298,7 @@ open_loop = 5
 clock_waits = 0
 
 [journeys.sfx-timed-end]
-ticks = 5385
+ticks = 5384
 open_loop = 6
 clock_waits = 0
 
@@ -310,4 +310,4 @@ clock_waits = 0
 [host]
 
 [maps]
-ship = "470d415a694a557850156dbe1521e0a8de1f7231aed33637438b51b8d4fd6885"
+ship = "f8af03bf0049c082430ed7b04b8aa5c5fc7e0c3fcd72d75e16c3802b6ee0dbd3"
