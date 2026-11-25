@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1 | 2026-11-25
+
+- Runs on the PSoXide scene core (SDK 80d432926e69): the same program boots on its own disc or
+  from the PSoXide demo disc's launcher, which keeps its loading picture up until NitroXide's
+  first frame. The "Built with PSoXide" splash plays when NitroXide is a disc's first program.
+- A new searched code layout for the new build: the train and wall benchmark windows run faster
+  than 0.6.0 (552,880 and 550,068 cycles a frame against 557,081 and 552,589).
+
 ## 0.6.0 | 2026-10-27
 
 Goals have a replay, shot like a television one. After the celebration the goal plays back
