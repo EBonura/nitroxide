@@ -7,7 +7,9 @@
 //! [`Loader::report`] draws a frame or two at the progress reached, and a load
 //! that is over too fast to see is stretched at its end ([`Loader::finish`]) so
 //! the bar always fills smoothly rather than flashing: it never takes less than
-//! [`MIN_FRAMES`] vblanks from the first frame to the last.
+//! [`MIN_FRAMES`] vblanks from the first frame to the last. The load at boot is
+//! exempt ([`Loader::finish_boot`]): nobody is waiting on a menu change there, so
+//! the bar goes straight from the last report to the title.
 
 use psx_engine::Ctx;
 use psx_gpu::Gpu;
@@ -97,6 +99,15 @@ impl Loader {
             self.draw_flash(ctx, ONE - ONE * k / 6);
             next_vblank();
         }
+    }
+
+    /// The boot load is done: show the full bar for one frame and hand the
+    /// screen back at once, with no minimum time and no flash. The bar was
+    /// drawn the whole time the read ran; only the hold is skipped.
+    pub fn finish_boot(mut self, ctx: &mut Ctx) {
+        self.real = ONE;
+        self.shown = ONE;
+        self.draw(ctx, ONE);
     }
 
     fn draw(&mut self, ctx: &mut Ctx, shown: i32) {

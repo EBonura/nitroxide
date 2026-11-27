@@ -80,8 +80,9 @@ The loading screen is the slanted-cell boost bar on its own, larger and centred.
 fills with the load's real progress (the lighting bake, the arena texture read and the
 sound bank at boot, and the lighting bake again when the arena or its time of day is
 changed from a menu), with the pickup sweep running along the lit cells and a white
-flash as it completes. A load too quick to see is held for at least forty frames and
-filled smoothly.
+flash as it completes. A load too quick to see, when the arena or its time of day is
+changed from a menu, is held for at least forty frames and filled smoothly; the load at
+boot is exempt and goes straight to the title when the read is done.
 
 The countdown's numerals and the GO! are centred by the pixels they draw rather than
 by their font cell (the 1 sat to one side), in single player and in each split half;

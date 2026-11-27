@@ -2602,7 +2602,7 @@ impl Scene for NitroXide {
             psx_vram::VramRect::new(DISPLAY_BLEND_CLUT.x(), DISPLAY_BLEND_CLUT.y(), 16, 1),
             &blend_clut,
         );
-        loading.finish(ctx);
+        loading.finish_boot(ctx);
         #[cfg(feature = "boot-play")]
         {
             self.phase = Phase::Play;
